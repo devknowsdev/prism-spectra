@@ -1,5 +1,13 @@
 # AI-Forge Development Roadmap v1.0
 
+## Governance Foundation
+
+- Ledger Is Canonical Memory
+- Embeddings Are Derived Indexes
+- Retrieval Is Advisory
+- Replayable Retrieval
+- Vector Store Is Rebuildable Cache
+
 ## Epic 1 Runtime Foundation
 - RF-001 Ollama Client
 - RF-002 Model Registry
@@ -16,9 +24,10 @@
 - EX-003 Resource Scheduler
 
 ## Epic 4 Memory
-- MEM-001 Ledger
-- MEM-003 Embeddings
-- MEM-004 Vector Store
+- MEM-001 Ledger (Canonical Memory)
+- MEM-003 Embeddings (Derived Indexes)
+- MEM-004 Vector Store (Rebuildable Cache)
+- MEM-005 Replayable Retrieval Governance
 
 ## Epic 5 Audio Intelligence
 - Whisper
