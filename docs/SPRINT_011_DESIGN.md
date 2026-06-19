@@ -2,35 +2,46 @@
 
 ## Objective
 
-Introduce deterministic local-first embeddings and retrieval.
+Establish governance for deterministic, replayable embedding infrastructure before implementation.
 
-## Model
+Sprint 011 remains the Embedding Foundation sprint. No embedding generation, retrieval implementation, or runtime behavior changes are included in this reconciliation.
 
-Recommended: BGE Base
+## Governance
 
-## Storage
+- Ledger Is Canonical Memory
+- Embeddings Are Derived Indexes
+- Retrieval Is Advisory
+- Replayable Retrieval
+- Vector Store Is Rebuildable Cache
 
-Phase 1: SQLite
-Phase 2: sqlite-vec
+## Sprint Scope
 
-## Files
+Phase 1:
+- Governance alignment
+- ADR ratification
+- Planning and roadmap updates
 
-src/embeddings/embeddingTypes.ts
-src/embeddings/embeddingModel.ts
-src/embeddings/embeddingGenerator.ts
-src/embeddings/embeddingStore.ts
-src/embeddings/embeddingEvents.ts
+Future implementation phases may introduce embeddings and retrieval only after governance is established.
 
-src/retrieval/retrievalTypes.ts
-src/retrieval/similarity.ts
-src/retrieval/retrievalEngine.ts
-src/retrieval/retrievalValidator.ts
-src/retrieval/retrievalCoordinator.ts
+## Constraints
+
+- Do not modify runtime behavior
+- Do not implement embeddings
+- Do not implement retrieval
+- All retrieval outputs must be replayable from ledger state
+- Vector indexes must be rebuildable from canonical ledger records
+
+## Planned Components (Future Work)
+
+src/embeddings/*
+src/retrieval/*
+
+These paths remain planned and are not implemented by this sprint.
 
 ## ADRs
 
-ADR-005 Deterministic Embeddings
-ADR-006 Ledger Linked Retrieval
-ADR-007 Local Embeddings Only
+ADR-005 Ledger Is Canonical Memory
+ADR-006 Embeddings Are Derived Indexes
+ADR-007 Retrieval Is Advisory
 ADR-008 Replayable Retrieval
-ADR-009 Vector Store Is Cache
+ADR-009 Vector Store Is Rebuildable Cache
