@@ -17,6 +17,7 @@ export async function execute(input: string) {
  try {
  await eventBus.publish(createRuntimeEvent('TaskReceived',{executionId}));
  const route = await routeTask(input);
+ await eventBus.publish(createRuntimeEvent('TaskClassified',{executionId,taskType:route.taskType,confidence:route.confidence}));
  context.route = route; await eventBus.publish(createRuntimeEvent('TaskRouted',{executionId,route}));
  context.state = RuntimeState.EXECUTING;
  const result = await scheduler.run(() => executeModel(route.executor, input));
@@ -31,4 +32,4 @@ export async function execute(input: string) {
  return result;
  } catch(error){ metrics.increment('tasksFailed'); await eventBus.publish(createRuntimeEvent('TaskFailed',{executionId,error:String(error)})); throw error; }
  finally { runtimeRegistry.remove(executionId); }
-}
+ }
