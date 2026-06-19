@@ -1,0 +1,16 @@
+export enum RuntimeState {
+  IDLE = 'IDLE',
+  ROUTING = 'ROUTING',
+  SCHEDULED = 'SCHEDULED',
+  EXECUTING = 'EXECUTING',
+  VALIDATING = 'VALIDATING',
+  PERSISTING = 'PERSISTING',
+  FAILED = 'FAILED'
+}
+
+export enum ExecutionStatus {
+  RUNNING = 'RUNNING',
+  COMPLETED = 'COMPLETED',
+  FAILED = 'FAILED',
+  CANCELLED = 'CANCELLED'
+}
