@@ -1,0 +1,10 @@
+name: Docs Lint
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  docs-lint:
+    uses: devknowsdev/workspace-meta/.github/workflows/reusable-docs-lint.yml@main
