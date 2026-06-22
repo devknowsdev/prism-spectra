@@ -1,3 +1,6 @@
+---
+Last-Updated: 2026-06-22
+
 # AI-Forge — Project Portal
 
 Concise orientation and navigation for contributors working on the local AI orchestrator.
@@ -17,6 +20,9 @@ Key orientation docs
 - [docs/REPO_AUDIT.md](AI-Forge/docs/REPO_AUDIT.md)
 - POC daemon: [tools/daemon.ts](AI-Forge/tools/daemon.ts)
 - Checkpoints: [src/safety/checkpoint.ts](AI-Forge/src/safety/checkpoint.ts)
+
+Workspace-level portal (canonical)
+- This file is the canonical workspace-level portal. ADHDashboard links to this portal from `ADHDashboard-git/docs/PROJECT_PORTAL.md`.
 
 Where to look for common changes (recipes)
 - **Add/modify executor / patch application**: `src/engine/*`, `src/safety/checkpoint.ts`, `tools/daemon.ts` (preview/execute endpoints).
