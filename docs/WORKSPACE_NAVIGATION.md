@@ -3,7 +3,7 @@
 Last updated: 2026-06-22
 
 Purpose
-- A single, compact navigation and operational reference that lets a low-capacity LLM (Claude/free instance) or a human quickly orient across the two repositories in this workspace (`ADHDashboard-git` and `AI-Forge`), make small, safe edits, and propose surgical changes without scanning the entire codebase and wasting tokens.
+- A single, compact navigation and operational reference that lets a low-capacity LLM (Claude/free instance) or a human quickly orient across the two repositories in this workspace (`prism-focus` and `prism-spectra`), make small, safe edits, and propose surgical changes without scanning the entire codebase and wasting tokens.
 
 Usage rules for an LLM operator
 - Only open files from the `fileIndex` below. Do not attempt bulk reads of the repo.
@@ -14,13 +14,13 @@ Usage rules for an LLM operator
 
 High-level workspace map
 
-- ADHDashboard (vanilla JS app, no build step)
-  - Main entry: ADHDashboard-git/index.html
-  - Boot: ADHDashboard-git/src/init.js
-  - Key runtime files: ADHDashboard-git/src/state.js, ADHDashboard-git/src/storage.js, ADHDashboard-git/src/render.js
-  - AI & commands: ADHDashboard-git/src/ai.js, ADHDashboard-git/docs/AI_API.md
-  - Tests: ADHDashboard-git/src/test_workflows.js (node harness)
-  - Generated: ADHDashboard-git/generated/AI_CONTEXT.md, ADHDashboard-git/generated/PROJECT_INDEX.md
+ - prism-focus (vanilla JS app, no build step)
+  - Main entry: prism-focus/index.html
+  - Boot: prism-focus/src/init.js
+  - Key runtime files: prism-focus/src/state.js, prism-focus/src/storage.js, prism-focus/src/render.js
+  - AI & commands: prism-focus/src/ai.js, prism-focus/docs/AI_API.md
+  - Tests: prism-focus/src/test_workflows.js (node harness)
+  - Generated: prism-focus/generated/AI_CONTEXT.md, prism-focus/generated/PROJECT_INDEX.md
 
 - AI-Forge (TypeScript orchestrator/engine)
   - Public surface: AI-Forge/src/index.ts
@@ -61,25 +61,25 @@ Guidelines to limit token usage
 
 FileIndex (compact, parse-first for an LLM)
 {
-  "ADHDashboard": [
-    {"path":"ADHDashboard-git/README.md","desc":"Project overview + quickstart"},
-    {"path":"ADHDashboard-git/docs/ORIENTATION.md","desc":"Developer map and load order"},
-    {"path":"ADHDashboard-git/docs/AI_API.md","desc":"AI call envelope and allowed commands"},
-    {"path":"ADHDashboard-git/generated/AI_CONTEXT.md","desc":"Generated AI context map"},
-    {"path":"ADHDashboard-git/src/state.js","desc":"Global mutable state (migration in progress)"},
-    {"path":"ADHDashboard-git/src/storage.js","desc":"localStorage persistence"},
-    {"path":"ADHDashboard-git/src/render.js","desc":"Main render orchestrator"},
-    {"path":"ADHDashboard-git/src/init.js","desc":"Boot/migration/startup"},
-    {"path":"ADHDashboard-git/src/test_workflows.js","desc":"Node test harness (331 tests expected)"}
+  "prism-focus": [
+    {"path":"prism-focus/README.md","desc":"Project overview + quickstart"},
+    {"path":"prism-focus/docs/ORIENTATION.md","desc":"Developer map and load order"},
+    {"path":"prism-focus/docs/AI_API.md","desc":"AI call envelope and allowed commands"},
+    {"path":"prism-focus/generated/AI_CONTEXT.md","desc":"Generated AI context map"},
+    {"path":"prism-focus/src/state.js","desc":"Global mutable state (migration in progress)"},
+    {"path":"prism-focus/src/storage.js","desc":"localStorage persistence"},
+    {"path":"prism-focus/src/render.js","desc":"Main render orchestrator"},
+    {"path":"prism-focus/src/init.js","desc":"Boot/migration/startup"},
+    {"path":"prism-focus/src/test_workflows.js","desc":"Node test harness (331 tests expected)"}
   ],
-  "AI-Forge": [
-    {"path":"AI-Forge/README.md","desc":"Engine overview & demo instructions"},
-    {"path":"AI-Forge/PROJECT_BRIEF.md","desc":"Standing project brief — paste into new sessions"},
-    {"path":"AI-Forge/REFERENCE_ARCHITECTURE_LOCAL_AI.md","desc":"Local AI orchestration architecture"},
-    {"path":"AI-Forge/src/index.ts","desc":"Public exports: GraphBuilder, Router, ExecutionEngine"},
-    {"path":"AI-Forge/tools/daemon.ts","desc":"POC daemon to mock executors / API"},
-    {"path":"AI-Forge/docs/PROJECT_PORTAL.md","desc":"Repo-level portal and checklist"},
-    {"path":"AI-Forge/docs/REPO_AUDIT.md","desc":"Audit notes and keep/refactor/remove guidance"}
+  "prism-spectra": [
+    {"path":"prism-spectra/README.md","desc":"Engine overview & demo instructions"},
+    {"path":"prism-spectra/PROJECT_BRIEF.md","desc":"Standing project brief — paste into new sessions"},
+    {"path":"prism-spectra/REFERENCE_ARCHITECTURE_LOCAL_AI.md","desc":"Local AI orchestration architecture"},
+    {"path":"prism-spectra/src/index.ts","desc":"Public exports: GraphBuilder, Router, ExecutionEngine"},
+    {"path":"prism-spectra/tools/daemon.ts","desc":"POC daemon to mock executors / API"},
+    {"path":"prism-spectra/docs/PROJECT_PORTAL.md","desc":"Repo-level portal and checklist"},
+    {"path":"prism-spectra/docs/REPO_AUDIT.md","desc":"Audit notes and keep/refactor/remove guidance"}
   ]
 }
 

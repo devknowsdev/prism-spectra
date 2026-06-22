@@ -7,12 +7,12 @@ Purpose
 
 Candidates
 
-1) `ADHDashboard-git/PERSONAL_SYSTEMS_CONSTITUTION.md`
-  - Rationale: duplicate of `AI-Forge/PERSONAL_SYSTEMS_CONSTITUTION.md`. Already archived in `ADHDashboard-git/docs/archived/PERSONAL_SYSTEMS_CONSTITUTION.md`.
+1) `prism-focus/PERSONAL_SYSTEMS_CONSTITUTION.md`
+  - Rationale: duplicate of `prism-spectra/PERSONAL_SYSTEMS_CONSTITUTION.md`. Already archived in `prism-focus/docs/archived/PERSONAL_SYSTEMS_CONSTITUTION.md`.
 
 2) Any `HANDOFF` / `HANDOVER` documents that are session-scoped and duplicated across repos:
-  - `ADHDashboard-git/src/HANDOFF_ai.md`
-  - `ADHDashboard-git/src/HANDOFF_day_wizard.md`
+  - `prism-focus/src/HANDOFF_ai.md`
+  - `prism-focus/src/HANDOFF_day_wizard.md`
   - `AI-Forge/HANDOVER.md` (if overlapping content)
   - Rationale: keep per-repo handoffs but move older session handover notes to `docs/archived/` once integrated into `AI-Forge/docs/SESSION_HANDOVER_TEMPLATE.md`.
 
