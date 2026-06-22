@@ -1,0 +1,255 @@
+diff --git a/src/cli/plan.ts b/src/cli/plan.ts
+index 4b19b44..2cc453a 100644
+--- a/src/cli/plan.ts
++++ b/src/cli/plan.ts
+@@ -1,9 +1,26 @@
+ import { GraphBuilder } from "../intelligence/graphBuilder.js";
++import { MemoryDB } from "../memory/db.js";
++import { TaskHistory } from "../memory/taskHistory.js";
+ 
++// FIXED (drift audit, 2026-06-20): previously called `new GraphBuilder()`
++// (zero args) and `builder.build(intent)` (a bare string) — neither matches
++// the real GraphBuilder API, which needs `(memory, taskHistory)` at
++// construction and a single GraphBuilderInput object at build() (see
++// intelligence/graphBuilder.ts). This used a throwaway in-memory-style DB
++// (a local sqlite file next to cwd) since `plan` is a one-shot preview
++// command with no existing ExecutionEngine to borrow memory/taskHistory
++// from — consistent with `run.ts`'s engine bootstrap just below it.
+ export async function planCommand(intent: string) {
+-  const builder = new GraphBuilder();
++  const memory = new MemoryDB("./forge.db");
++  const taskHistory = new TaskHistory(memory);
++  const builder = new GraphBuilder(memory, taskHistory);
+ 
+-  const graph = builder.build(intent);
++  const outcome = await builder.build({
++    graphId: `plan-${Date.now()}`,
++    projectId: "cli",
++    description: intent,
++  });
+ 
+-  console.log(JSON.stringify(graph, null, 2));
++  console.log(JSON.stringify(outcome.graph.all(), null, 2));
++  memory.close();
+ }
+diff --git a/src/cli/run.ts b/src/cli/run.ts
+index d573144..8ab03f1 100644
+--- a/src/cli/run.ts
++++ b/src/cli/run.ts
+@@ -1,7 +1,15 @@
+ import { ExecutionEngine } from "../engine/executionEngine.js";
+-import { TaskGraph } from "../taskGraph/graph.js";
+ import { GraphBuilder } from "../intelligence/graphBuilder.js";
+ 
++// FIXED (drift audit, 2026-06-20): previously called `new GraphBuilder()`
++// (zero args) and `builder.build(intent, optionsObject)` (a string plus an
++// ad-hoc options object shaped like planning/PlanningSnapshot.ts) — neither
++// matches the real GraphBuilder API. Also previously passed the unresolved
++// `Promise<BuildOutcome>` straight into `engine.run()`, which expects a
++// `TaskGraph`. Fixed to build the GraphBuilder from the engine's own
++// memory/taskHistory (avoiding a second, redundant MemoryDB instance against
++// the same dbPath), await the real build() call, and pass `outcome.graph`
++// — the actual TaskGraph — into engine.run().
+ export async function runCommand(intent: string) {
+   // Bootstrap engine
+   const engine = new ExecutionEngine({
+@@ -12,15 +20,15 @@ export async function runCommand(intent: string) {
+   await engine.init();
+ 
+   // Build graph from intent
+-  const builder = new GraphBuilder();
+-  const graph = builder.build(intent, {
+-    recentFailures: [],
+-    costBudget: { remaining: 100, tier: "local" },
+-    systemHints: { preferLocal: true },
++  const builder = new GraphBuilder(engine.memory, engine.taskHistory);
++  const outcome = await builder.build({
++    graphId: `run-${Date.now()}`,
++    projectId: "cli",
++    description: intent,
+   });
+ 
+   // Execute
+-  const results = await engine.run(graph);
++  const results = await engine.run(outcome.graph);
+ 
+   // Output
+   console.log(JSON.stringify(results, null, 2));
+diff --git a/src/core/ControlSurface.ts b/src/core/ControlSurface.ts
+index 4b233a7..057227f 100644
+--- a/src/core/ControlSurface.ts
++++ b/src/core/ControlSurface.ts
+@@ -1,14 +1,37 @@
++// src/core/ControlSurface.ts
++//
++// FIXED (drift audit, 2026-06-20): previously `begin(graph: any)`/`validate
++// (graph: any)` — untyped parameters meant TypeScript inferred `begin()`'s
++// return as `any`, which cascaded into an implicit-any compile error at
++// every call site that did `.map()` over the result of
++// `frozenGraph.readyNodeIds()` in executionEngine.ts. `validate()`'s
++// `!graph.nodes` check was also too weak to ever catch a real shape
++// mismatch: TypeScript's `private` is compile-time-only, so a TaskGraph's
++// private `nodes` Map is still a truthy runtime property, and a truthiness
++// check on a truthy Map silently passes regardless of whether `.nodes` is
++// actually array-shaped. (TaskGraphContract's stricter `Array.isArray`
++// check was what actually caught the real bug — see graphContract.ts.)
++//
++// Generic typing below preserves this class's actual job (a simple
++// single-active-execution guard + an opaque pass-through "begin" step) while
++// removing the `any` leak and tightening validate() to check for the real
++// TaskGraph API shape instead of mere truthiness.
++
++import type { TaskGraph } from "../taskGraph/graph.js";
++
+ export class ControlSurface {
+   private active = false;
+ 
+-  begin(graph: any) {
++  begin<T>(graph: T): T {
+     if (this.active) throw new Error('active execution');
+     this.active = true;
+     return graph;
+   }
+ 
+-  validate(graph: any) {
+-    if (!graph || !graph.nodes) throw new Error('invalid graph');
++  validate(graph: TaskGraph): void {
++    if (!graph || typeof graph.all !== "function") {
++      throw new Error('invalid graph');
++    }
+   }
+ 
+   end() {
+diff --git a/src/memory/runStore.ts b/src/memory/runStore.ts
+index 2ad0763..a1aac57 100644
+--- a/src/memory/runStore.ts
++++ b/src/memory/runStore.ts
+@@ -27,7 +27,18 @@ export class RunStore {
+     }
+   }
+ 
++  /** FIXED (drift audit, 2026-06-20): self-heals if the underlying file is
++   *  missing (e.g. removed by something outside RunStore's control) instead
++   *  of throwing ENOENT. `.forge/` is meant to be excluded from
++   *  CheckpointManager's git lifecycle entirely (see checkpoint.ts's
++   *  listChangedPaths()), so this should no longer trigger in practice —
++   *  kept as a cheap defensive recreate rather than relying solely on that
++   *  exclusion never being bypassed by some other future code path. */
+   append(log: StoredRunLog) {
++    if (!fs.existsSync(this.filePath)) {
++      fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
++      fs.writeFileSync(this.filePath, "");
++    }
+     fs.appendFileSync(this.filePath, JSON.stringify(log) + "\n");
+   }
+ 
+diff --git a/src/taskGraph/graphContract.ts b/src/taskGraph/graphContract.ts
+index d0bab92..2a50c75 100644
+--- a/src/taskGraph/graphContract.ts
++++ b/src/taskGraph/graphContract.ts
+@@ -1,31 +1,54 @@
+ // src/taskGraph/graphContract.ts
+ 
++import type { TaskGraph } from "./graph.js";
++
+ /**
+  * TaskGraph Contract Layer
+  * Enforces structural invariants BEFORE execution.
+  *
+  * This is a compile-time / pre-execution safety boundary.
++ *
++ * FIXED (drift audit, 2026-06-20): this previously assumed a plain-object
++ * graph shape — `Array.isArray(graph.nodes)` and `node.dependsOn ??
++ * node.dependencies` — that never matched the real TaskGraph class
++ * (taskGraph/graph.ts). TaskGraph stores nodes in a private Map, exposed
++ * only via `.all()`/`.get(id)`, and a node's dependency list lives at
++ * `node.packet.dependencies`, not at the node's own top level. Against the
++ * real shape, `validateStructure()` always threw ("Graph must contain nodes
++ * array") before anything else ran, and even past that, the self-dependency/
++ * acyclic checks below would have silently validated nothing (their lookup
++ * always missed). This rewrite reads the actual TaskGraph API instead of an
++ * assumed plain-object shape. It still accepts `graph: TaskGraph` rather
++ * than `any` so a future shape drift fails at compile time, not silently
++ * at runtime.
++ *
++ * Note: TaskGraph's own constructor already enforces acyclic-by-construction
++ * (`assertAcyclic()`) and rejects unknown dependency ids, so
++ * validateNoSelfDependencies()/validateAcyclic() below are now genuinely
++ * redundant for any graph that successfully constructed — kept anyway as a
++ * cheap defensive boundary (e.g. against a future TaskGraph change that
++ * loosens that guarantee), not because they're expected to ever fire.
+  */
+ 
+ export class TaskGraphContract {
+-  validate(graph: any): void {
++  validate(graph: TaskGraph): void {
+     this.validateStructure(graph);
+     this.validateNodes(graph);
+     this.validateNoSelfDependencies(graph);
+     this.validateAcyclic(graph);
+   }
+ 
+-  private validateStructure(graph: any): void {
++  private validateStructure(graph: TaskGraph): void {
+     if (!graph) throw new Error("Graph is null/undefined");
+-    if (!Array.isArray(graph.nodes)) {
+-      throw new Error("Graph must contain nodes array");
++    if (typeof graph.all !== "function") {
++      throw new Error("Graph must be a TaskGraph instance (missing .all())");
+     }
+   }
+ 
+-  private validateNodes(graph: any): void {
++  private validateNodes(graph: TaskGraph): void {
+     const ids = new Set<string>();
+ 
+-    for (const node of graph.nodes) {
++    for (const node of graph.all()) {
+       if (!node.id) throw new Error("Node missing id");
+       if (ids.has(node.id)) throw new Error(`Duplicate node id: ${node.id}`);
+       ids.add(node.id);
+@@ -35,26 +58,23 @@ export class TaskGraphContract {
+     }
+   }
+ 
+-  private validateNoSelfDependencies(graph: any): void {
+-    for (const node of graph.nodes) {
+-      const deps = node.dependsOn ?? node.dependencies ?? [];
++  private validateNoSelfDependencies(graph: TaskGraph): void {
++    for (const node of graph.all()) {
++      const deps = node.packet.dependencies ?? [];
+ 
+-      if (Array.isArray(deps)) {
+-        for (const dep of deps) {
+-          if (dep === node.id) {
+-            throw new Error(`Self-dependency detected on node ${node.id}`);
+-          }
++      for (const dep of deps) {
++        if (dep === node.id) {
++          throw new Error(`Self-dependency detected on node ${node.id}`);
+         }
+       }
+     }
+   }
+ 
+-  private validateAcyclic(graph: any): void {
++  private validateAcyclic(graph: TaskGraph): void {
+     const adj = new Map<string, string[]>();
+ 
+-    for (const node of graph.nodes) {
+-      const deps = node.dependsOn ?? node.dependencies ?? [];
+-      adj.set(node.id, Array.isArray(deps) ? deps : []);
++    for (const node of graph.all()) {
++      adj.set(node.id, node.packet.dependencies ?? []);
+     }
+ 
+     const visiting = new Set<string>();
+@@ -76,7 +96,7 @@ export class TaskGraphContract {
+       visited.add(id);
+     };
+ 
+-    for (const node of graph.nodes) {
++    for (const node of graph.all()) {
+       dfs(node.id);
+     }
+   }

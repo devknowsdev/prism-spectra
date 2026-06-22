@@ -195,10 +195,21 @@ export class ExecutionEngine {
         }
       }
 
-      await this.checkpoints.checkpoint(
+      const checkpointResult = await this.checkpoints.checkpoint(
         nodeId,
         result.patch?.edits.map((e) => e.path)
       );
+      // Persist checkpoint sha for durability so rollbacks can be requested
+      try {
+        this.memory.db
+          .prepare(`
+            INSERT INTO checkpoints (project_id, graph_id, node_id, sha, had_changes)
+            VALUES (?, ?, ?, ?, ?)
+          `)
+          .run(graph.projectId, graph.id, nodeId, checkpointResult.sha, checkpointResult.hadChanges ? 1 : 0);
+      } catch (e) {
+        console.warn('Failed to persist checkpoint record', e);
+      }
       const validation = result.cacheHit ? { passed: true } : await validate(packet, result, this.workDir);
 
       if (validation.passed) {
@@ -228,6 +239,32 @@ export class ExecutionEngine {
 
       if (!result.cacheHit) {
         this.learningLoop.recordOutcome(outcome);
+      }
+
+      // If the packet was part of a conversation, persist the AI response
+      // into the messages table for provenance/history. This is optional and
+      // only runs when `packet.context.conversationId` is provided by the
+      // caller (e.g. the UI or adapter). Keeping this optional avoids
+      // forcing conversation semantics on every node.
+      try {
+        const convId = (packet.context && (packet.context as any).conversationId) || null;
+        if (convId) {
+          const promptText = typeof packet.intent === 'string' ? packet.intent : JSON.stringify(packet.intent || '');
+          const responseText = result.output ?? '';
+          const modelName = outcome.provider === 'ollama' ? selectOllamaModel(packet) : null;
+          try {
+            this.memory.db
+              .prepare(`
+                INSERT INTO messages (conversation_id, role, provider, model, prompt, response, response_sha, attachments)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              `)
+              .run(convId, 'assistant', outcome.provider, modelName, promptText, responseText, null, null);
+          } catch (e) {
+            console.warn('Failed to write message to DB', e);
+          }
+        }
+      } catch (e) {
+        /* no-op */
       }
 
       return {

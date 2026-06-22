@@ -101,6 +101,94 @@ export class MemoryDB {
         updated_at TEXT NOT NULL DEFAULT (datetime('now')),
         PRIMARY KEY (provider, node_type)
       );
+
+      -- Conversations and messages for chat/history persistence (simple schema)
+      CREATE TABLE IF NOT EXISTS conversations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT,
+        metadata TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id INTEGER NOT NULL,
+        role TEXT NOT NULL,
+        provider TEXT,
+        model TEXT,
+        prompt TEXT,
+        response TEXT,
+        response_sha TEXT,
+        attachments TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS attachments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id INTEGER,
+        filename TEXT NOT NULL,
+        path TEXT NOT NULL,
+        content_type TEXT,
+        size INTEGER,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
+      );
+
+      -- Ensure attachments has a sha256 column for content fingerprints.
+    `);
+
+    // Add sha256 column if missing (safe on existing DBs)
+    try {
+      const cols = this.db.prepare("PRAGMA table_info('attachments')").all();
+      const hasSha = Array.isArray(cols) && cols.some((c: any) => c.name === 'sha256');
+      if (!hasSha) this.db.exec("ALTER TABLE attachments ADD COLUMN sha256 TEXT;");
+    } catch (e) {
+      // ignore migration errors — best-effort
+    }
+
+    // Optional tags for attachments (many tags per attachment)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS attachment_tags (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        attachment_id INTEGER NOT NULL,
+        tag TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      -- Audit log for attachment operations (keeps a record of uploads, moves, deletes, repairs)
+      CREATE TABLE IF NOT EXISTS attachment_audit (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        attachment_id INTEGER,
+        action TEXT NOT NULL,
+        details TEXT,
+        actor TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      -- Checkpoints recorded per-node so rollbacks can be targeted and queried
+      CREATE TABLE IF NOT EXISTS checkpoints (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id TEXT,
+        graph_id TEXT,
+        node_id TEXT,
+        sha TEXT NOT NULL,
+        had_changes INTEGER NOT NULL DEFAULT 0,
+        rolled_back INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        rolled_back_at TEXT
+      );
+
+      -- Generic audit log for system actions (nodes, attachments, user actions)
+      CREATE TABLE IF NOT EXISTS audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        scope TEXT,
+        object_id TEXT,
+        action TEXT NOT NULL,
+        details TEXT,
+        actor TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
     `);
   }
 

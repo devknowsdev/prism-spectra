@@ -163,20 +163,29 @@ export class CheckpointManager {
    *  that read but didn't mutate files). So we apply the revert unstaged first (--no-commit,
    *  which succeeds even when the resulting diff is empty) and then commit explicitly with
    *  --allow-empty — this works uniformly whether or not the checkpoint had real changes. */
-  async rollback(nodeId: string): Promise<void> {
+  async rollback(nodeId: string): Promise<string> {
     const sha = this.shaByNode.get(nodeId);
     if (!sha) {
       throw new Error(`No checkpoint recorded for node "${nodeId}" — cannot roll back`);
     }
-    await this.gitLock.run(async () => {
+    return this.rollbackSha(sha, nodeId);
+  }
+
+  /** Roll back a specific commit SHA (useful when the manager's in-memory map
+   *  doesn't contain the desired nodeId, e.g. after a restart). Returns the
+   *  new revert commit SHA. */
+  async rollbackSha(sha: string, nodeId?: string): Promise<string> {
+    return this.gitLock.run(async () => {
       try {
         await this.git(["revert", "--no-commit", sha]);
-        await this.git(["commit", "--allow-empty", "-m", `rollback(node:${nodeId})`]);
+        await this.git(["commit", "--allow-empty", "-m", `rollback(node:${nodeId || sha})`]);
+        const { stdout: newSha } = await this.git(["rev-parse", "HEAD"]);
+        return newSha.trim();
       } catch (err: any) {
         // Abort cleanly rather than leaving the repo mid-revert with conflict markers.
         await this.git(["revert", "--abort"]).catch(() => {});
         throw new Error(
-          `Rollback for node "${nodeId}" (${sha}) hit a conflict — this should not happen under the file-locking invariant; investigate before retrying. Original error: ${err.message}`
+          `Rollback for node "${nodeId || sha}" (${sha}) hit a conflict — this should not happen under the file-locking invariant; investigate before retrying. Original error: ${err.message}`
         );
       }
     });

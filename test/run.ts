@@ -19,6 +19,8 @@ import { LocalModelLock } from "../src/engine/modelLock.js";
 import { selectModel as selectOllamaModel } from "../src/executors/ollama.js";
 import { dataBoundaryFor } from "../src/types.js";
 import { Wizard, MAX_QUESTIONS } from "../src/wizard/wizard.js";
+import { spawn } from "node:child_process";
+import os from "node:os";
 import type { TaskPacket } from "../src/types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -431,6 +433,95 @@ async function main() {
     const logs = await engine.run(graph, "sequential");
     assert.ok(logs.length > 0 && logs.every((l) => l.status === "success"));
     engine.close();
+  });
+
+  await test("e2e: daemon execute-graph and rollback via API", async () => {
+    // spawn the daemon in a temporary cwd so it uses an isolated .demo/work
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "aiforge-e2e-"));
+    const daemonScript = path.join(__dirname, "..", "tools", "daemon.ts");
+    const tsxCli = path.join(__dirname, "..", "node_modules", ".bin", "tsx");
+    const port = 32000 + Math.floor(Math.random() * 2000);
+    const token = "e2e-test-token-" + Date.now();
+
+    const daemon = spawn(tsxCli, [daemonScript], {
+      cwd: tmp,
+      env: { ...process.env, AI_FORGE_DAEMON_PORT: String(port), AI_FORGE_DAEMON_TOKEN: token },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let started = false;
+    let stdoutBuf = "";
+    daemon.stdout!.on("data", (c) => {
+      const s = String(c);
+      stdoutBuf += s;
+      if (s.includes("AI-Forge POC daemon listening")) started = true;
+    });
+    daemon.stderr!.on("data", (c) => {
+      stdoutBuf += String(c);
+    });
+
+    // wait for server start
+    const startDeadline = Date.now() + 8000;
+    while (!started && Date.now() < startDeadline) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    if (!started) {
+      daemon.kill();
+      throw new Error("daemon did not start: " + stdoutBuf.slice(0, 2000));
+    }
+
+    // POST to execute-graph (streaming). Use a simple node that writes a file.
+    const graph = { id: "g-e2e", projectId: "p-e2e", nodes: [{ id: "n1", packet: { intent: "create marker", node_type: "ui", context: { targetFile: "marker.txt" }, filePaths: ["marker.txt"], dependencies: [] } }] };
+    const res = await fetch(`http://127.0.0.1:${port}/api/v1/execute-graph`, { method: "POST", headers: { "Content-Type": "application/json", "x-local-token": token }, body: JSON.stringify({ graph, mode: "sequential" }) });
+    if (!res.ok) {
+      const bodyTxt = await res.text().catch(()=>'<no body>');
+      daemon.kill();
+      throw new Error(`execute-graph HTTP ${res.status}: ${bodyTxt}\nDaemon log:\n${stdoutBuf.slice(0,4000)}`);
+    }
+
+    // parse chunked JSON events separated by \n\n
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const r = await reader.read();
+      if (r.done) break;
+      buf += decoder.decode(r.value, { stream: true });
+      const parts = buf.split("\n\n");
+      buf = parts.pop() || "";
+      for (const p of parts) {
+        if (!p.trim()) continue;
+        try { JSON.parse(p); } catch (e) {}
+      }
+    }
+
+    // ensure file created in daemon's cwd .demo/work
+    const created = path.join(tmp, ".demo", "work", "marker.txt");
+    assert.ok(fs.existsSync(created), "expected marker file created by daemon execution");
+
+    // confirm checkpoint persisted in daemon DB
+    const dbFile = path.join(tmp, ".demo", "daemon.db");
+    assert.ok(fs.existsSync(dbFile), "expected daemon DB file");
+    const { MemoryDB } = await import("../src/memory/db.js");
+    const mdb = new MemoryDB(dbFile);
+    const rows = mdb.db.prepare('SELECT id, node_id, sha, had_changes, rolled_back FROM checkpoints ORDER BY created_at DESC').all();
+    assert.ok(Array.isArray(rows) && rows.length > 0, "expected at least one checkpoint row");
+    const cp = rows.find((r: any) => r.node_id === 'n1');
+    assert.ok(cp, "expected checkpoint for node n1");
+
+    // call rollback endpoint
+    const rb = await fetch(`http://127.0.0.1:${port}/api/v1/nodes/n1/rollback`, { method: 'POST', headers: { 'x-local-token': token } });
+    const rbj = await rb.json();
+    if (!rb.ok || !rbj || !rbj.ok) {
+      daemon.kill();
+      throw new Error('rollback failed: ' + JSON.stringify(rbj));
+    }
+
+    // file should be reverted
+    assert.equal(fs.existsSync(created), false, 'expected marker file to be reverted after rollback');
+
+    try { mdb.close(); } catch (e) {}
+    daemon.kill();
   });
 
   fs.rmSync(ROOT, { recursive: true, force: true });
