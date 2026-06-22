@@ -3,7 +3,7 @@
 Last updated: 2026-06-22
 
 Purpose
-- A single, compact navigation and operational reference that lets a low-capacity LLM (Claude/free instance) or a human quickly orient across the two repositories in this workspace (`prism-focus` and `prism-spectra`), make small, safe edits, and propose surgical changes without scanning the entire codebase and wasting tokens.
+- A single, compact navigation and operational reference that lets a low-capacity LLM (Claude/free instance) or a human quickly orient across the three repositories in this workspace (`prism-focus`, `prism-spectra`, and `prism-beam`), make small, safe edits, and propose surgical changes without scanning the entire codebase and wasting tokens.
 
 Usage rules for an LLM operator
 - Only open files from the `fileIndex` below. Do not attempt bulk reads of the repo.
@@ -22,28 +22,32 @@ High-level workspace map
   - Tests: prism-focus/src/test_workflows.js (node harness)
   - Generated: prism-focus/generated/AI_CONTEXT.md, prism-focus/generated/PROJECT_INDEX.md
 
-- AI-Forge (TypeScript orchestrator/engine)
-  - Public surface: AI-Forge/src/index.ts
-  - POC daemon: AI-Forge/tools/daemon.ts
-  - Config & bootstrap: AI-Forge/README.md, AI-Forge/PROJECT_BRIEF.md, AI-Forge/docs/PROJECT_PORTAL.md
+- prism-spectra (TypeScript orchestrator/engine)
+  - Public surface: prism-spectra/src/index.ts
+  - POC daemon: prism-spectra/tools/daemon.ts
+  - Config & bootstrap: prism-spectra/README.md, prism-spectra/PROJECT_BRIEF.md, prism-spectra/docs/PROJECT_PORTAL.md
   - Scripts: run with `npm run demo` or `npm test` (requires Node >=22 per package.json)
+- prism-beam (workspace coordination/meta repo)
+  - Coordination docs: prism-beam/docs/COORDINATION.md
+  - Template install: prism-beam/scripts/install-templates.sh
+  - Smoke tests: prism-beam/scripts/run-workspace-smoke.sh
 
 Duplicate / overlapping docs (candidates for dedupe or canonicalization)
-- `PERSONAL_SYSTEMS_CONSTITUTION.md` — exists in both roots; recommendation: keep canonical copy in `AI-Forge/` (global OS brief) and convert `ADHDashboard` copy to a lightweight pointer that links to the canonical file.
-- `PROJECT_PORTAL.md` — intentionally per-repo; keep both but mark `AI-Forge/docs/PROJECT_PORTAL.md` as the workspace-level portal and add a cross-link in `ADHDashboard-git/docs/PROJECT_PORTAL.md`.
+- `PERSONAL_SYSTEMS_CONSTITUTION.md` — exists in both roots; recommendation: keep canonical copy in `prism-spectra/` (workspace brief) and convert `prism-focus` copy to a lightweight pointer that links to the canonical file.
+- `PROJECT_PORTAL.md` — intentionally per-repo; keep both but mark `prism-spectra/docs/PROJECT_PORTAL.md` as the workspace-level portal and add a cross-link in `prism-focus/docs/PROJECT_PORTAL.md`.
 - `README.md` — keep per-repo.
-- `HANDOVER` / `HANDOFF` files — keep as scoped handoff docs; consider consolidating repeated procedural items into `AI-Forge/docs/SESSION_HANDOVER_TEMPLATE.md` and link per-project.
-- `PROJECT_INDEX.md` vs `generated/PROJECT_INDEX.md` (ADHDashboard): `generated/PROJECT_INDEX.md` is auto-generated; keep it but avoid manual edits. If `PROJECT_INDEX.md` (top-level) is duplicate, either remove or keep as human-facing summary and mark as canonical.
+- `HANDOVER` / `HANDOFF` files — keep as scoped handoff docs; consider consolidating repeated procedural items into a shared session handover template and link per-project.
+- `PROJECT_INDEX.md` vs `generated/PROJECT_INDEX.md` (prism-focus): `generated/PROJECT_INDEX.md` is auto-generated; keep it but avoid manual edits. If `PROJECT_INDEX.md` (top-level) is duplicate, either remove or keep as human-facing summary and mark as canonical.
 
 Quick checks / smoke commands
-- ADHDashboard (from project root):
+- prism-focus (from project root):
 ```bash
 node src/test_workflows.js
 python3 -m http.server 8080   # serve for manual UI checks
 ```
-- AI-Forge:
+- prism-spectra:
 ```bash
-cd "AI-Forge"
+cd "prism-spectra"
 npm test
 npm run demo
 ```
@@ -70,7 +74,7 @@ FileIndex (compact, parse-first for an LLM)
     {"path":"prism-focus/src/storage.js","desc":"localStorage persistence"},
     {"path":"prism-focus/src/render.js","desc":"Main render orchestrator"},
     {"path":"prism-focus/src/init.js","desc":"Boot/migration/startup"},
-    {"path":"prism-focus/src/test_workflows.js","desc":"Node test harness (331 tests expected)"}
+    {"path":"prism-focus/src/test_workflows.js","desc":"Node test harness (346 tests expected)"}
   ],
   "prism-spectra": [
     {"path":"prism-spectra/README.md","desc":"Engine overview & demo instructions"},
@@ -80,6 +84,12 @@ FileIndex (compact, parse-first for an LLM)
     {"path":"prism-spectra/tools/daemon.ts","desc":"POC daemon to mock executors / API"},
     {"path":"prism-spectra/docs/PROJECT_PORTAL.md","desc":"Repo-level portal and checklist"},
     {"path":"prism-spectra/docs/REPO_AUDIT.md","desc":"Audit notes and keep/refactor/remove guidance"}
+  ],
+  "prism-beam": [
+    {"path":"prism-beam/README.md","desc":"Workspace coordination overview"},
+    {"path":"prism-beam/docs/COORDINATION.md","desc":"Workspace coordination and repo layout"},
+    {"path":"prism-beam/docs/CHANGE_GUIDE.md","desc":"Workspace change mapping"},
+    {"path":"prism-beam/templates/PULL_REQUEST_TEMPLATE.md","desc":"Shared PR template"}
   ]
 }
 
@@ -87,11 +97,11 @@ Maintenance recommendations (non-destructive)
 - Add `Last-Updated: YYYY-MM-DD` frontmatter to top-level docs (`README.md`, `PROJECT_PORTAL.md`, `PROJECT_BRIEF.md`, `ORIENTATION.md`) to aid LLM session freshness checks.
 - Tag auto-generated files (`generated/*`) with a clear header: "AUTO-GENERATED — DO NOT EDIT" and link to generator.
 - Do not delete files automatically. Propose an archival step: move duplicates into `docs/archived/` with a short rationale and cross-link to canonical doc.
-- Archived files: `ADHDashboard-git/docs/archived/` contains archived handoff docs and the original `PERSONAL_SYSTEMS_CONSTITUTION.md`.
+- Archived files: `prism-focus/docs/archived/` contains archived handoff docs and the original `PERSONAL_SYSTEMS_CONSTITUTION.md`.
 
 Next actions I can take now
 - Create a canonical workspace navigation file (this file) — done.
 - Produce a `docs/archival-proposal.md` listing exact candidate files to archive (I can prepare it if you want).
 - Run the smoke checks for both projects and report results.
 
-If you'd like me to proceed: tell me whether to (A) prepare the archival proposal, (B) run smoke tests now, or (C) start implementing one small canonicalization (e.g., move `PERSONAL_SYSTEMS_CONSTITUTION.md` to `AI-Forge` and replace the other with a pointer).
+If you'd like me to proceed: tell me whether to (A) prepare the archival proposal, (B) run smoke tests now, or (C) start implementing one small canonicalization (e.g., move `PERSONAL_SYSTEMS_CONSTITUTION.md` to `prism-spectra` and replace the other with a pointer).

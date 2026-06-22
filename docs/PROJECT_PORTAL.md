@@ -1,7 +1,7 @@
 ---
 Last-Updated: 2026-06-22
 
-# AI-Forge — Project Portal
+# prism-spectra — Project Portal
 
 Concise orientation and navigation for contributors working on the local AI orchestrator.
 
@@ -9,20 +9,20 @@ Overview
 - Local-first Node TypeScript orchestrator and POC daemon (`tools/daemon.ts`) providing graph build, routing and execution with git-backed checkpoints.
 
 Quick start
-- Read: [AI-Forge PROJECT_BRIEF.md](AI-Forge/PROJECT_BRIEF.md) and [AI-Forge README.md](AI-Forge/README.md)
+- Read: [PROJECT_BRIEF.md](../PROJECT_BRIEF.md) and [README.md](../README.md)
 - Run tests: `npm test` (project uses `tsx`/Node tooling)
 
 Key orientation docs
-- [PROJECT_BRIEF.md](AI-Forge/PROJECT_BRIEF.md)
-- [SYSTEM_PRINCIPLES.md](AI-Forge/SYSTEM_PRINCIPLES.md)
-- [REFERENCE_ARCHITECTURE_LOCAL_AI.md](AI-Forge/REFERENCE_ARCHITECTURE_LOCAL_AI.md)
-- [docs/PERSONAL_OS_OVERVIEW.md](AI-Forge/docs/PERSONAL_OS_OVERVIEW.md)
-- [docs/REPO_AUDIT.md](AI-Forge/docs/REPO_AUDIT.md)
-- POC daemon: [tools/daemon.ts](AI-Forge/tools/daemon.ts)
-- Checkpoints: [src/safety/checkpoint.ts](AI-Forge/src/safety/checkpoint.ts)
+- [PROJECT_BRIEF.md](../PROJECT_BRIEF.md)
+- [SYSTEM_PRINCIPLES.md](../SYSTEM_PRINCIPLES.md)
+- [REFERENCE_ARCHITECTURE_LOCAL_AI.md](../REFERENCE_ARCHITECTURE_LOCAL_AI.md)
+- [docs/PERSONAL_OS_OVERVIEW.md](../docs/PERSONAL_OS_OVERVIEW.md)
+- [docs/REPO_AUDIT.md](../docs/REPO_AUDIT.md)
+- POC daemon: [tools/daemon.ts](../tools/daemon.ts)
+- Checkpoints: [src/safety/checkpoint.ts](../src/safety/checkpoint.ts)
 
 Workspace-level portal (canonical)
-- This file is the canonical workspace-level portal. ADHDashboard links to this portal from `ADHDashboard-git/docs/PROJECT_PORTAL.md`.
+- This file is the canonical workspace-level portal. `prism-focus` links to this portal from [docs/PROJECT_PORTAL.md](../../prism-focus/docs/PROJECT_PORTAL.md).
 
 Where to look for common changes (recipes)
 - **Add/modify executor / patch application**: `src/engine/*`, `src/safety/checkpoint.ts`, `tools/daemon.ts` (preview/execute endpoints).

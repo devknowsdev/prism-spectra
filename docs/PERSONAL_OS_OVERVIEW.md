@@ -1,9 +1,9 @@
-# Personal Operating System — AI-Forge + ADHDashboard
+# Personal Operating System — prism-spectra + prism-focus
 
 Date: 2026-06-22
 
 **Purpose**
-- Provide a concise, actionable architecture and integration map that brings `AI-Forge` and `ADHDashboard` under a single local-first, privacy-preserving Personal Operating System (Personal OS). Focus: workflows optimized for ADHD and autism, and feature extensions for creators and musicians.
+- Provide a concise, actionable architecture and integration map that brings `prism-spectra` and `prism-focus` under a single local-first, privacy-preserving Personal Operating System (Personal OS). Focus: workflows optimized for ADHD and autism, and feature extensions for creators and musicians.
 
 **Vision & Goals**
 - Local-first AI orchestration: user intent → GraphBuilder → Router → ExecutionEngine → Executors, with safety and git-backed checkpoints.
@@ -17,9 +17,9 @@ Date: 2026-06-22
 - Prefer progressive disclosure: surface simple suggestions first, advanced controls behind explicit expanded UI.
 
 **Component map (who does what)**
-- UI: [ADHDashboard-git/README.md](ADHDashboard-git/README.md) — widgets, Planner, Day Wizard, Focus Board, Music Tools. Hook points: Day Wizard, Planner, Task actions, Settings → AI.
+- UI: [prism-focus/README.md](../../prism-focus/README.md) — widgets, Planner, Day Wizard, Focus Board, Music Tools. Hook points: Day Wizard, Planner, Task actions, Settings → AI.
 - Adapter: a small local adapter in the dashboard (feature-detect `GET /api/v1/health`) that routes UI requests to the local orchestrator or to cloud fallbacks.
-- Orchestrator: [AI-Forge/src/index.ts](AI-Forge/src/index.ts) — exports `GraphBuilder`, `Router`, `ExecutionEngine`. POC daemon at [AI-Forge/tools/daemon.ts](AI-Forge/tools/daemon.ts).
+- Orchestrator: [prism-spectra/src/index.ts](../src/index.ts) — exports `GraphBuilder`, `Router`, `ExecutionEngine`. POC daemon at [prism-spectra/tools/daemon.ts](../tools/daemon.ts).
 - Executors: local (`ollama`), remote (`gpt`/`claude`/`free_tier`) and side-effecting `terminal` executor. Pattern cache + ledger for budgeting and learning.
 
 **Data flow (high level)**
@@ -37,7 +37,7 @@ ADHDashboard UI → AiAdapter (in-browser) → Local API (127.0.0.1 + token) or 
 - Integrate `Music Tools` (metronome, tuner, task music metadata) with focus sessions and practice logs.
 - Audio-first input: voice notes → auto-transcribe → quick promote-to-task; retain audio blob in IndexedDB.
 - Tempo-based workflows: tempo-linked timers, "practice session" presets (e.g., 25m/5m but tempo-aware), and automatic session tagging.
-- AI-assisted composition: expose a capability in `AI-Forge` (e.g. `vibe-coding` / audio prompts) to generate small music/lyric suggestions and patches.
+- AI-assisted composition: expose a capability in `prism-spectra` (e.g. `vibe-coding` / audio prompts) to generate small music/lyric suggestions and patches.
 - Export hooks for DAW-friendly files (MIDI/text snippets, metadata bundles).
 
 **Safety & security**
@@ -54,9 +54,9 @@ ADHDashboard UI → AiAdapter (in-browser) → Local API (127.0.0.1 + token) or 
 - `POST /api/v1/install-local` — guarded installer (opt-in + privileged)
 
 **POC status & entry points**
-- See [AI-Forge/README.md](AI-Forge/README.md) for core engine, demo and test runs.
-- POC daemon: [AI-Forge/tools/daemon.ts](AI-Forge/tools/daemon.ts) — mock executors for early testing.
-- Dashboard AI integration: [ADHDashboard-git/src/ai.js](ADHDashboard-git/src/ai.js) and the app Settings → AI flow; feature-detect via `/api/v1/health`.
+- See [README.md](../README.md) for core engine, demo and test runs.
+- POC daemon: [tools/daemon.ts](../tools/daemon.ts) — mock executors for early testing.
+- Dashboard AI integration: [prism-focus/src/ai.js](../../prism-focus/src/ai.js) and the app Settings → AI flow; feature-detect via `/api/v1/health`.
 
 **Acceptance criteria (integration)**
 - Dashboard can detect the local daemon and call `/api/v1/build-graph` and `/api/v1/route` returning valid responses.
@@ -67,19 +67,19 @@ ADHDashboard UI → AiAdapter (in-browser) → Local API (127.0.0.1 + token) or 
 
 **Immediate next steps (prioritized)**
 1. Dashboard feature-detection + Plan preview UI (short POC) — implement `AiAdapter` call in Planner/Day Wizard and show `build-graph` output as card list.
-2. Add `/api/v1/execute-graph` (mock streaming) to `AI-Forge` daemon (SSE first) so the UI can show live node progress.
+2. Add `/api/v1/execute-graph` (mock streaming) to the `prism-spectra` daemon (SSE first) so the UI can show live node progress.
 3. Implement startup token generation + secure storage in daemon; update dashboard adapter to accept the token via Settings or secure prompt.
 4. Add per-node diff preview using `CheckpointManager.diff(nodeId)` in the dashboard UI and require confirmation.
 5. Add integration tests: GraphBuilder fallback, ledger rollovers, checkpoint rollback, parallel stress tests.
 
 **Where to look in the code**
-- AI-Forge core & modules: [AI-Forge/README.md](AI-Forge/README.md) and [AI-Forge/src/index.ts](AI-Forge/src/index.ts)
-- POC daemon: [AI-Forge/tools/daemon.ts](AI-Forge/tools/daemon.ts)
-- Dashboard entry: [ADHDashboard-git/README.md](ADHDashboard-git/README.md) and `src/ai.js` for AI hooks.
+- prism-spectra core & modules: [README.md](../README.md) and [src/index.ts](../src/index.ts)
+- POC daemon: [tools/daemon.ts](../tools/daemon.ts)
+- Dashboard entry: [prism-focus/README.md](../../prism-focus/README.md) and `src/ai.js` for AI hooks.
 
 **Next decision for you**
 - I can implement the dashboard Plan preview now, or build the daemon `/api/v1/execute-graph` mock (streaming). Tell me which to do first and I will proceed.
 
 ---
 
-*Generated and placed under `AI-Forge/docs/` as a single-source overview to guide integration and next work.*
+*Generated and placed under `prism-spectra/docs/` as a single-source overview to guide integration and next work.*
