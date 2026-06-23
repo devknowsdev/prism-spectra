@@ -28,6 +28,9 @@ For the explicit-file sidecar command contract, see
 For copy-paste integration examples, see
 [docs/LOCAL_FILE_SIDECAR_COMMAND_EXAMPLES.md](docs/LOCAL_FILE_SIDECAR_COMMAND_EXAMPLES.md).
 
+For the implementation handover packet, see
+[docs/LOCAL_FILE_SIDECAR_HANDOVER.md](docs/LOCAL_FILE_SIDECAR_HANDOVER.md).
+
 For the current build boundary and stabilization rationale, see
 [docs/BUILD_STABILIZATION_NOTES.md](docs/BUILD_STABILIZATION_NOTES.md).
 

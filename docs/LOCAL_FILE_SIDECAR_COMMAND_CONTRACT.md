@@ -106,6 +106,9 @@ Future Prism repos should treat this API as a small, safe contract surface:
 For concrete integration examples, see
 [docs/LOCAL_FILE_SIDECAR_COMMAND_EXAMPLES.md](docs/LOCAL_FILE_SIDECAR_COMMAND_EXAMPLES.md).
 
+For the implementation handover packet, see
+[docs/LOCAL_FILE_SIDECAR_HANDOVER.md](docs/LOCAL_FILE_SIDECAR_HANDOVER.md).
+
 ## Relationship To The Pipeline
 
 The command composes the existing canonical helpers rather than redefining the

@@ -123,3 +123,5 @@ console.log(refreshed.execution);
 - no external APIs are called
 - callers must ask a human or user before executing approved writes
 
+For the implementation handover packet, see
+[docs/LOCAL_FILE_SIDECAR_HANDOVER.md](docs/LOCAL_FILE_SIDECAR_HANDOVER.md).
