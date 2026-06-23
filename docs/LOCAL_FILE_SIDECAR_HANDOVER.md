@@ -100,6 +100,7 @@ npm run build
 - `src/ingest/localFileRoundTripPlanner.ts`: read-only single-file planner
 - `src/ingest/sidecarRecommendation.ts`: converts planner output into recommendation intent
 - `src/ingest/sidecarValidationReport.ts`: read-only validation report over a single explicit file pair
+- `docs/LOCAL_FILE_SIDECAR_VALIDATION_REPORT_CONTRACT.md`: frozen report semantics and caller guidance
 - `src/ingest/sidecarWritePlan.ts`: turns recommendation intent into approval-gated write plans
 - `src/ingest/sidecarWriteExecutor.ts`: revalidates and performs approved sidecar-only writes
 - `src/ingest/localFileSidecarCommand.ts`: orchestration command that composes the pipeline

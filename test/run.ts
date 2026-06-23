@@ -52,6 +52,10 @@ import {
   type SidecarWriteExecutionResult,
   type SidecarWritePlan,
 } from "../src/index.js";
+import {
+  validateLocalFileSidecar as validateLocalFileSidecarFromIngestBarrel,
+  type SidecarValidationReport as SidecarValidationReportFromIngest,
+} from "../src/ingest/index.js";
 import { dataBoundaryFor } from "../src/types.js";
 import { Wizard, MAX_QUESTIONS } from "../src/wizard/wizard.js";
 import { spawn } from "node:child_process";
@@ -790,6 +794,8 @@ async function main() {
   });
 
   await test("sidecar validation report summarizes one explicit file without writing", async () => {
+    assert.equal(typeof validateLocalFileSidecarFromIngestBarrel, "function");
+
     const fsRoot = path.join(ROOT, "sidecar-validation-report");
     fs.rmSync(fsRoot, { recursive: true, force: true });
     fs.mkdirSync(fsRoot, { recursive: true });
@@ -832,6 +838,8 @@ async function main() {
     );
     const currentReport = await validateLocalFileSidecar({ sourcePath: currentSourcePath, filesystem: io });
     assert.equal(currentReport.status, "valid");
+    assert.equal(currentReport.sourceStatus, "present");
+    assert.equal(currentReport.sidecarStatus, "valid");
     assert.equal(currentReport.schemaVersionStatus, "current");
     assert.equal(currentReport.recommendedAction, "none");
     assert.deepEqual(currentReport.issues, []);
@@ -839,6 +847,8 @@ async function main() {
     assert.equal(currentReport.canExecuteWithApproval, false);
     const currentRoundTrip: SidecarValidationReport = JSON.parse(JSON.stringify(currentReport));
     assert.equal(currentRoundTrip.status, "valid");
+    const currentRoundTripFromIngest: SidecarValidationReportFromIngest = JSON.parse(JSON.stringify(currentReport));
+    assert.equal(currentRoundTripFromIngest.schemaVersionStatus, "current");
 
     const legacySourcePath = path.join("notes", "legacy.txt");
     const legacyContent = "legacy content";
@@ -912,6 +922,7 @@ async function main() {
     fs.writeFileSync(path.join(fsRoot, missingSidecarSourcePath), missingContent);
     const missingSidecarReport = await validateLocalFileSidecar({ sourcePath: missingSidecarSourcePath, filesystem: io });
     assert.equal(missingSidecarReport.status, "missing");
+    assert.equal(missingSidecarReport.sidecarStatus, "missing");
     assert.equal(missingSidecarReport.schemaVersionStatus, "not_applicable");
     assert.equal(missingSidecarReport.recommendedAction, "create_sidecar");
     assert.equal(missingSidecarReport.canAutoPlan, true);
@@ -958,6 +969,7 @@ async function main() {
     fs.writeFileSync(path.join(fsRoot, `${malformedSourcePath}.prism.json`), "{ not json");
     const malformedReport = await validateLocalFileSidecar({ sourcePath: malformedSourcePath, filesystem: io });
     assert.equal(malformedReport.status, "review_needed");
+    assert.equal(malformedReport.sidecarStatus, "malformed");
     assert.equal(malformedReport.schemaVersionStatus, "not_applicable");
     assert.equal(malformedReport.recommendedAction, "review_sidecar");
     assert.equal(malformedReport.canAutoPlan, false);
@@ -990,6 +1002,7 @@ async function main() {
     );
     const mismatchedReport = await validateLocalFileSidecar({ sourcePath: mismatchedSourcePath, filesystem: io });
     assert.equal(mismatchedReport.status, "review_needed");
+    assert.equal(mismatchedReport.sidecarStatus, "mismatched_source");
     assert.equal(mismatchedReport.schemaVersionStatus, "current");
     assert.equal(mismatchedReport.recommendedAction, "review_sidecar");
     assert.equal(mismatchedReport.canAutoPlan, false);
@@ -998,6 +1011,7 @@ async function main() {
 
     const blockedReport = await validateLocalFileSidecar({ sourcePath: path.join("..", "escape.txt"), filesystem: io });
     assert.equal(blockedReport.status, "blocked");
+    assert.equal(blockedReport.sidecarStatus, "blocked");
     assert.equal(blockedReport.recommendedAction, "blocked");
     assert.equal(blockedReport.canAutoPlan, false);
     assert.equal(blockedReport.canExecuteWithApproval, false);

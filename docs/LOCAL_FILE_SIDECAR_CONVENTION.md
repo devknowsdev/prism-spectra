@@ -29,6 +29,8 @@ metadata beside a single file.
   mismatched, and blocked states without writing
 - it does not scan folders or process media
 - it does not migrate existing sidecars
+- for the frozen report contract, see
+  [docs/LOCAL_FILE_SIDECAR_VALIDATION_REPORT_CONTRACT.md](docs/LOCAL_FILE_SIDECAR_VALIDATION_REPORT_CONTRACT.md)
 
 ## Filename
 
@@ -102,3 +104,4 @@ these fields without inventing their own defaults.
 - `src/ingest/sidecar.ts`
 - `src/filesystem/localFilePlanning.ts` for compatibility exports
 - `src/ingest/sidecarValidationReport.ts` for read-only validation reporting
+- `docs/LOCAL_FILE_SIDECAR_VALIDATION_REPORT_CONTRACT.md` for frozen report semantics
