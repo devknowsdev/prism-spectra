@@ -14,6 +14,14 @@ metadata beside a single file.
 - no database persistence
 - no file watching
 
+## Schema Version
+
+- current sidecar schema version: `1`
+- new sidecars emitted by Prism include `"schemaVersion": 1`
+- legacy sidecars without `schemaVersion` remain readable
+- sidecars with unsupported future versions require review and are not accepted
+- no migration runner or batch upgrade flow exists yet
+
 ## Filename
 
 - the sidecar path is the source file path plus `.prism.json`
@@ -64,6 +72,7 @@ these fields without inventing their own defaults.
 
 ```json
 {
+  "schemaVersion": 1,
   "assetId": "asset-song-001",
   "sourcePath": "notes/demo.txt",
   "canonicalPath": "notes/demo.txt",

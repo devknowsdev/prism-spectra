@@ -32,6 +32,7 @@ import {
 } from "../src/adapters/index.js";
 import {
   PRISM_SIDECAR_SUFFIX,
+  PRISM_SIDECAR_SCHEMA_VERSION,
   buildSidecarPath,
   buildSidecarPlan,
   createInitialSidecar,
@@ -638,6 +639,7 @@ async function main() {
   await test("prism local file sidecar helpers follow the required metadata contract", async () => {
     const sourcePath = path.join("content", "song.md");
     assert.equal(PRISM_SIDECAR_SUFFIX, ".prism.json");
+    assert.equal(PRISM_SIDECAR_SCHEMA_VERSION, 1);
     assert.equal(buildSidecarPath(sourcePath), `${sourcePath}.prism.json`);
 
     const initial = createInitialSidecar({
@@ -649,6 +651,7 @@ async function main() {
       derivedFiles: ["content/song.txt"],
       notes: ["seeded for planning"],
     });
+    assert.equal(initial.schemaVersion, 1);
     assert.equal(initial.assetId, "asset-song-001");
     assert.equal(initial.sourcePath, sourcePath);
     assert.equal(initial.canonicalPath, sourcePath);
@@ -664,8 +667,20 @@ async function main() {
     const validated = validateSidecarShape(initial);
     assert.equal(validated.ok, true);
     assert.deepEqual(validated.issues, []);
+    assert.equal(validated.sidecar?.schemaVersion, 1);
     assert.equal(validated.sidecar?.assetId, "asset-song-001");
     assert.equal(validated.sidecar?.canonicalPath, sourcePath);
+
+    const legacySidecar = { ...initial };
+    delete (legacySidecar as { schemaVersion?: number }).schemaVersion;
+    const legacyValidated = validateSidecarShape(legacySidecar);
+    assert.equal(legacyValidated.ok, true);
+    assert.deepEqual(legacyValidated.issues, []);
+    assert.equal(legacyValidated.sidecar?.schemaVersion, undefined);
+
+    const unsupportedVersion = validateSidecarShape({ ...initial, schemaVersion: 999 });
+    assert.equal(unsupportedVersion.ok, false);
+    assert.ok(unsupportedVersion.issues.includes("unsupported_schemaVersion"));
 
     const updated = updateSidecarHashFields(initial, {
       sha256: createHash("sha256").update("song-data").digest("hex"),
@@ -709,6 +724,67 @@ async function main() {
     assert.equal(blockedPlan.status, "blocked");
     assert.equal(blockedPlan.sidecarStatus, "invalid");
     assert.deepEqual(blockedPlan.reasons, ["source_path_mismatch"]);
+  });
+
+  await test("unsupported future schema versions are rejected without migration", async () => {
+    const fsRoot = path.join(ROOT, "sidecar-schema-version");
+    fs.rmSync(fsRoot, { recursive: true, force: true });
+    fs.mkdirSync(fsRoot, { recursive: true });
+    fs.mkdirSync(path.join(fsRoot, "notes"), { recursive: true });
+
+    const adapter = createFilesystemAdapter({
+      id: "filesystem-sidecar-schema-version",
+      allowedRoots: [fsRoot],
+      baseDir: fsRoot,
+    });
+    const io = filesystemRoundTripIO(adapter);
+
+    const sourcePath = path.join("notes", "future.txt");
+    fs.writeFileSync(path.join(fsRoot, sourcePath), "future content");
+    const futureSidecar = createInitialSidecar({
+      assetId: "asset-future-001",
+      sourcePath,
+      canonicalPath: sourcePath,
+      kind: "note",
+      sha256: "abc",
+      sizeBytes: 3,
+      createdAt: "2026-06-23T00:00:00.000Z",
+      updatedAt: "2026-06-23T00:00:00.000Z",
+      tags: ["draft"],
+      derivedFiles: [],
+      analysisStatus: "pending",
+      approvalState: "unreviewed",
+      notes: [],
+    });
+    const unsupportedFutureSidecar = { ...futureSidecar, schemaVersion: 999 };
+    fs.writeFileSync(path.join(fsRoot, `${sourcePath}.prism.json`), `${JSON.stringify(unsupportedFutureSidecar, null, 2)}\n`);
+
+    const plan = await planLocalFileRoundTrip({ sourcePath, filesystem: io });
+    assert.equal(plan.sidecarStatus, "malformed");
+    assert.equal(plan.recommendedAction, "review_sidecar");
+    assert.ok(plan.reasons.includes("unsupported_schemaVersion"));
+
+    const recommendation = recommendSidecarAction(plan, { now: () => "2026-06-23T01:02:03.000Z" });
+    assert.equal(recommendation.action, "review_sidecar");
+    assert.equal(recommendation.reason, "sidecar_malformed");
+    assert.equal(recommendation.draft, undefined);
+    assert.equal(recommendation.patch, undefined);
+
+    const writePlan = planSidecarWrite(recommendation);
+    assert.equal(writePlan.status, "blocked");
+    assert.equal(writePlan.operation, "none");
+
+    const commandResult = await runLocalFileSidecarCommand({
+      mode: "execute_approved",
+      sourcePath,
+      filesystemAdapter: adapter,
+      approval: { granted: true, approver: "tester" },
+    });
+    assert.equal(commandResult.status, "blocked");
+    assert.equal(commandResult.recommendation.action, "review_sidecar");
+    assert.equal(commandResult.writePlan.status, "blocked");
+    assert.equal(commandResult.execution, undefined);
+    assert.equal(fs.readFileSync(path.join(fsRoot, `${sourcePath}.prism.json`), "utf-8"), `${JSON.stringify(unsupportedFutureSidecar, null, 2)}\n`);
   });
 
   await test("explicit file round-trip planner classifies source and adjacent sidecar safely", async () => {
@@ -862,6 +938,7 @@ async function main() {
     assert.ok(missingRecommendation.draft);
     assert.equal(missingRecommendation.patch, undefined);
     assert.equal(missingRecommendation.draft?.assetId, "asset-notes-draft.txt");
+    assert.equal(missingRecommendation.draft?.schemaVersion, 1);
     assert.equal(missingRecommendation.draft?.sourcePath, "notes/draft.txt");
     assert.equal(missingRecommendation.draft?.canonicalPath, "notes/draft.txt");
     assert.equal(missingRecommendation.draft?.sha256, missingPlan.sourceFacts.sha256);
@@ -1063,6 +1140,7 @@ async function main() {
     const createRecommendationSnapshot = JSON.stringify(createRecommendation);
     const createPlan = planSidecarWrite(createRecommendation);
     const expectedCreateJson = {
+      schemaVersion: 1,
       assetId: "asset-notes-draft.txt",
       sourcePath,
       canonicalPath: sourcePath,
@@ -1086,6 +1164,7 @@ async function main() {
     assert.equal(createPlan.content, `${JSON.stringify(expectedCreateJson, null, 2)}\n`);
     assert.deepEqual(createPlan.json, expectedCreateJson);
     assert.equal(createPlan.json?.sha256, sha256);
+    assert.equal(createPlan.json?.schemaVersion, 1);
     assert.equal(createPlan.patch, undefined);
     assert.deepEqual(createPlan.reasons, ["sidecar_missing"]);
     assert.deepEqual(createPlan.warnings, []);
@@ -1359,6 +1438,7 @@ async function main() {
     assert.equal(written.sourcePath, sourcePath);
     assert.equal(written.sidecarPath, sidecarPath);
     const updatedSidecar = JSON.parse(fs.readFileSync(path.join(fsRoot, sidecarPath), "utf-8"));
+    assert.equal(updatedSidecar.schemaVersion, 1);
     assert.equal(updatedSidecar.sha256, sourceHash);
     assert.equal(updatedSidecar.sizeBytes, Buffer.byteLength(sourceContent));
     assert.equal(updatedSidecar.updatedAt, "2026-06-23T01:02:03.000Z");
@@ -1679,6 +1759,63 @@ async function main() {
     assert.ok(!tracedMalformed.operations.includes("writeJsonFile"));
     assert.equal(JSON.parse(JSON.stringify(malformedExecute)).status, "blocked");
 
+    const versionRoot = path.join(ROOT, "sidecar-command-version");
+    fs.rmSync(versionRoot, { recursive: true, force: true });
+    fs.mkdirSync(versionRoot, { recursive: true });
+    fs.mkdirSync(path.join(versionRoot, "notes"), { recursive: true });
+    const versionSourcePath = "notes/versioned.txt";
+    fs.writeFileSync(path.join(versionRoot, versionSourcePath), "versioned content");
+    const versionedSidecar = createInitialSidecar({
+      assetId: "asset-notes-versioned.txt",
+      sourcePath: versionSourcePath,
+      canonicalPath: versionSourcePath,
+      kind: "note",
+      sha256: "old-hash",
+      sizeBytes: 3,
+      createdAt: fixedNow(),
+      updatedAt: fixedNow(),
+      tags: [],
+      derivedFiles: [],
+      analysisStatus: "pending",
+      approvalState: "unreviewed",
+      notes: [],
+    });
+    const unsupportedVersionSidecar = { ...versionedSidecar, schemaVersion: 999 };
+    fs.writeFileSync(path.join(versionRoot, `${versionSourcePath}.prism.json`), `${JSON.stringify(unsupportedVersionSidecar, null, 2)}\n`);
+
+    const tracedVersion = tracingFilesystemAdapter(
+      createFilesystemAdapter({
+        id: "filesystem-sidecar-command-version",
+        allowedRoots: [versionRoot],
+        baseDir: versionRoot,
+      }),
+    );
+
+    const versionPlanOnly = await runLocalFileSidecarCommand({
+      mode: "plan_only",
+      sourcePath: versionSourcePath,
+      filesystemAdapter: tracedVersion.adapter,
+    });
+    assert.equal(versionPlanOnly.status, "blocked");
+    assert.equal(versionPlanOnly.recommendation.action, "review_sidecar");
+    assert.equal(versionPlanOnly.writePlan.status, "blocked");
+    assert.equal(versionPlanOnly.execution, undefined);
+    assert.equal(fs.readFileSync(path.join(versionRoot, `${versionSourcePath}.prism.json`), "utf-8"), `${JSON.stringify(unsupportedVersionSidecar, null, 2)}\n`);
+    assert.ok(!tracedVersion.operations.includes("writeJsonFile"));
+
+    const versionExecute = await runLocalFileSidecarCommand({
+      mode: "execute_approved",
+      sourcePath: versionSourcePath,
+      filesystemAdapter: tracedVersion.adapter,
+      approval: { granted: true, approver: "tester" },
+    });
+    assert.equal(versionExecute.status, "blocked");
+    assert.equal(versionExecute.recommendation.action, "review_sidecar");
+    assert.equal(versionExecute.writePlan.status, "blocked");
+    assert.equal(versionExecute.execution, undefined);
+    assert.equal(fs.readFileSync(path.join(versionRoot, `${versionSourcePath}.prism.json`), "utf-8"), `${JSON.stringify(unsupportedVersionSidecar, null, 2)}\n`);
+    assert.ok(!tracedVersion.operations.includes("writeJsonFile"));
+
     const staleRoot = path.join(ROOT, "sidecar-command-stale");
     fs.rmSync(staleRoot, { recursive: true, force: true });
     fs.mkdirSync(staleRoot, { recursive: true });
@@ -1722,6 +1859,7 @@ async function main() {
     assert.equal(staleExecute.writePlan.operation, "update_sidecar");
     assert.equal(staleExecute.execution?.status, "written");
     const staleWritten = JSON.parse(fs.readFileSync(path.join(staleRoot, `${staleSourcePath}.prism.json`), "utf-8"));
+    assert.equal(staleWritten.schemaVersion, 1);
     assert.equal(staleWritten.sha256, staleHash);
     assert.equal(staleWritten.sizeBytes, Buffer.byteLength(staleContent));
     assert.equal(typeof staleWritten.updatedAt, "string");
@@ -1927,6 +2065,7 @@ async function main() {
     assert.equal(staleResult.writePlan.operation, "update_sidecar");
     assert.equal(staleResult.execution?.status, "written");
     const staleWritten = JSON.parse(fs.readFileSync(path.join(staleRoot, `${staleSourcePath}.prism.json`), "utf-8"));
+    assert.equal(staleWritten.schemaVersion, 1);
     assert.equal(staleWritten.sha256, staleHash);
     assert.equal(staleWritten.sizeBytes, Buffer.byteLength(staleContent));
     assert.equal(staleWritten.assetId, staleSidecar.assetId);

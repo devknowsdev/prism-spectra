@@ -1,5 +1,6 @@
 import {
   PRISM_SIDECAR_SUFFIX,
+  PRISM_SIDECAR_SCHEMA_VERSION,
   type BuildSidecarPlanInput,
   type CreateInitialSidecarInput,
   type PrismLocalFilePlan,
@@ -9,6 +10,7 @@ import {
 } from "./sidecarTypes.js";
 
 export { PRISM_SIDECAR_SUFFIX } from "./sidecarTypes.js";
+export { PRISM_SIDECAR_SCHEMA_VERSION } from "./sidecarTypes.js";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -60,6 +62,7 @@ export function createInitialSidecar(input: CreateInitialSidecarInput): PrismSid
   const updatedAt = input.updatedAt ?? createdAt;
 
   return {
+    schemaVersion: PRISM_SIDECAR_SCHEMA_VERSION,
     assetId: input.assetId,
     sourcePath: input.sourcePath,
     canonicalPath: input.canonicalPath,
@@ -82,6 +85,8 @@ export function validateSidecarShape(value: unknown): SidecarShapeValidationResu
   }
 
   const issues: string[] = [];
+  const hasSchemaVersion = Object.prototype.hasOwnProperty.call(value, "schemaVersion");
+  const schemaVersion = value.schemaVersion;
   const assetId = readNonEmptyString(value.assetId);
   const sourcePath = readNonEmptyString(value.sourcePath);
   const canonicalPath = readNonEmptyString(value.canonicalPath);
@@ -96,6 +101,9 @@ export function validateSidecarShape(value: unknown): SidecarShapeValidationResu
   const derivedFiles = value.derivedFiles === undefined ? [] : isStringArray(value.derivedFiles) ? value.derivedFiles : null;
   const notes = value.notes === undefined ? [] : isStringArray(value.notes) ? value.notes : null;
 
+  if (hasSchemaVersion && schemaVersion !== PRISM_SIDECAR_SCHEMA_VERSION) {
+    issues.push("unsupported_schemaVersion");
+  }
   if (!assetId) issues.push("missing_assetId");
   if (!sourcePath) issues.push("missing_sourcePath");
   if (!canonicalPath) issues.push("missing_canonicalPath");
@@ -118,6 +126,7 @@ export function validateSidecarShape(value: unknown): SidecarShapeValidationResu
     ok: true,
     issues: [],
     sidecar: {
+      ...(hasSchemaVersion ? { schemaVersion: PRISM_SIDECAR_SCHEMA_VERSION } : {}),
       assetId,
       sourcePath,
       canonicalPath,

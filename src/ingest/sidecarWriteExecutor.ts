@@ -34,6 +34,7 @@ const ALLOWED_UPDATE_PATCH_KEYS = ["sha256", "sizeBytes", "updatedAt"] as const;
 
 function cloneSidecar(sidecar: PrismSidecar): PrismSidecar {
   return {
+    ...(sidecar.schemaVersion === undefined ? {} : { schemaVersion: sidecar.schemaVersion }),
     assetId: sidecar.assetId,
     sourcePath: sidecar.sourcePath,
     canonicalPath: sidecar.canonicalPath,

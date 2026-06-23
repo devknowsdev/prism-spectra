@@ -1,9 +1,11 @@
 export const PRISM_SIDECAR_SUFFIX = ".prism.json" as const;
+export const PRISM_SIDECAR_SCHEMA_VERSION = 1 as const;
 
 export type PrismSidecarStatus = "missing" | "present" | "invalid";
 export type PrismLocalFilePlanStatus = "candidate" | "ready" | "blocked";
 
 export interface PrismSidecar {
+  schemaVersion?: typeof PRISM_SIDECAR_SCHEMA_VERSION;
   assetId: string;
   sourcePath: string;
   canonicalPath: string;

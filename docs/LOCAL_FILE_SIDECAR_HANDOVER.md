@@ -10,6 +10,7 @@ prior sprint.
 
 - explicit-file sidecar pipeline is implemented
 - sidecar convention exists
+- schema versioning exists
 - planner exists
 - recommendation layer exists
 - write-plan layer exists
@@ -93,7 +94,7 @@ npm run build
 
 ## File Map
 
-- `src/ingest/sidecarTypes.ts`: canonical sidecar fields, suffix, and type definitions
+- `src/ingest/sidecarTypes.ts`: canonical sidecar fields, schema version constant, suffix, and type definitions
 - `src/ingest/sidecar.ts`: canonical sidecar semantics and helper functions
 - `src/ingest/localFileRoundTripPlanner.ts`: read-only single-file planner
 - `src/ingest/sidecarRecommendation.ts`: converts planner output into recommendation intent
@@ -124,4 +125,3 @@ The existing test suite already covers the handover-relevant contract points:
 - unsafe path rejection
 
 Because those behaviors are already covered, no new tests were needed for this sprint.
-

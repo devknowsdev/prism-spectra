@@ -21,6 +21,7 @@ export interface SidecarWritePlan {
 
 function cloneSidecar(sidecar: PrismSidecar): PrismSidecar {
   return {
+    ...(sidecar.schemaVersion === undefined ? {} : { schemaVersion: sidecar.schemaVersion }),
     assetId: sidecar.assetId,
     sourcePath: sidecar.sourcePath,
     canonicalPath: sidecar.canonicalPath,

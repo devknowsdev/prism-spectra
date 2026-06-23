@@ -31,6 +31,8 @@ ingestion.
 - sidecar writes only in `execute_approved`
 - sidecar writes require explicit `local_write` approval
 - existing filesystem adapter and path guard boundaries are used
+- current sidecars use schema version `1`; legacy sidecars without a version
+  remain readable
 
 ## Public Result Shape
 
