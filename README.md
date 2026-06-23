@@ -1,11 +1,25 @@
 ---
-Last-Updated: 2026-06-22
+Last-Updated: 2026-06-23
 
 # prism-spectra
 
 Local-first AI orchestration and execution engine for the Prism workspace.
 It provides the routing, memory, checkpointing, and capability surfaces that
 support the dashboard and workspace coordination docs.
+
+## Ecosystem Role
+
+This repository is responsible for Prism Core orchestration, capability
+routing, adapters, memory, safety, and execution provenance.
+It is not responsible for ADHDashboard state or public music publication.
+For ecosystem-wide architecture, see [prism-beam/docs/ECOSYSTEM_OVERVIEW.md](https://github.com/devknowsdev/prism-beam/blob/main/docs/ECOSYSTEM_OVERVIEW.md)
+and [prism-beam/docs/REPO_BOUNDARIES.md](https://github.com/devknowsdev/prism-beam/blob/main/docs/REPO_BOUNDARIES.md).
+
+For adapter contract details and the local mock scaffold, see
+[docs/ADAPTER_CONTRACTS.md](docs/ADAPTER_CONTRACTS.md).
+
+For the current build boundary and stabilization rationale, see
+[docs/BUILD_STABILIZATION_NOTES.md](docs/BUILD_STABILIZATION_NOTES.md).
 
 ## What this repo is for
 

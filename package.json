@@ -8,13 +8,13 @@
     "ai-forge": "./dist/cli.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "demo": "tsx src/demo.ts",
     "forge": "tsx src/cli.ts",
     "start": "tsx src/cli.ts",
     "pretest": "npm run typecheck",
-    "test": "tsx test/run.ts"
+    "test": "node --import tsx test/run.ts"
   },
   "license": "ISC",
   "engines": {

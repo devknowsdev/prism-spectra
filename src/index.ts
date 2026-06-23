@@ -14,6 +14,7 @@ export { validate } from "./safety/validation.js";
 export { FileLockManager } from "./engine/fileLock.js";
 export { ExecutionEngine } from "./engine/executionEngine.js";
 export { buildExecutorRegistry } from "./executors/index.js";
+export * from "./adapters/index.js";
 export { Wizard, WizardPlan, MAX_QUESTIONS } from "./wizard/wizard.js";
 export type { WizardQuestion } from "./wizard/wizard.js";
 export { loadForgeConfig, ensureForgeDirs, exampleConfigPath, defaultForgePaths } from "./config/loadConfig.js";

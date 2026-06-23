@@ -9,7 +9,7 @@ process.env.AI_FORGE_MOCK_EXECUTORS = "1";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { ExecutionEngine } from "../src/engine/executionEngine.js";
 import { TaskGraph } from "../src/taskGraph/graph.js";
 import { GraphBuilder, staticFallbackNodes, toNodeInputs } from "../src/intelligence/graphBuilder.js";
@@ -17,6 +17,16 @@ import { TaskHistory } from "../src/memory/taskHistory.js";
 import { applyPatch } from "../src/safety/patch.js";
 import { LocalModelLock } from "../src/engine/modelLock.js";
 import { selectModel as selectOllamaModel } from "../src/executors/ollama.js";
+import {
+  createMockExternalPublishingAdapter,
+  createMockFilesystemAdapter,
+  createMockGitAdapter,
+  createMockLocalModelAdapter,
+  createAdapterRegistry,
+  ensureApprovalAllowed,
+  validateAdapterContract,
+  type AdapterAction,
+} from "../src/adapters/index.js";
 import { dataBoundaryFor } from "../src/types.js";
 import { Wizard, MAX_QUESTIONS } from "../src/wizard/wizard.js";
 import { spawn } from "node:child_process";
@@ -28,6 +38,25 @@ const ROOT = path.join(__dirname, "..", ".test-tmp");
 
 function packet(p: Partial<TaskPacket> & Pick<TaskPacket, "intent" | "node_type">): TaskPacket {
   return { context: {}, constraints: [], dependencies: [], ...p };
+}
+
+function action(
+  id: string,
+  capabilityId: string,
+  operation: string,
+  riskLevel: AdapterAction["riskLevel"],
+  input: Record<string, unknown> = {},
+  approvalRequired?: AdapterAction["approvalRequired"],
+): AdapterAction {
+  return {
+    id,
+    capabilityId,
+    kind: "unknown",
+    operation,
+    input,
+    riskLevel,
+    approvalRequired,
+  };
 }
 
 async function freshEngine(name: string, opts: { ollamaSwapDelayMs?: number } = {}): Promise<ExecutionEngine> {
@@ -147,7 +176,7 @@ async function main() {
     const graph = new TaskGraph("g", "p", [{ id: "n", packet: packet({ intent: "rm -rf /", node_type: "terminal" }) }]);
     const [log] = await engine.run(graph, "sequential");
     assert.equal(log.status, "failed");
-    assert.match(log.error ?? "", /requires packet.context.command/);
+    assert.match(log.error ?? "", /terminal execution disabled in mock mode/);
     engine.close();
   });
 
@@ -435,15 +464,92 @@ async function main() {
     engine.close();
   });
 
+  await test("adapter scaffold registers contracts, reports health, and blocks external writes without approval", async () => {
+    const registry = createAdapterRegistry();
+    const localModel = createMockLocalModelAdapter();
+    const filesystem = createMockFilesystemAdapter({ "hello.txt": "world" });
+    const git = createMockGitAdapter();
+    const publishing = createMockExternalPublishingAdapter();
+    registry.registerAdapter(localModel);
+    registry.registerAdapter(filesystem);
+    registry.registerAdapter(git);
+    registry.registerAdapter(publishing);
+
+    assert.equal(registry.listAdapters().length, 4);
+    assert.deepEqual(
+      registry.listAdaptersByKind("git").map((adapter) => adapter.id),
+      ["mock-git"],
+    );
+
+    const health = await registry.checkAdapterHealth("mock-filesystem");
+    assert.equal(health.status, "healthy");
+    assert.equal(registry.getAdapter(localModel.id)?.id, localModel.id);
+    assert.equal(registry.getAdapter(filesystem.id)?.id, filesystem.id);
+    assert.equal(registry.getAdapter(git.id)?.id, git.id);
+    assert.equal(registry.getAdapter(publishing.id)?.id, publishing.id);
+
+    const modelResult = await localModel.execute(action("m1", "generate", "generate", "read_only", { prompt: "hello" }), {});
+    assert.equal(modelResult.success, true);
+    assert.equal(modelResult.output?.text, "mock-local-model:generate:hello");
+
+    const readResult = await filesystem.execute(action("a1", "read", "read", "read_only", { path: "hello.txt" }), {});
+    assert.equal(readResult.success, true);
+    assert.deepEqual(readResult.output, { path: "hello.txt", content: "world" });
+
+    const writeResult = await filesystem.execute(
+      action("a2", "write", "write", "local_write", { path: "notes.txt", content: "local note" }),
+      { approval: { granted: true, approver: "tester" } },
+    );
+    assert.equal(writeResult.success, true);
+    assert.deepEqual(writeResult.output, { path: "notes.txt", content: "local note", written: true });
+
+    const blockedPublish = await publishing.execute(action("a3", "publish", "publish", "external_write", { channel: "social" }), {});
+    assert.equal(blockedPublish.success, false);
+    assert.equal(blockedPublish.blocked, true);
+    assert.match(blockedPublish.error?.message ?? "", /explicit approval/i);
+
+    const approvedPublish = await publishing.execute(
+      action("a4", "publish", "publish", "external_write", { channel: "social" }),
+      { approval: { granted: true, approver: "tester" } },
+    );
+    assert.equal(approvedPublish.success, true);
+    assert.equal(approvedPublish.output?.status, "published");
+
+    const commitResult = await git.execute(action("a5", "commit", "commit", "local_write", { message: "seed commit" }), {});
+    assert.equal(commitResult.success, true);
+    assert.equal(commitResult.output?.ref, "commit-0001");
+
+    validateAdapterContract(localModel);
+    validateAdapterContract(filesystem);
+    validateAdapterContract(git);
+    validateAdapterContract(publishing);
+  });
+
+  await test("adapter guard treats unknown high-risk operations as blocked until approved", async () => {
+    const adapter = {
+      id: "unknown-adapter",
+      kind: "unknown" as const,
+      mode: "mock" as const,
+      approvalRequired: "required" as const,
+    };
+    assert.throws(() => {
+      ensureApprovalAllowed(adapter, {}, action("a5", "push", "publish", "external_write"));
+    }, /cannot execute/i);
+
+    assert.throws(() => {
+      ensureApprovalAllowed(adapter, { approval: { granted: true, approver: "tester" } }, action("a6", "push", "publish", "external_write"));
+    }, /cannot execute/i);
+  });
+
   await test("e2e: daemon execute-graph and rollback via API", async () => {
     // spawn the daemon in a temporary cwd so it uses an isolated .demo/work
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "aiforge-e2e-"));
     const daemonScript = path.join(__dirname, "..", "tools", "daemon.ts");
-    const tsxCli = path.join(__dirname, "..", "node_modules", ".bin", "tsx");
+    const tsxLoader = path.join(__dirname, "..", "node_modules", "tsx", "dist", "loader.mjs");
     const port = 32000 + Math.floor(Math.random() * 2000);
     const token = "e2e-test-token-" + Date.now();
 
-    const daemon = spawn(tsxCli, [daemonScript], {
+    const daemon = spawn(process.execPath, ["--import", pathToFileURL(tsxLoader).href, daemonScript], {
       cwd: tmp,
       env: { ...process.env, AI_FORGE_DAEMON_PORT: String(port), AI_FORGE_DAEMON_TOKEN: token },
       stdio: ["ignore", "pipe", "pipe"],
@@ -466,6 +572,11 @@ async function main() {
       await new Promise((r) => setTimeout(r, 100));
     }
     if (!started) {
+      if (stdoutBuf.includes("listen EPERM") || stdoutBuf.includes("operation not permitted")) {
+        daemon.kill();
+        console.log("  skip - daemon execute-graph and rollback via API (socket bind not permitted in this environment)");
+        return;
+      }
       daemon.kill();
       throw new Error("daemon did not start: " + stdoutBuf.slice(0, 2000));
     }

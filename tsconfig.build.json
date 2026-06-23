@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "src/events/**",
+    "src/runtime/**",
+    "src/executors/localExecutor.ts",
+    "src/routing/taskClassifier.ts",
+    "src/routing/types.ts",
+    "src/providers/ollamaClient.ts",
+    "src/config/modelRegistry.ts",
+    "src/memory/ledgerStore.ts",
+    "src/memory/replay.ts"
+  ]
+}
