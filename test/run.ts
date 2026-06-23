@@ -41,12 +41,14 @@ import {
   planSidecarWrite,
   executeSidecarWritePlan,
   runLocalFileSidecarCommand,
+  validateLocalFileSidecar,
   updateSidecarHashFields,
   validateSidecarShape,
   type LocalFileRoundTripPlan,
   type LocalFileSidecarCommandInput,
   type LocalFileSidecarCommandResult,
   type SidecarRecommendation,
+  type SidecarValidationReport,
   type SidecarWriteExecutionResult,
   type SidecarWritePlan,
 } from "../src/index.js";
@@ -785,6 +787,225 @@ async function main() {
     assert.equal(commandResult.writePlan.status, "blocked");
     assert.equal(commandResult.execution, undefined);
     assert.equal(fs.readFileSync(path.join(fsRoot, `${sourcePath}.prism.json`), "utf-8"), `${JSON.stringify(unsupportedFutureSidecar, null, 2)}\n`);
+  });
+
+  await test("sidecar validation report summarizes one explicit file without writing", async () => {
+    const fsRoot = path.join(ROOT, "sidecar-validation-report");
+    fs.rmSync(fsRoot, { recursive: true, force: true });
+    fs.mkdirSync(fsRoot, { recursive: true });
+    fs.mkdirSync(path.join(fsRoot, "notes"), { recursive: true });
+
+    const traced = tracingFilesystemAdapter(
+      createFilesystemAdapter({
+        id: "filesystem-sidecar-validation-report",
+        allowedRoots: [fsRoot],
+        baseDir: fsRoot,
+      }),
+    );
+    const io = filesystemRoundTripIO(traced.adapter);
+
+    const currentSourcePath = path.join("notes", "current.txt");
+    const currentContent = "current content";
+    const currentHash = createHash("sha256").update(currentContent).digest("hex");
+    fs.writeFileSync(path.join(fsRoot, currentSourcePath), currentContent);
+    fs.writeFileSync(
+      path.join(fsRoot, `${currentSourcePath}.prism.json`),
+      `${JSON.stringify(
+        createInitialSidecar({
+          assetId: "asset-notes-current.txt",
+          sourcePath: currentSourcePath,
+          canonicalPath: currentSourcePath,
+          kind: "note",
+          sha256: currentHash,
+          sizeBytes: Buffer.byteLength(currentContent),
+          createdAt: "2026-06-23T00:00:00.000Z",
+          updatedAt: "2026-06-23T00:00:00.000Z",
+          tags: [],
+          derivedFiles: [],
+          analysisStatus: "pending",
+          approvalState: "unreviewed",
+          notes: [],
+        }),
+        null,
+        2,
+      )}\n`,
+    );
+    const currentReport = await validateLocalFileSidecar({ sourcePath: currentSourcePath, filesystem: io });
+    assert.equal(currentReport.status, "valid");
+    assert.equal(currentReport.schemaVersionStatus, "current");
+    assert.equal(currentReport.recommendedAction, "none");
+    assert.deepEqual(currentReport.issues, []);
+    assert.equal(currentReport.canAutoPlan, false);
+    assert.equal(currentReport.canExecuteWithApproval, false);
+    const currentRoundTrip: SidecarValidationReport = JSON.parse(JSON.stringify(currentReport));
+    assert.equal(currentRoundTrip.status, "valid");
+
+    const legacySourcePath = path.join("notes", "legacy.txt");
+    const legacyContent = "legacy content";
+    const legacyHash = createHash("sha256").update(legacyContent).digest("hex");
+    fs.writeFileSync(path.join(fsRoot, legacySourcePath), legacyContent);
+    const legacySidecar = createInitialSidecar({
+      assetId: "asset-notes-legacy.txt",
+      sourcePath: legacySourcePath,
+      canonicalPath: legacySourcePath,
+      kind: "note",
+      sha256: legacyHash,
+      sizeBytes: Buffer.byteLength(legacyContent),
+      createdAt: "2026-06-23T00:00:00.000Z",
+      updatedAt: "2026-06-23T00:00:00.000Z",
+      tags: ["legacy"],
+      derivedFiles: [],
+      analysisStatus: "pending",
+      approvalState: "unreviewed",
+      notes: [],
+    });
+    delete (legacySidecar as { schemaVersion?: number }).schemaVersion;
+    fs.writeFileSync(path.join(fsRoot, `${legacySourcePath}.prism.json`), `${JSON.stringify(legacySidecar, null, 2)}\n`);
+    const legacyReport = await validateLocalFileSidecar({ sourcePath: legacySourcePath, filesystem: io });
+    assert.equal(legacyReport.status, "valid");
+    assert.equal(legacyReport.schemaVersionStatus, "legacy_missing");
+    assert.equal(legacyReport.recommendedAction, "none");
+    assert.equal(legacyReport.issues.length, 1);
+    assert.equal(legacyReport.issues[0].code, "legacy_schemaVersion_missing");
+    assert.equal(legacyReport.issues[0].severity, "warning");
+    assert.equal(legacyReport.canAutoPlan, false);
+    assert.equal(legacyReport.canExecuteWithApproval, false);
+    assert.equal(JSON.parse(JSON.stringify(legacyReport)).schemaVersionStatus, "legacy_missing");
+
+    const futureSourcePath = path.join("notes", "future.txt");
+    const futureContent = "future content";
+    fs.writeFileSync(path.join(fsRoot, futureSourcePath), futureContent);
+    const futureSidecar = createInitialSidecar({
+      assetId: "asset-notes-future.txt",
+      sourcePath: futureSourcePath,
+      canonicalPath: futureSourcePath,
+      kind: "note",
+      sha256: "old-hash",
+      sizeBytes: 3,
+      createdAt: "2026-06-23T00:00:00.000Z",
+      updatedAt: "2026-06-23T00:00:00.000Z",
+      tags: [],
+      derivedFiles: [],
+      analysisStatus: "pending",
+      approvalState: "unreviewed",
+      notes: [],
+    });
+    fs.writeFileSync(path.join(fsRoot, `${futureSourcePath}.prism.json`), `${JSON.stringify({ ...futureSidecar, schemaVersion: 999 }, null, 2)}\n`);
+    const futureReport = await validateLocalFileSidecar({ sourcePath: futureSourcePath, filesystem: io });
+    assert.equal(futureReport.status, "review_needed");
+    assert.equal(futureReport.schemaVersionStatus, "unsupported");
+    assert.equal(futureReport.recommendedAction, "review_sidecar");
+    assert.equal(futureReport.canAutoPlan, false);
+    assert.equal(futureReport.canExecuteWithApproval, false);
+    assert.ok(futureReport.issues.some((issue) => issue.code === "unsupported_schemaVersion"));
+    assert.equal(JSON.parse(JSON.stringify(futureReport)).status, "review_needed");
+
+    const missingSourcePath = path.join("notes", "missing.txt");
+    const missingSourceReport = await validateLocalFileSidecar({ sourcePath: missingSourcePath, filesystem: io });
+    assert.equal(missingSourceReport.status, "blocked");
+    assert.equal(missingSourceReport.recommendedAction, "blocked");
+    assert.equal(missingSourceReport.canAutoPlan, false);
+    assert.equal(missingSourceReport.canExecuteWithApproval, false);
+
+    const missingSidecarSourcePath = path.join("notes", "draft.txt");
+    const missingContent = "draft content";
+    fs.writeFileSync(path.join(fsRoot, missingSidecarSourcePath), missingContent);
+    const missingSidecarReport = await validateLocalFileSidecar({ sourcePath: missingSidecarSourcePath, filesystem: io });
+    assert.equal(missingSidecarReport.status, "missing");
+    assert.equal(missingSidecarReport.schemaVersionStatus, "not_applicable");
+    assert.equal(missingSidecarReport.recommendedAction, "create_sidecar");
+    assert.equal(missingSidecarReport.canAutoPlan, true);
+    assert.equal(missingSidecarReport.canExecuteWithApproval, true);
+    assert.equal(JSON.parse(JSON.stringify(missingSidecarReport)).status, "missing");
+
+    const staleSourcePath = path.join("notes", "stale.txt");
+    const staleContent = "stale content";
+    fs.writeFileSync(path.join(fsRoot, staleSourcePath), staleContent);
+    fs.writeFileSync(
+      path.join(fsRoot, `${staleSourcePath}.prism.json`),
+      `${JSON.stringify(
+        createInitialSidecar({
+          assetId: "asset-notes-stale.txt",
+          sourcePath: staleSourcePath,
+          canonicalPath: staleSourcePath,
+          kind: "note",
+          sha256: "old-hash",
+          sizeBytes: 1,
+          createdAt: "2026-06-23T00:00:00.000Z",
+          updatedAt: "2026-06-23T00:00:00.000Z",
+          tags: ["draft"],
+          derivedFiles: [],
+          analysisStatus: "pending",
+          approvalState: "unreviewed",
+          notes: [],
+        }),
+        null,
+        2,
+      )}\n`,
+    );
+    const staleReport = await validateLocalFileSidecar({ sourcePath: staleSourcePath, filesystem: io });
+    assert.equal(staleReport.status, "review_needed");
+    assert.equal(staleReport.schemaVersionStatus, "current");
+    assert.equal(staleReport.recommendedAction, "update_sidecar_hash");
+    assert.equal(staleReport.canAutoPlan, true);
+    assert.equal(staleReport.canExecuteWithApproval, true);
+    assert.ok(staleReport.issues.some((issue) => issue.code === "sha256_mismatch"));
+    assert.ok(staleReport.issues.some((issue) => issue.code === "sizeBytes_mismatch"));
+    assert.equal(JSON.parse(JSON.stringify(staleReport)).recommendedAction, "update_sidecar_hash");
+
+    const malformedSourcePath = path.join("notes", "broken.txt");
+    fs.writeFileSync(path.join(fsRoot, malformedSourcePath), "broken content");
+    fs.writeFileSync(path.join(fsRoot, `${malformedSourcePath}.prism.json`), "{ not json");
+    const malformedReport = await validateLocalFileSidecar({ sourcePath: malformedSourcePath, filesystem: io });
+    assert.equal(malformedReport.status, "review_needed");
+    assert.equal(malformedReport.schemaVersionStatus, "not_applicable");
+    assert.equal(malformedReport.recommendedAction, "review_sidecar");
+    assert.equal(malformedReport.canAutoPlan, false);
+    assert.equal(malformedReport.canExecuteWithApproval, false);
+    assert.ok(malformedReport.issues.some((issue) => issue.code === "sidecar_json_malformed"));
+
+    const mismatchedSourcePath = path.join("notes", "mismatch.txt");
+    fs.writeFileSync(path.join(fsRoot, mismatchedSourcePath), "mismatch content");
+    fs.writeFileSync(
+      path.join(fsRoot, `${mismatchedSourcePath}.prism.json`),
+      `${JSON.stringify(
+        createInitialSidecar({
+          assetId: "asset-notes-other.txt",
+          sourcePath: "notes/other.txt",
+          canonicalPath: "notes/other.txt",
+          kind: "note",
+          sha256: "old-hash",
+          sizeBytes: 4,
+          createdAt: "2026-06-23T00:00:00.000Z",
+          updatedAt: "2026-06-23T00:00:00.000Z",
+          tags: [],
+          derivedFiles: [],
+          analysisStatus: "pending",
+          approvalState: "unreviewed",
+          notes: [],
+        }),
+        null,
+        2,
+      )}\n`,
+    );
+    const mismatchedReport = await validateLocalFileSidecar({ sourcePath: mismatchedSourcePath, filesystem: io });
+    assert.equal(mismatchedReport.status, "review_needed");
+    assert.equal(mismatchedReport.schemaVersionStatus, "current");
+    assert.equal(mismatchedReport.recommendedAction, "review_sidecar");
+    assert.equal(mismatchedReport.canAutoPlan, false);
+    assert.equal(mismatchedReport.canExecuteWithApproval, false);
+    assert.ok(mismatchedReport.issues.some((issue) => issue.code === "source_path_mismatch"));
+
+    const blockedReport = await validateLocalFileSidecar({ sourcePath: path.join("..", "escape.txt"), filesystem: io });
+    assert.equal(blockedReport.status, "blocked");
+    assert.equal(blockedReport.recommendedAction, "blocked");
+    assert.equal(blockedReport.canAutoPlan, false);
+    assert.equal(blockedReport.canExecuteWithApproval, false);
+    assert.ok(blockedReport.issues.length > 0);
+
+    assert.ok(!traced.operations.includes("writeJsonFile"));
+    assert.ok(!traced.operations.includes("writeTextFile"));
+    assert.ok(!traced.operations.includes("unlink"));
   });
 
   await test("explicit file round-trip planner classifies source and adjacent sidecar safely", async () => {

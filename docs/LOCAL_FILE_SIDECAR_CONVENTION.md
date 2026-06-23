@@ -22,6 +22,14 @@ metadata beside a single file.
 - sidecars with unsupported future versions require review and are not accepted
 - no migration runner or batch upgrade flow exists yet
 
+## Validation Report
+
+- `validateLocalFileSidecar()` is read-only and explicit-file-only
+- it reports current, legacy-missing, unsupported, missing, stale, malformed,
+  mismatched, and blocked states without writing
+- it does not scan folders or process media
+- it does not migrate existing sidecars
+
 ## Filename
 
 - the sidecar path is the source file path plus `.prism.json`
@@ -93,3 +101,4 @@ these fields without inventing their own defaults.
 
 - `src/ingest/sidecar.ts`
 - `src/filesystem/localFilePlanning.ts` for compatibility exports
+- `src/ingest/sidecarValidationReport.ts` for read-only validation reporting

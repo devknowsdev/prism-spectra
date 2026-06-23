@@ -4,6 +4,7 @@ export * from "./sidecarRecommendation.js";
 export * from "./sidecarWritePlan.js";
 export * from "./sidecarWriteExecutor.js";
 export * from "./localFileSidecarCommand.js";
+export * from "./sidecarValidationReport.js";
 export {
   buildSidecarPath,
   buildSidecarPlan,

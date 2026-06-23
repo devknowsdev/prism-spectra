@@ -12,6 +12,7 @@ prior sprint.
 - sidecar convention exists
 - schema versioning exists
 - planner exists
+- validation report exists
 - recommendation layer exists
 - write-plan layer exists
 - approval-gated executor exists
@@ -98,6 +99,7 @@ npm run build
 - `src/ingest/sidecar.ts`: canonical sidecar semantics and helper functions
 - `src/ingest/localFileRoundTripPlanner.ts`: read-only single-file planner
 - `src/ingest/sidecarRecommendation.ts`: converts planner output into recommendation intent
+- `src/ingest/sidecarValidationReport.ts`: read-only validation report over a single explicit file pair
 - `src/ingest/sidecarWritePlan.ts`: turns recommendation intent into approval-gated write plans
 - `src/ingest/sidecarWriteExecutor.ts`: revalidates and performs approved sidecar-only writes
 - `src/ingest/localFileSidecarCommand.ts`: orchestration command that composes the pipeline
