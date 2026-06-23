@@ -1,6 +1,7 @@
 export * from "./sidecarTypes.js";
 export * from "./localFileRoundTripPlanner.js";
 export * from "./sidecarRecommendation.js";
+export * from "./sidecarWritePlan.js";
 export {
   buildSidecarPath,
   buildSidecarPlan,

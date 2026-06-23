@@ -37,6 +37,7 @@ import {
   createInitialSidecar,
   planLocalFileRoundTrip,
   recommendSidecarAction,
+  planSidecarWrite,
   updateSidecarHashFields,
   validateSidecarShape,
 } from "../src/index.js";
@@ -1016,6 +1017,164 @@ async function main() {
     } as typeof readyPlan, { now: fixedNow });
     assert.equal(unsupportedRecommendation.action, "blocked");
     assert.equal(unsupportedRecommendation.reason, "unsupported_plan_state");
+  });
+
+  await test("sidecar write plans are approval-gated and remain write-free", async () => {
+    const fixedNow = () => "2026-06-23T01:02:03.000Z";
+    const sourcePath = "notes/draft.txt";
+    const sidecarPath = `${sourcePath}.prism.json`;
+    const sha256 = createHash("sha256").update("draft content").digest("hex");
+
+    const createRecommendation = recommendSidecarAction(
+      {
+        sourcePath,
+        sidecarPath,
+        sourceStatus: "present" as const,
+        sidecarStatus: "missing" as const,
+        sourceFacts: { sizeBytes: 13, sha256 },
+        sidecar: null,
+        reasons: ["sidecar_missing"],
+        recommendedAction: "create_sidecar" as const,
+      },
+      { now: fixedNow },
+    );
+    const createRecommendationSnapshot = JSON.stringify(createRecommendation);
+    const createPlan = planSidecarWrite(createRecommendation);
+    const expectedCreateJson = {
+      assetId: "asset-notes-draft.txt",
+      sourcePath,
+      canonicalPath: sourcePath,
+      sha256,
+      sizeBytes: 13,
+      createdAt: "2026-06-23T01:02:03.000Z",
+      updatedAt: "2026-06-23T01:02:03.000Z",
+      kind: "other",
+      tags: [],
+      derivedFiles: [],
+      analysisStatus: "pending",
+      approvalState: "unreviewed",
+      notes: [],
+    };
+    assert.equal(JSON.stringify(createRecommendation), createRecommendationSnapshot);
+    assert.equal(createPlan.status, "planned");
+    assert.equal(createPlan.operation, "create_sidecar");
+    assert.equal(createPlan.approvalType, "local_write");
+    assert.equal(createPlan.sourcePath, sourcePath);
+    assert.equal(createPlan.sidecarPath, sidecarPath);
+    assert.equal(createPlan.content, `${JSON.stringify(expectedCreateJson, null, 2)}\n`);
+    assert.deepEqual(createPlan.json, expectedCreateJson);
+    assert.equal(createPlan.json?.sha256, sha256);
+    assert.equal(createPlan.patch, undefined);
+    assert.deepEqual(createPlan.reasons, ["sidecar_missing"]);
+    assert.deepEqual(createPlan.warnings, []);
+    assert.deepEqual(createPlan.safetyChecks, [
+      "sidecar path must remain inside allowed roots",
+      "parent/source relationship must be revalidated before write",
+      "existing sidecar must not be overwritten without a later explicit approval mode",
+    ]);
+
+    const updateRecommendation = recommendSidecarAction(
+      {
+        sourcePath: "notes/stale.txt",
+        sidecarPath: "notes/stale.txt.prism.json",
+        sourceStatus: "present" as const,
+        sidecarStatus: "stale" as const,
+        sourceFacts: {
+          sizeBytes: 10,
+          sha256: createHash("sha256").update("fresh content").digest("hex"),
+        },
+        sidecar: createInitialSidecar({
+          assetId: "asset-notes-stale.txt",
+          sourcePath: "notes/stale.txt",
+          canonicalPath: "notes/stale.txt",
+          kind: "note",
+          sha256: "old-hash",
+          sizeBytes: 1,
+          createdAt: "2026-06-23T00:00:00.000Z",
+          updatedAt: "2026-06-23T00:00:00.000Z",
+          tags: ["draft"],
+          derivedFiles: [],
+          analysisStatus: "pending",
+          approvalState: "unreviewed",
+          notes: [],
+        }),
+        reasons: ["sha256_mismatch", "sizeBytes_mismatch"],
+        recommendedAction: "update_sidecar_hash" as const,
+      },
+      { now: fixedNow },
+    );
+    const updateRecommendationSnapshot = JSON.stringify(updateRecommendation);
+    const updatePlan = planSidecarWrite(updateRecommendation);
+    assert.equal(JSON.stringify(updateRecommendation), updateRecommendationSnapshot);
+    assert.equal(updatePlan.status, "planned");
+    assert.equal(updatePlan.operation, "update_sidecar");
+    assert.equal(updatePlan.approvalType, "local_write");
+    assert.equal(updatePlan.sourcePath, "notes/stale.txt");
+    assert.equal(updatePlan.sidecarPath, "notes/stale.txt.prism.json");
+    assert.equal(updatePlan.content, undefined);
+    assert.equal(updatePlan.json, undefined);
+    assert.deepEqual(updatePlan.patch, {
+      sha256: updateRecommendation.patch?.sha256,
+      sizeBytes: 10,
+      updatedAt: "2026-06-23T01:02:03.000Z",
+    });
+    assert.deepEqual(updatePlan.reasons, ["sidecar_stale"]);
+    assert.deepEqual(updatePlan.warnings, []);
+    assert.deepEqual(updatePlan.safetyChecks, [
+      "sidecar path must remain inside allowed roots",
+      "sidecar must be re-read before write",
+      "current sidecar sourcePath must still match requested sourcePath",
+      "stale fields must be revalidated before write",
+    ]);
+
+    const readyPlan = planSidecarWrite({
+      action: "ready",
+      reason: "sidecar_ready",
+      sidecarPath,
+      sourcePath,
+      warnings: [],
+    });
+    assert.equal(readyPlan.status, "not_applicable");
+    assert.equal(readyPlan.operation, "none");
+    assert.equal(readyPlan.approvalType, "none");
+    assert.equal(readyPlan.content, undefined);
+    assert.equal(readyPlan.patch, undefined);
+
+    const reviewPlan = planSidecarWrite({
+      action: "review_sidecar",
+      reason: "source_path_mismatch",
+      sidecarPath,
+      sourcePath,
+      warnings: ["sidecar sourcePath does not match the requested source path"],
+    });
+    assert.equal(reviewPlan.status, "blocked");
+    assert.equal(reviewPlan.operation, "none");
+    assert.equal(reviewPlan.approvalType, "none");
+    assert.equal(reviewPlan.content, undefined);
+    assert.equal(reviewPlan.patch, undefined);
+    assert.deepEqual(reviewPlan.reasons, ["source_path_mismatch"]);
+    assert.deepEqual(reviewPlan.warnings, ["sidecar sourcePath does not match the requested source path"]);
+
+    const blockedPlan = planSidecarWrite({
+      action: "blocked",
+      reason: "source_missing",
+      sidecarPath,
+      sourcePath,
+      warnings: ["source file is missing; no sidecar draft can be recommended"],
+    });
+    assert.equal(blockedPlan.status, "blocked");
+    assert.equal(blockedPlan.operation, "none");
+    assert.equal(blockedPlan.approvalType, "none");
+    assert.equal(blockedPlan.content, undefined);
+    assert.equal(blockedPlan.patch, undefined);
+
+    const unknownPlan = planSidecarWrite({
+      ...readyPlan,
+      action: "unexpected" as never,
+    } as never);
+    assert.equal(unknownPlan.status, "blocked");
+    assert.equal(unknownPlan.operation, "none");
+    assert.ok(unknownPlan.warnings.some((warning) => warning.includes("unsupported recommendation action")));
   });
 
   await test("real filesystem adapter stays inside allowed roots and returns deterministic metadata", async () => {

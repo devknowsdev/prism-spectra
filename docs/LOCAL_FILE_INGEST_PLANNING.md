@@ -27,6 +27,8 @@ The canonical helpers live in `src/ingest/sidecar.ts`.
   round-trip plan
 - `recommendSidecarAction(plan)` turns a round-trip plan into a non-writing
   draft, patch, review, ready, or blocked recommendation
+- `planSidecarWrite(recommendation)` turns a recommendation into an
+  approval-gated write plan without writing anything
 
 Compatibility re-exports remain available from `src/filesystem/localFilePlanning.ts`
 for older callers.
@@ -57,6 +59,17 @@ for older callers.
 - it does not call external APIs
 - it does not create database state
 - proposed drafts and patches are informational until a later write sprint
+
+`planSidecarWrite()` is write-plan-only.
+
+- it does not write, create, update, delete, move, or rename files
+- planned writes require `local_write` approval and a later execution sprint
+- it does not scan folders
+- it does not watch files
+- it does not use a database
+- it does not process media
+- it does not call external APIs
+- it does not perform destructive operations
 
 ## What this layer does not do
 
