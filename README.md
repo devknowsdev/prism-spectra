@@ -1,5 +1,5 @@
 ---
-Last-Updated: 2026-06-23
+Last-Updated: 2026-06-24
 
 # prism-spectra
 
@@ -33,6 +33,9 @@ For the implementation handover packet, see
 
 For the current build boundary and stabilization rationale, see
 [docs/BUILD_STABILIZATION_NOTES.md](docs/BUILD_STABILIZATION_NOTES.md).
+
+For open-source harvest planning and repo-specific Codex audit prompts, see
+[docs/OPEN_SOURCE_CODEX_AUDIT_PROMPTS.md](docs/OPEN_SOURCE_CODEX_AUDIT_PROMPTS.md).
 
 ## What this repo is for
 
