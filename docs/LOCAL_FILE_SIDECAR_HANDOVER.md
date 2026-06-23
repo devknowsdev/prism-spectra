@@ -29,6 +29,8 @@ prior sprint.
 Future callers should prefer `runLocalFileSidecarCommand()`, which is the
 current exported command function name in the repo.
 
+For fast orientation, read [docs/AGENT_ARCHITECTURE_MAP.md](docs/AGENT_ARCHITECTURE_MAP.md) first; it summarizes file ownership, boundaries, lexicon terms, and safe sprint lanes.
+
 The command is re-exported from:
 
 - `src/ingest/index.ts`
