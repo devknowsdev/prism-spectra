@@ -7,6 +7,7 @@
 process.env.AI_FORGE_MOCK_EXECUTORS = "1";
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -18,6 +19,7 @@ import { applyPatch } from "../src/safety/patch.js";
 import { LocalModelLock } from "../src/engine/modelLock.js";
 import { selectModel as selectOllamaModel } from "../src/executors/ollama.js";
 import {
+  createFilesystemAdapter,
   createMockExternalPublishingAdapter,
   createMockFilesystemAdapter,
   createMockGitAdapter,
@@ -25,6 +27,7 @@ import {
   createAdapterRegistry,
   ensureApprovalAllowed,
   validateAdapterContract,
+  type FilesystemOperationOutput,
   type AdapterAction,
 } from "../src/adapters/index.js";
 import { dataBoundaryFor } from "../src/types.js";
@@ -57,6 +60,29 @@ function action(
     riskLevel,
     approvalRequired,
   };
+}
+
+function filesystemAction(
+  id: string,
+  capabilityId: string,
+  operation: string,
+  riskLevel: AdapterAction["riskLevel"],
+  input: Record<string, unknown> = {},
+  approvalRequired?: AdapterAction["approvalRequired"],
+): AdapterAction {
+  return {
+    ...action(id, capabilityId, operation, riskLevel, input, approvalRequired),
+    kind: "filesystem",
+  };
+}
+
+function filesystemOutput<K extends FilesystemOperationOutput["operation"]>(
+  result: { output: FilesystemOperationOutput | null },
+  operation: K,
+): Extract<FilesystemOperationOutput, { operation: K }> {
+  assert.ok(result.output, `expected filesystem output for ${operation}`);
+  assert.equal(result.output.operation, operation);
+  return result.output as Extract<FilesystemOperationOutput, { operation: K }>;
 }
 
 async function freshEngine(name: string, opts: { ollamaSwapDelayMs?: number } = {}): Promise<ExecutionEngine> {
@@ -495,6 +521,8 @@ async function main() {
     const readResult = await filesystem.execute(action("a1", "read", "read", "read_only", { path: "hello.txt" }), {});
     assert.equal(readResult.success, true);
     assert.deepEqual(readResult.output, { path: "hello.txt", content: "world" });
+    const repeatedRead = await filesystem.execute(action("a1b", "read", "read", "read_only", { path: "hello.txt" }), {});
+    assert.deepEqual(repeatedRead.output, readResult.output);
 
     const writeResult = await filesystem.execute(
       action("a2", "write", "write", "local_write", { path: "notes.txt", content: "local note" }),
@@ -523,6 +551,137 @@ async function main() {
     validateAdapterContract(filesystem);
     validateAdapterContract(git);
     validateAdapterContract(publishing);
+  });
+
+  await test("real filesystem adapter stays inside allowed roots and returns deterministic metadata", async () => {
+    const fsRoot = path.join(ROOT, "filesystem-real");
+    fs.rmSync(fsRoot, { recursive: true, force: true });
+    fs.mkdirSync(fsRoot, { recursive: true });
+    fs.mkdirSync(path.join(fsRoot, "nested"), { recursive: true });
+    fs.writeFileSync(path.join(fsRoot, "seed.txt"), "seed-value");
+    fs.writeFileSync(path.join(fsRoot, "nested", "data.json"), JSON.stringify({ hello: "world" }) + "\n");
+
+    const adapter = createFilesystemAdapter({
+      id: "filesystem-real",
+      name: "Real Filesystem Adapter",
+      allowedRoots: [fsRoot],
+      baseDir: fsRoot,
+    });
+    const registry = createAdapterRegistry();
+    registry.registerAdapter(adapter);
+
+    const health = await registry.checkAdapterHealth("filesystem-real");
+    assert.equal(health.status, "healthy");
+    assert.equal(registry.getAdapter("filesystem-real")?.id, "filesystem-real");
+
+    const listResult = await adapter.execute(filesystemAction("fs1", "listDirectory", "listDirectory", "read_only", { path: "." }), {});
+    assert.equal(listResult.success, true);
+    assert.deepEqual(filesystemOutput(listResult, "listDirectory").entries.map((entry) => entry.name), ["nested", "seed.txt"]);
+    assert.equal(listResult.metadata?.riskLevel, "read_only");
+
+    const readResult = await adapter.execute(filesystemAction("fs2", "readTextFile", "readTextFile", "read_only", { path: "seed.txt" }), {});
+    assert.equal(readResult.success, true);
+    assert.equal(filesystemOutput(readResult, "readTextFile").content, "seed-value");
+    assert.equal(readResult.metadata?.approvalRequired, "none");
+
+    const writeResult = await adapter.execute(
+      filesystemAction("fs3", "writeTextFile", "writeTextFile", "local_write", { path: "notes/written.txt", content: "local note" }),
+      {},
+    );
+    assert.equal(writeResult.success, true);
+    assert.equal(writeResult.metadata?.riskLevel, "local_write");
+    assert.equal(writeResult.metadata?.approvalRequired, "recommended");
+    assert.equal(filesystemOutput(writeResult, "writeTextFile").resolvedPath, path.join(fsRoot, "notes", "written.txt"));
+    assert.equal(fs.readFileSync(path.join(fsRoot, "notes", "written.txt"), "utf-8"), "local note");
+
+    const ensureResult = await adapter.execute(filesystemAction("fs4", "ensureDirectory", "ensureDirectory", "local_write", { path: "created/deeper" }), {});
+    assert.equal(ensureResult.success, true);
+    assert.equal(filesystemOutput(ensureResult, "ensureDirectory").created, true);
+    assert.equal(fs.existsSync(path.join(fsRoot, "created", "deeper")), true);
+
+    const statResult = await adapter.execute(filesystemAction("fs5", "statPath", "statPath", "read_only", { path: "seed.txt" }), {});
+    assert.equal(statResult.success, true);
+    assert.equal(filesystemOutput(statResult, "statPath").stat.isFile, true);
+
+    const hashResult = await adapter.execute(filesystemAction("fs6", "computeSha256", "computeSha256", "read_only", { path: "seed.txt" }), {});
+    assert.equal(hashResult.success, true);
+    assert.equal(filesystemOutput(hashResult, "computeSha256").sha256, createHash("sha256").update("seed-value").digest("hex"));
+
+    const sidecarResult = await adapter.execute(
+      filesystemAction("fs7", "writeJsonSidecar", "writeJsonSidecar", "local_write", {
+        path: "seed.txt",
+        data: { note: "metadata", count: 2 },
+      }),
+      {},
+    );
+    assert.equal(sidecarResult.success, true);
+    assert.equal(filesystemOutput(sidecarResult, "writeJsonSidecar").sidecarPath, path.join(fsRoot, "seed.txt.sidecar.json"));
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(fsRoot, "seed.txt.sidecar.json"), "utf-8")),
+      { note: "metadata", count: 2 },
+    );
+
+    const jsonRead = await adapter.execute(filesystemAction("fs8", "readJsonFile", "readJsonFile", "read_only", { path: "nested/data.json" }), {});
+    assert.equal(jsonRead.success, true);
+    assert.deepEqual(filesystemOutput(jsonRead, "readJsonFile").data, { hello: "world" });
+
+    const jsonWrite = await adapter.execute(
+      filesystemAction("fs9", "writeJsonFile", "writeJsonFile", "local_write", {
+        path: "nested/output.json",
+        data: { nested: true },
+      }),
+      {},
+    );
+    assert.equal(jsonWrite.success, true);
+    assert.equal(filesystemOutput(jsonWrite, "writeJsonFile").resolvedPath, path.join(fsRoot, "nested", "output.json"));
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(fsRoot, "nested", "output.json"), "utf-8")), { nested: true });
+  });
+
+  await test("real filesystem adapter blocks boundary escapes, symlinks, and unsupported destructive operations", async () => {
+    const fsRoot = path.join(ROOT, "filesystem-boundary");
+    const escapeRoot = path.join(ROOT, "filesystem-escape");
+    fs.rmSync(fsRoot, { recursive: true, force: true });
+    fs.rmSync(escapeRoot, { recursive: true, force: true });
+    fs.mkdirSync(fsRoot, { recursive: true });
+    fs.mkdirSync(escapeRoot, { recursive: true });
+    fs.writeFileSync(path.join(fsRoot, "allowed.txt"), "allowed");
+    fs.writeFileSync(path.join(escapeRoot, "escape.txt"), "escape");
+    fs.symlinkSync(path.join(escapeRoot, "escape.txt"), path.join(fsRoot, "linked.txt"));
+
+    const adapter = createFilesystemAdapter({
+      id: "filesystem-boundary",
+      allowedRoots: [fsRoot],
+      baseDir: fsRoot,
+    });
+
+    const blockedRead = await adapter.execute(filesystemAction("fb1", "readTextFile", "readTextFile", "read_only", { path: "../filesystem-escape/escape.txt" }), {});
+    assert.equal(blockedRead.blocked, true);
+    assert.equal(blockedRead.error?.code, "path_outside_allowed_root");
+
+    const blockedWrite = await adapter.execute(
+      filesystemAction("fb2", "writeTextFile", "writeTextFile", "local_write", { path: "../filesystem-escape/escape.txt", content: "nope" }),
+      {},
+    );
+    assert.equal(blockedWrite.blocked, true);
+    assert.equal(blockedWrite.error?.code, "path_outside_allowed_root");
+
+    const blockedTraversal = await adapter.execute(
+      filesystemAction("fb3", "readTextFile", "readTextFile", "read_only", { path: "nested/../../filesystem-escape/escape.txt" }),
+      {},
+    );
+    assert.equal(blockedTraversal.blocked, true);
+    assert.equal(blockedTraversal.error?.code, "path_outside_allowed_root");
+
+    const blockedSymlink = await adapter.execute(filesystemAction("fb4", "readTextFile", "readTextFile", "read_only", { path: "linked.txt" }), {});
+    assert.equal(blockedSymlink.blocked, true);
+    assert.equal(blockedSymlink.error?.code, "symlink_not_supported");
+
+    const destructive = await adapter.execute(
+      filesystemAction("fb5", "deletePath", "deletePath", "destructive", { path: "allowed.txt" }, "required"),
+      { approval: { granted: true, approver: "tester" } },
+    );
+    assert.equal(destructive.blocked, true);
+    assert.equal(destructive.error?.code, "unsupported_operation");
   });
 
   await test("adapter guard treats unknown high-risk operations as blocked until approved", async () => {

@@ -76,6 +76,77 @@ These mocks are useful for:
 - approval gating checks
 - documentation examples
 
+## Filesystem Adapter
+
+`createFilesystemAdapter()` is the first real local adapter in the scaffold.
+It is constrained to explicit allowed roots and is designed for local-only
+file operations.
+
+### Supported operations
+
+- `readTextFile`
+- `writeTextFile`
+- `listDirectory`
+- `ensureDirectory`
+- `statPath`
+- `computeSha256`
+- `writeJsonSidecar`
+- `readJsonFile`
+- `writeJsonFile`
+
+### Path boundary rules
+
+- every requested path is resolved against the adapter base directory or taken
+  as an absolute path
+- the resolved path must stay inside one of the configured allowed roots
+- `../` traversal is blocked when it would escape an allowed root
+- symlinked paths are handled conservatively and are blocked rather than
+  followed
+- the adapter does not trust hidden path jumps, mount tricks, or external
+  escape hatches
+
+### Approval and risk behavior
+
+- read operations are `read_only`
+- write operations are `local_write`
+- the adapter records risk metadata on every result
+- approval is not required by default for local writes, but explicit
+  approval can still be supplied and will be captured in the result context
+
+### Sidecar behavior
+
+- `writeJsonSidecar` writes a deterministic JSON file next to the target file
+- the sidecar filename uses a suffix-based convention so the source file is
+  left intact
+- JSON output is stable and newline-terminated
+
+### Unsupported operations
+
+- delete
+- recursive delete
+- move or rename outside the adapter's simple local-safe scope
+- chmod / chown
+- shell execution
+- file watching
+- symlink management as a trusted path feature
+- media processing
+- database writes
+- cloud sync
+
+### Future file-watcher direction
+
+If file watching is added later, it should be a separate, explicit capability
+with its own approval and provenance rules. This sprint keeps the adapter
+strictly read/write/path-boundary focused.
+
+### Safety guarantees
+
+- no operation may escape the configured allowed roots
+- no destructive operation is implemented in this sprint
+- no external integration is called
+- no database or cloud state is touched
+- all results carry provenance-friendly metadata
+
 ## Stable decisions
 
 These decisions are now treated as the current architectural stance:
