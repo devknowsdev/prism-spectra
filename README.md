@@ -18,6 +18,10 @@ and [prism-beam/docs/REPO_BOUNDARIES.md](https://github.com/devknowsdev/prism-be
 For adapter contract details and the local mock scaffold, see
 [docs/ADAPTER_CONTRACTS.md](docs/ADAPTER_CONTRACTS.md).
 
+For the local `.prism.json` sidecar convention and the planning-only ingest
+helpers, see [docs/LOCAL_FILE_SIDECAR_CONVENTION.md](docs/LOCAL_FILE_SIDECAR_CONVENTION.md)
+and [docs/LOCAL_FILE_INGEST_PLANNING.md](docs/LOCAL_FILE_INGEST_PLANNING.md).
+
 For the current build boundary and stabilization rationale, see
 [docs/BUILD_STABILIZATION_NOTES.md](docs/BUILD_STABILIZATION_NOTES.md).
 

@@ -127,11 +127,14 @@ file operations.
 ### Sidecar behavior
 
 - `writeJsonSidecar` writes a deterministic JSON file next to the target file
-- the sidecar filename uses a suffix-based convention so the source file is
-  left intact
+- the default suffix is `.prism.json`, matching the local Prism sidecar
+  convention documented in `docs/LOCAL_FILE_SIDECAR_CONVENTION.md`
 - JSON output is stable and newline-terminated
 - sidecar writes must pass the same path-boundary checks as normal writes, so
   a malicious suffix cannot escape an allowed root
+- planning-only helpers in `src/ingest/sidecar.ts` can build and validate
+  sidecar-shaped metadata without performing ingest, folder scans, or
+  persistence
 
 ### Unsupported operations
 

@@ -15,6 +15,7 @@ import {
 } from "./types.js";
 import { blockedAdapterResult, ensureApprovalAllowed } from "./approvalGuard.js";
 import { createFilesystemPathGuard, type FilesystemPathGuard } from "./filesystemPathGuard.js";
+import { PRISM_SIDECAR_SUFFIX } from "../ingest/sidecar.js";
 
 export const FILESYSTEM_OPERATIONS = [
   "readTextFile",
@@ -267,7 +268,7 @@ export function createFilesystemAdapter(config: FilesystemAdapterConfig): Adapte
 
   const adapterId = config.id ?? "filesystem";
   const adapterName = config.name ?? "Filesystem Adapter";
-  const sidecarSuffix = config.sidecarSuffix ?? ".sidecar.json";
+  const sidecarSuffix = config.sidecarSuffix ?? PRISM_SIDECAR_SUFFIX;
   const jsonIndent = config.jsonIndent ?? 2;
   const pathGuard: FilesystemPathGuard = createFilesystemPathGuard({
     adapterId,
@@ -340,7 +341,7 @@ export function createFilesystemAdapter(config: FilesystemAdapterConfig): Adapte
         id: "writeJsonSidecar",
         label: "Write JSON sidecar",
         kind: "filesystem",
-        description: "Write deterministic JSON metadata next to a local file.",
+        description: "Write deterministic .prism.json metadata next to a local file.",
         riskLevel: "local_write",
         approvalRequired: "recommended",
       },

@@ -1,0 +1,63 @@
+# Local File Ingest Planning
+
+Last-Updated: 2026-06-23
+
+This document describes the planning-only helper layer for local files.
+It is not an ingest pipeline.
+
+## Goal
+
+The helper layer provides a small, explicit way to reason about a single local
+file and its adjacent `.prism.json` metadata without scanning folders or
+persisting state.
+
+## Helper surface
+
+The canonical helpers live in `src/ingest/sidecar.ts`.
+
+- `buildSidecarPath(sourcePath)` derives the adjacent sidecar path
+- `createInitialSidecar(input)` produces a canonical sidecar object for later
+  writing
+- `validateSidecarShape(value)` normalizes parsed sidecar JSON
+- `updateSidecarHashFields(sidecar, update)` refreshes hash and size metadata
+- `buildSidecarPlan(input, sidecarValue)` turns a single file plus an optional
+  parsed sidecar into a planning result
+
+Compatibility re-exports remain available from `src/filesystem/localFilePlanning.ts`
+for older callers.
+
+## Plan states
+
+- `candidate`: the source file is known, but the sidecar is missing
+- `ready`: the sidecar is present and matches the source path
+- `blocked`: the sidecar is malformed or describes a different source path
+
+## What this layer does not do
+
+- no directory traversal or folder crawling
+- no file watching
+- no write operations
+- no database persistence
+- no media analysis
+- no external API calls
+- no destructive file operations
+
+## Intended usage
+
+The expected flow is:
+
+1. a caller identifies one file explicitly
+2. the caller optionally reads the adjacent `.prism.json` file later, using the
+   existing filesystem adapter or another explicit read path
+3. the caller feeds the parsed JSON into `buildSidecarPlan()`
+4. downstream orchestration decides whether to ingest, defer, or discard the
+   candidate
+
+## Deferred ideas
+
+- folder-level manifests
+- automatic ingestion queues
+- persistent ingest state
+- watcher-driven refresh
+- media classification
+- publish-time enrichment

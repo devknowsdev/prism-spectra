@@ -30,6 +30,14 @@ import {
   type FilesystemOperationOutput,
   type AdapterAction,
 } from "../src/adapters/index.js";
+import {
+  PRISM_SIDECAR_SUFFIX,
+  buildSidecarPath,
+  buildSidecarPlan,
+  createInitialSidecar,
+  updateSidecarHashFields,
+  validateSidecarShape,
+} from "../src/index.js";
 import { dataBoundaryFor } from "../src/types.js";
 import { Wizard, MAX_QUESTIONS } from "../src/wizard/wizard.js";
 import { spawn } from "node:child_process";
@@ -553,6 +561,82 @@ async function main() {
     validateAdapterContract(publishing);
   });
 
+  await test("prism local file sidecar helpers follow the required metadata contract", async () => {
+    const sourcePath = path.join("content", "song.md");
+    assert.equal(PRISM_SIDECAR_SUFFIX, ".prism.json");
+    assert.equal(buildSidecarPath(sourcePath), `${sourcePath}.prism.json`);
+
+    const initial = createInitialSidecar({
+      assetId: "asset-song-001",
+      sourcePath,
+      canonicalPath: sourcePath,
+      kind: "markdown",
+      tags: ["music", "draft"],
+      derivedFiles: ["content/song.txt"],
+      notes: ["seeded for planning"],
+    });
+    assert.equal(initial.assetId, "asset-song-001");
+    assert.equal(initial.sourcePath, sourcePath);
+    assert.equal(initial.canonicalPath, sourcePath);
+    assert.equal(initial.kind, "markdown");
+    assert.deepEqual(initial.tags, ["music", "draft"]);
+    assert.deepEqual(initial.derivedFiles, ["content/song.txt"]);
+    assert.deepEqual(initial.notes, ["seeded for planning"]);
+    assert.equal(initial.sha256, "");
+    assert.equal(initial.sizeBytes, 0);
+    assert.equal(initial.analysisStatus, "pending");
+    assert.equal(initial.approvalState, "unreviewed");
+
+    const validated = validateSidecarShape(initial);
+    assert.equal(validated.ok, true);
+    assert.deepEqual(validated.issues, []);
+    assert.equal(validated.sidecar?.assetId, "asset-song-001");
+    assert.equal(validated.sidecar?.canonicalPath, sourcePath);
+
+    const updated = updateSidecarHashFields(initial, {
+      sha256: createHash("sha256").update("song-data").digest("hex"),
+      sizeBytes: 9,
+      updatedAt: "2026-06-23T00:00:00.000Z",
+    });
+    assert.equal(updated.sha256, createHash("sha256").update("song-data").digest("hex"));
+    assert.equal(updated.sizeBytes, 9);
+    assert.equal(updated.updatedAt, "2026-06-23T00:00:00.000Z");
+
+    const malformed = validateSidecarShape({
+      assetId: 123,
+      sourcePath,
+      canonicalPath: sourcePath,
+      sha256: 42,
+      sizeBytes: -1,
+      createdAt: "",
+      updatedAt: "",
+      kind: "",
+      tags: ["ok", 1],
+      derivedFiles: [1],
+      analysisStatus: "",
+      approvalState: "",
+      notes: [1],
+    });
+    assert.equal(malformed.ok, false);
+    assert.ok(malformed.issues.length > 0);
+
+    const missingPlan = buildSidecarPlan({ sourcePath });
+    assert.equal(missingPlan.status, "candidate");
+    assert.equal(missingPlan.sidecarStatus, "missing");
+    assert.deepEqual(missingPlan.reasons, ["missing_sidecar"]);
+    assert.equal(missingPlan.sidecarPath, `${sourcePath}.prism.json`);
+
+    const readyPlan = buildSidecarPlan({ sourcePath }, initial);
+    assert.equal(readyPlan.status, "ready");
+    assert.equal(readyPlan.sidecarStatus, "present");
+    assert.equal(readyPlan.sidecar?.assetId, "asset-song-001");
+
+    const blockedPlan = buildSidecarPlan({ sourcePath }, { ...initial, sourcePath: "elsewhere.md" });
+    assert.equal(blockedPlan.status, "blocked");
+    assert.equal(blockedPlan.sidecarStatus, "invalid");
+    assert.deepEqual(blockedPlan.reasons, ["source_path_mismatch"]);
+  });
+
   await test("real filesystem adapter stays inside allowed roots and returns deterministic metadata", async () => {
     const fsRoot = path.join(ROOT, "filesystem-real");
     fs.rmSync(fsRoot, { recursive: true, force: true });
@@ -615,9 +699,9 @@ async function main() {
       {},
     );
     assert.equal(sidecarResult.success, true);
-    assert.equal(filesystemOutput(sidecarResult, "writeJsonSidecar").sidecarPath, path.join(fsRoot, "seed.txt.sidecar.json"));
+    assert.equal(filesystemOutput(sidecarResult, "writeJsonSidecar").sidecarPath, path.join(fsRoot, "seed.txt.prism.json"));
     assert.deepEqual(
-      JSON.parse(fs.readFileSync(path.join(fsRoot, "seed.txt.sidecar.json"), "utf-8")),
+      JSON.parse(fs.readFileSync(path.join(fsRoot, "seed.txt.prism.json"), "utf-8")),
       { note: "metadata", count: 2 },
     );
 
