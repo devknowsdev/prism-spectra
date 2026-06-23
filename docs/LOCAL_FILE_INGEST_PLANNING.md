@@ -25,6 +25,8 @@ The canonical helpers live in `src/ingest/sidecar.ts`.
 - `planLocalFileRoundTrip(input)` reads one explicit source file and its
   adjacent sidecar through safe filesystem helpers, then returns a read-only
   round-trip plan
+- `recommendSidecarAction(plan)` turns a round-trip plan into a non-writing
+  draft, patch, review, ready, or blocked recommendation
 
 Compatibility re-exports remain available from `src/filesystem/localFilePlanning.ts`
 for older callers.
@@ -46,6 +48,15 @@ for older callers.
 - it does not call external APIs
 - it does not create database state
 - it uses existing safe read/stat helpers supplied by the caller
+
+`recommendSidecarAction()` is recommendation-only.
+
+- it does not write files
+- it does not scan folders
+- it does not compute hashes
+- it does not call external APIs
+- it does not create database state
+- proposed drafts and patches are informational until a later write sprint
 
 ## What this layer does not do
 

@@ -36,6 +36,7 @@ import {
   buildSidecarPlan,
   createInitialSidecar,
   planLocalFileRoundTrip,
+  recommendSidecarAction,
   updateSidecarHashFields,
   validateSidecarShape,
 } from "../src/index.js";
@@ -809,6 +810,212 @@ async function main() {
     assert.equal(blockedPlan.sourceStatus, "blocked");
     assert.equal(blockedPlan.sidecarStatus, "blocked");
     assert.equal(blockedPlan.recommendedAction, "blocked");
+  });
+
+  await test("sidecar recommendations stay read-only and propose drafts or patches only", async () => {
+    const fixedNow = () => "2026-06-23T01:02:03.000Z";
+
+    const missingPlan = {
+      sourcePath: "notes/draft.txt",
+      sidecarPath: "notes/draft.txt.prism.json",
+      sourceStatus: "present" as const,
+      sidecarStatus: "missing" as const,
+      sourceFacts: {
+        sizeBytes: 13,
+        sha256: createHash("sha256").update("draft content").digest("hex"),
+      },
+      sidecar: null,
+      reasons: ["sidecar_missing"],
+      recommendedAction: "create_sidecar" as const,
+    };
+    const missingPlanSnapshot = JSON.stringify(missingPlan);
+    const missingRecommendation = recommendSidecarAction(missingPlan, { now: fixedNow });
+    assert.equal(JSON.stringify(missingPlan), missingPlanSnapshot);
+    assert.equal(missingRecommendation.action, "create_sidecar");
+    assert.equal(missingRecommendation.reason, "sidecar_missing");
+    assert.equal(missingRecommendation.sidecarPath, missingPlan.sidecarPath);
+    assert.equal(missingRecommendation.sourcePath, missingPlan.sourcePath);
+    assert.deepEqual(missingRecommendation.warnings, []);
+    assert.ok(missingRecommendation.draft);
+    assert.equal(missingRecommendation.patch, undefined);
+    assert.equal(missingRecommendation.draft?.assetId, "asset-notes-draft.txt");
+    assert.equal(missingRecommendation.draft?.sourcePath, "notes/draft.txt");
+    assert.equal(missingRecommendation.draft?.canonicalPath, "notes/draft.txt");
+    assert.equal(missingRecommendation.draft?.sha256, missingPlan.sourceFacts.sha256);
+    assert.equal(missingRecommendation.draft?.sizeBytes, 13);
+    assert.equal(missingRecommendation.draft?.createdAt, "2026-06-23T01:02:03.000Z");
+    assert.equal(missingRecommendation.draft?.updatedAt, "2026-06-23T01:02:03.000Z");
+    assert.equal(missingRecommendation.draft?.kind, "other");
+    assert.deepEqual(missingRecommendation.draft?.tags, []);
+    assert.deepEqual(missingRecommendation.draft?.derivedFiles, []);
+    assert.equal(missingRecommendation.draft?.analysisStatus, "pending");
+    assert.equal(missingRecommendation.draft?.approvalState, "unreviewed");
+    assert.deepEqual(missingRecommendation.draft?.notes, []);
+
+    const staleSidecar = createInitialSidecar({
+      assetId: "asset-notes-stale.txt",
+      sourcePath: "notes/stale.txt",
+      canonicalPath: "notes/stale.txt",
+      kind: "note",
+      sha256: "old-hash",
+      sizeBytes: 1,
+      createdAt: "2026-06-23T00:00:00.000Z",
+      updatedAt: "2026-06-23T00:00:00.000Z",
+      tags: ["draft"],
+      derivedFiles: [],
+      analysisStatus: "pending",
+      approvalState: "unreviewed",
+      notes: [],
+    });
+    const stalePlan = {
+      sourcePath: "notes/stale.txt",
+      sidecarPath: "notes/stale.txt.prism.json",
+      sourceStatus: "present" as const,
+      sidecarStatus: "stale" as const,
+      sourceFacts: {
+        sizeBytes: 10,
+        sha256: createHash("sha256").update("fresh content").digest("hex"),
+      },
+      sidecar: staleSidecar,
+      reasons: ["sha256_mismatch", "sizeBytes_mismatch"],
+      recommendedAction: "update_sidecar_hash" as const,
+    };
+    const stalePlanSnapshot = JSON.stringify(stalePlan);
+    const staleRecommendation = recommendSidecarAction(stalePlan, { now: fixedNow });
+    assert.equal(JSON.stringify(stalePlan), stalePlanSnapshot);
+    assert.equal(staleRecommendation.action, "update_sidecar_hash");
+    assert.equal(staleRecommendation.reason, "sidecar_stale");
+    assert.equal(staleRecommendation.patch && Object.keys(staleRecommendation.patch).sort().join(","), "sha256,sizeBytes,updatedAt");
+    assert.equal(staleRecommendation.patch?.sha256, stalePlan.sourceFacts.sha256);
+    assert.equal(staleRecommendation.patch?.sizeBytes, 10);
+    assert.equal(staleRecommendation.patch?.updatedAt, "2026-06-23T01:02:03.000Z");
+    assert.equal(staleRecommendation.draft, undefined);
+
+    const readyPlan = {
+      sourcePath: "notes/ready.txt",
+      sidecarPath: "notes/ready.txt.prism.json",
+      sourceStatus: "present" as const,
+      sidecarStatus: "valid" as const,
+      sourceFacts: {
+        sizeBytes: 9,
+        sha256: createHash("sha256").update("ready content").digest("hex"),
+      },
+      sidecar: createInitialSidecar({
+        assetId: "asset-notes-ready.txt",
+        sourcePath: "notes/ready.txt",
+        canonicalPath: "notes/ready.txt",
+        kind: "note",
+        sha256: createHash("sha256").update("ready content").digest("hex"),
+        sizeBytes: 9,
+        createdAt: "2026-06-23T00:00:00.000Z",
+        updatedAt: "2026-06-23T00:00:00.000Z",
+        tags: [],
+        derivedFiles: [],
+        analysisStatus: "pending",
+        approvalState: "unreviewed",
+        notes: [],
+      }),
+      reasons: [],
+      recommendedAction: "ready" as const,
+    };
+    const readyRecommendation = recommendSidecarAction(readyPlan, { now: fixedNow });
+    assert.equal(readyRecommendation.action, "ready");
+    assert.equal(readyRecommendation.reason, "sidecar_ready");
+    assert.equal(readyRecommendation.draft, undefined);
+    assert.equal(readyRecommendation.patch, undefined);
+    assert.deepEqual(readyRecommendation.warnings, []);
+
+    const malformedPlan = {
+      sourcePath: "notes/broken.txt",
+      sidecarPath: "notes/broken.txt.prism.json",
+      sourceStatus: "present" as const,
+      sidecarStatus: "malformed" as const,
+      sourceFacts: {
+        sizeBytes: 4,
+        sha256: createHash("sha256").update("oops").digest("hex"),
+      },
+      sidecar: null,
+      reasons: ["sidecar_json_malformed"],
+      recommendedAction: "review_sidecar" as const,
+    };
+    const malformedRecommendation = recommendSidecarAction(malformedPlan, { now: fixedNow });
+    assert.equal(malformedRecommendation.action, "review_sidecar");
+    assert.equal(malformedRecommendation.reason, "sidecar_malformed");
+    assert.ok(malformedRecommendation.warnings.some((warning) => warning.includes("parse") || warning.includes("validated")));
+    assert.equal(malformedRecommendation.draft, undefined);
+    assert.equal(malformedRecommendation.patch, undefined);
+
+    const mismatchedPlan = {
+      sourcePath: "notes/mismatch.txt",
+      sidecarPath: "notes/mismatch.txt.prism.json",
+      sourceStatus: "present" as const,
+      sidecarStatus: "mismatched_source" as const,
+      sourceFacts: {
+        sizeBytes: 5,
+        sha256: createHash("sha256").update("mismatch").digest("hex"),
+      },
+      sidecar: createInitialSidecar({
+        assetId: "asset-notes-other.txt",
+        sourcePath: "notes/other.txt",
+        canonicalPath: "notes/other.txt",
+        kind: "note",
+        sha256: "abc",
+        sizeBytes: 3,
+        createdAt: "2026-06-23T00:00:00.000Z",
+        updatedAt: "2026-06-23T00:00:00.000Z",
+        tags: [],
+        derivedFiles: [],
+        analysisStatus: "pending",
+        approvalState: "unreviewed",
+        notes: [],
+      }),
+      reasons: ["source_path_mismatch"],
+      recommendedAction: "review_sidecar" as const,
+    };
+    const mismatchedRecommendation = recommendSidecarAction(mismatchedPlan, { now: fixedNow });
+    assert.equal(mismatchedRecommendation.action, "review_sidecar");
+    assert.equal(mismatchedRecommendation.reason, "source_path_mismatch");
+    assert.ok(mismatchedRecommendation.warnings.some((warning) => warning.includes("does not match")));
+    assert.equal(mismatchedRecommendation.draft, undefined);
+    assert.equal(mismatchedRecommendation.patch, undefined);
+
+    const missingSourcePlan = {
+      sourcePath: "notes/missing.txt",
+      sidecarPath: "notes/missing.txt.prism.json",
+      sourceStatus: "missing" as const,
+      sidecarStatus: "blocked" as const,
+      sourceFacts: null,
+      sidecar: null,
+      reasons: ["source_missing"],
+      recommendedAction: "blocked" as const,
+    };
+    const missingSourceRecommendation = recommendSidecarAction(missingSourcePlan, { now: fixedNow });
+    assert.equal(missingSourceRecommendation.action, "blocked");
+    assert.equal(missingSourceRecommendation.reason, "source_missing");
+    assert.equal(missingSourceRecommendation.draft, undefined);
+    assert.equal(missingSourceRecommendation.patch, undefined);
+
+    const blockedPlan = {
+      sourcePath: "notes/blocked.txt",
+      sidecarPath: "notes/blocked.txt.prism.json",
+      sourceStatus: "blocked" as const,
+      sidecarStatus: "blocked" as const,
+      sourceFacts: null,
+      sidecar: null,
+      reasons: ["path_outside_allowed_roots"],
+      recommendedAction: "blocked" as const,
+    };
+    const blockedRecommendation = recommendSidecarAction(blockedPlan, { now: fixedNow });
+    assert.equal(blockedRecommendation.action, "blocked");
+    assert.equal(blockedRecommendation.reason, "source_blocked");
+    assert.ok(blockedRecommendation.warnings.includes("path_outside_allowed_roots"));
+
+    const unsupportedRecommendation = recommendSidecarAction({
+      ...readyPlan,
+      sidecarStatus: "unexpected" as never,
+    } as typeof readyPlan, { now: fixedNow });
+    assert.equal(unsupportedRecommendation.action, "blocked");
+    assert.equal(unsupportedRecommendation.reason, "unsupported_plan_state");
   });
 
   await test("real filesystem adapter stays inside allowed roots and returns deterministic metadata", async () => {
