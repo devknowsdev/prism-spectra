@@ -1469,6 +1469,9 @@ async function main() {
 
   await test("local file sidecar command plans and executes one explicit file only", async () => {
     const fixedNow = () => "2026-06-23T01:02:03.000Z";
+    assert.equal(typeof runLocalFileSidecarCommand, "function");
+    assert.equal(typeof planSidecarWrite, "function");
+    assert.equal(typeof executeSidecarWritePlan, "function");
 
     const planOnlyRoot = path.join(ROOT, "sidecar-command-plan-only");
     fs.rmSync(planOnlyRoot, { recursive: true, force: true });
@@ -1509,6 +1512,7 @@ async function main() {
     assert.equal(fs.existsSync(path.join(planOnlyRoot, "notes", "draft.txt.prism.json")), false);
     assert.ok(!tracedPlanOnly.operations.includes("writeJsonFile"));
     assert.ok(!tracedPlanOnly.operations.includes("readJsonFile"));
+    assert.equal(JSON.parse(JSON.stringify(planOnlyResult)).status, "planned");
     assert.equal(JSON.stringify({
       planner: planOnlyResult.planner,
       recommendation: planOnlyResult.recommendation,
@@ -1552,6 +1556,7 @@ async function main() {
     assert.ok(executeMissingNoApproval.reasons.includes("local_write_approval_required"));
     assert.ok(!tracedExecuteMissingNoApproval.operations.includes("writeJsonFile"));
     assert.equal(fs.existsSync(path.join(executeMissingNoApprovalRoot, "notes", "draft.txt.prism.json")), false);
+    assert.equal(JSON.parse(JSON.stringify(executeMissingNoApproval)).status, "blocked");
 
     const executeMissingResult = await runLocalFileSidecarCommand({
       mode: "execute_approved",
@@ -1565,6 +1570,7 @@ async function main() {
     assert.equal(fs.existsSync(path.join(executeMissingRoot, "notes", "draft.txt.prism.json")), true);
     assert.ok(tracedExecuteMissing.operations.includes("writeJsonFile"));
     assert.ok(!tracedExecuteMissing.operations.includes("listDirectory"));
+    assert.equal(JSON.parse(JSON.stringify(executeMissingResult)).status, "written");
 
     const readyRoot = path.join(ROOT, "sidecar-command-ready");
     fs.rmSync(readyRoot, { recursive: true, force: true });
@@ -1610,6 +1616,7 @@ async function main() {
     assert.equal(readyPlanOnly.execution, undefined);
     assert.equal(fs.readFileSync(path.join(readyRoot, `${readySourcePath}.prism.json`), "utf-8"), `${JSON.stringify(readySidecar, null, 2)}\n`);
     assert.ok(!tracedReady.operations.includes("writeJsonFile"));
+    assert.equal(JSON.parse(JSON.stringify(readyPlanOnly)).status, "skipped");
 
     const readyExecute = await runLocalFileSidecarCommand({
       mode: "execute_approved",
@@ -1621,6 +1628,51 @@ async function main() {
     assert.equal(readyExecute.writePlan.status, "not_applicable");
     assert.equal(readyExecute.execution, undefined);
     assert.ok(!tracedReady.operations.slice(-3).includes("writeJsonFile"));
+    assert.equal(JSON.parse(JSON.stringify(readyExecute)).status, "skipped");
+
+    const malformedRoot = path.join(ROOT, "sidecar-command-malformed");
+    fs.rmSync(malformedRoot, { recursive: true, force: true });
+    fs.mkdirSync(malformedRoot, { recursive: true });
+    fs.mkdirSync(path.join(malformedRoot, "notes"), { recursive: true });
+    const malformedSourcePath = "notes/broken.txt";
+    fs.writeFileSync(path.join(malformedRoot, malformedSourcePath), "broken content");
+    const malformedSidecarPath = `${malformedSourcePath}.prism.json`;
+    fs.writeFileSync(path.join(malformedRoot, malformedSidecarPath), "{ not json");
+
+    const tracedMalformed = tracingFilesystemAdapter(
+      createFilesystemAdapter({
+        id: "filesystem-sidecar-command-malformed",
+        allowedRoots: [malformedRoot],
+        baseDir: malformedRoot,
+      }),
+    );
+
+    const malformedPlanOnly = await runLocalFileSidecarCommand({
+      mode: "plan_only",
+      sourcePath: malformedSourcePath,
+      filesystemAdapter: tracedMalformed.adapter,
+    });
+    assert.equal(malformedPlanOnly.status, "blocked");
+    assert.equal(malformedPlanOnly.recommendation.action, "review_sidecar");
+    assert.equal(malformedPlanOnly.writePlan.status, "blocked");
+    assert.equal(malformedPlanOnly.execution, undefined);
+    assert.equal(fs.readFileSync(path.join(malformedRoot, malformedSidecarPath), "utf-8"), "{ not json");
+    assert.ok(!tracedMalformed.operations.includes("writeJsonFile"));
+    assert.equal(JSON.parse(JSON.stringify(malformedPlanOnly)).status, "blocked");
+
+    const malformedExecute = await runLocalFileSidecarCommand({
+      mode: "execute_approved",
+      sourcePath: malformedSourcePath,
+      filesystemAdapter: tracedMalformed.adapter,
+      approval: { granted: true, approver: "tester" },
+    });
+    assert.equal(malformedExecute.status, "blocked");
+    assert.equal(malformedExecute.recommendation.action, "review_sidecar");
+    assert.equal(malformedExecute.writePlan.status, "blocked");
+    assert.equal(malformedExecute.execution, undefined);
+    assert.equal(fs.readFileSync(path.join(malformedRoot, malformedSidecarPath), "utf-8"), "{ not json");
+    assert.ok(!tracedMalformed.operations.includes("writeJsonFile"));
+    assert.equal(JSON.parse(JSON.stringify(malformedExecute)).status, "blocked");
 
     const staleRoot = path.join(ROOT, "sidecar-command-stale");
     fs.rmSync(staleRoot, { recursive: true, force: true });

@@ -38,6 +38,9 @@ The canonical helpers live in `src/ingest/sidecar.ts`.
 Compatibility re-exports remain available from `src/filesystem/localFilePlanning.ts`
 for older callers.
 
+For the command-level contract freeze, see
+[docs/LOCAL_FILE_SIDECAR_COMMAND_CONTRACT.md](docs/LOCAL_FILE_SIDECAR_COMMAND_CONTRACT.md).
+
 ## Plan states
 
 - `candidate`: the source file is known, but the sidecar is missing
