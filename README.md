@@ -1,5 +1,5 @@
 ---
-Last-Updated: 2026-06-23
+Last-Updated: 2026-06-24
 
 # prism-spectra
 
@@ -33,6 +33,10 @@ For the implementation handover packet, see
 
 For the current build boundary and stabilization rationale, see
 [docs/BUILD_STABILIZATION_NOTES.md](docs/BUILD_STABILIZATION_NOTES.md).
+
+For the open-source harvest baseline and implementation plan, see
+[docs/OPEN_SOURCE_HARVEST_AUDIT.md](docs/OPEN_SOURCE_HARVEST_AUDIT.md)
+and [docs/HARVEST_IMPLEMENTATION_PLAN.md](docs/HARVEST_IMPLEMENTATION_PLAN.md).
 
 ## What this repo is for
 
