@@ -7,7 +7,9 @@ import { FreeTierMockExecutor } from "./freeTierMock.js";
 import { GptExecutor } from "./gpt.js";
 import { GptMockExecutor } from "./gptMock.js";
 import { ClaudeExecutor } from "./claude.js";
+import { ClaudeMockExecutor } from "./claudeMock.js";
 import { TerminalExecutor } from "./terminal.js";
+import { TerminalMockExecutor } from "./terminalMock.js";
 
 export interface ExecutorRegistryOptions {
   /** Use deterministic mock executors (tests). Defaults to AI_FORGE_MOCK_EXECUTORS=1. */
@@ -25,8 +27,8 @@ export function buildExecutorRegistry(opts?: ExecutorRegistryOptions): Record<Ex
       ollama: new OllamaMockExecutor(),
       free_tier: new FreeTierMockExecutor(),
       gpt: new GptMockExecutor(),
-      claude: new ClaudeExecutor(),
-      terminal: new TerminalExecutor(),
+      claude: new ClaudeMockExecutor(),
+      terminal: new TerminalMockExecutor(),
     };
   }
   return {
@@ -46,5 +48,7 @@ export {
   GptExecutor,
   GptMockExecutor,
   ClaudeExecutor,
+  ClaudeMockExecutor,
   TerminalExecutor,
+  TerminalMockExecutor,
 };

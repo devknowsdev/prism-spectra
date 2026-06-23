@@ -185,10 +185,11 @@ async function start() {
         const tmpDb = path.join(tmpBase, "preview.db");
         const tmpWork = path.join(tmpBase, "work");
         await fs.promises.mkdir(tmpWork, { recursive: true });
-        // Default to real executors for higher-fidelity previews unless caller
-        // explicitly requests mock executors. This runs providers as the engine
-        // would in real execution, so diffs better reflect production behavior.
-        const useMock = !!(body.options && body.options.mockExecutors !== undefined ? body.options.mockExecutors : false);
+        // Safe-by-default: use mock executors unless explicitly opting into real preview.
+        // Real preview requires explicit opt-in via realPreview: true to prevent
+        // accidental API calls and side effects. WARNING: real preview makes
+        // actual API calls and may incur costs.
+        const useMock = !(body.options && body.options.realPreview === true);
         const eng = new ExecutionEngine({ dbPath: tmpDb, workDir: tmpWork, mockExecutors: useMock, fallbackOnFailure: false });
         try {
           await eng.init();
@@ -250,21 +251,26 @@ async function start() {
         const savedName = `${Date.now()}-${randomBytes(6).toString('hex')}-${safeName}`;
         const filePath = path.join(uploadBase, savedName);
 
+        // Sanitize filename for storage (prevent header injection)
+        const MAX_FILENAME = 255;
+        const originalFilename = String(body.filename || '').slice(0, MAX_FILENAME);
+        const sanitizedFilename = originalFilename.replace(/\r/g, '').replace(/\n/g, '').replace(/"/g, '\\"');
+
         // compute sha256 fingerprint
         const sha = createHash('sha256').update(buffer).digest('hex');
 
         await fs.promises.writeFile(filePath, buffer);
         const convId = body.conversationId || null;
         const stmt = engine.memory.db.prepare(`INSERT INTO attachments (conversation_id, filename, path, content_type, size, sha256) VALUES (?, ?, ?, ?, ?, ?)`);
-        const info = stmt.run(convId, body.filename, filePath, body.contentType || null, buffer.length, sha);
+        const info = stmt.run(convId, sanitizedFilename, filePath, body.contentType || null, buffer.length, sha);
         const id = info?.lastInsertRowid ?? null;
 
         // audit
         try {
-          engine.memory.db.prepare('INSERT INTO attachment_audit (attachment_id, action, details, actor) VALUES (?, ?, ?, ?)').run(id, 'upload', JSON.stringify({ filename: body.filename, size: buffer.length, sha }), req.headers['x-local-token'] || 'daemon');
+          engine.memory.db.prepare('INSERT INTO attachment_audit (attachment_id, action, details, actor) VALUES (?, ?, ?, ?)').run(id, 'upload', JSON.stringify({ filename: sanitizedFilename, size: buffer.length, sha }), req.headers['x-local-token'] || 'daemon');
         } catch (e) {}
 
-        return jsonResponse(res, 200, { id, filename: body.filename, size: buffer.length, contentType: body.contentType || null, sha256: sha });
+        return jsonResponse(res, 200, { id, filename: sanitizedFilename, size: buffer.length, contentType: body.contentType || null, sha256: sha });
       }
 
       // Download attachment bytes: /api/v1/download/:id
@@ -275,10 +281,15 @@ async function start() {
         if (!row) return jsonResponse(res, 404, { error: 'attachment not found' });
         try {
           const stat = await fs.promises.stat(row.path);
+          const rawFilename = String(row.filename || 'download');
+          const fallbackFilename = rawFilename.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_');
+          const encodedFilename = encodeURIComponent(rawFilename)
+            .replace(/['()]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
+            .replace(/\*/g, '%2A');
           res.writeHead(200, {
             'Content-Type': row.content_type || 'application/octet-stream',
             'Content-Length': String(stat.size),
-            'Content-Disposition': `attachment; filename="${row.filename}"`,
+            'Content-Disposition': `attachment; filename="${fallbackFilename}"; filename*=UTF-8''${encodedFilename}`,
             'Access-Control-Allow-Origin': '*',
           });
           const stream = fs.createReadStream(row.path);
@@ -353,12 +364,18 @@ async function start() {
         const body = await readBody(req);
         const filename = body?.filename ? String(body.filename).trim() : null;
         if (!filename) return jsonResponse(res, 400, { error: 'expected { filename }' });
+        // Validate filename size and characters to prevent header injection
+        const MAX_FILENAME = 255;
+        if (filename.length > MAX_FILENAME) {
+          return jsonResponse(res, 400, { error: 'filename too long (max 255 chars)' });
+        }
+        const sanitizedFilename = filename.replace(/"/g, '\\"').replace(/\r/g, '').replace(/\n/g, '');
         const prev = engine.memory.db.prepare('SELECT filename FROM attachments WHERE id = ?').get(attId);
-        engine.memory.db.prepare('UPDATE attachments SET filename = ? WHERE id = ?').run(filename, attId);
+        engine.memory.db.prepare('UPDATE attachments SET filename = ? WHERE id = ?').run(sanitizedFilename, attId);
         const row = engine.memory.db.prepare('SELECT id, conversation_id, filename, content_type, size, created_at FROM attachments WHERE id = ?').get(attId);
         const tags = (engine.memory.db.prepare('SELECT tag FROM attachment_tags WHERE attachment_id = ? ORDER BY created_at ASC').all(attId) || []).map((t:any)=>t.tag);
         try {
-          engine.memory.db.prepare('INSERT INTO attachment_audit (attachment_id, action, details, actor) VALUES (?, ?, ?, ?)').run(attId, 'rename', JSON.stringify({ from: prev?.filename || null, to: filename }), req.headers['x-local-token'] || 'daemon');
+          engine.memory.db.prepare('INSERT INTO attachment_audit (attachment_id, action, details, actor) VALUES (?, ?, ?, ?)').run(attId, 'rename', JSON.stringify({ from: prev?.filename || null, to: sanitizedFilename }), req.headers['x-local-token'] || 'daemon');
         } catch (e) {}
         return jsonResponse(res, 200, { attachment: { ...row, tags } });
       }
