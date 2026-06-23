@@ -22,6 +22,9 @@ The canonical helpers live in `src/ingest/sidecar.ts`.
 - `updateSidecarHashFields(sidecar, update)` refreshes hash and size metadata
 - `buildSidecarPlan(input, sidecarValue)` turns a single file plus an optional
   parsed sidecar into a planning result
+- `planLocalFileRoundTrip(input)` reads one explicit source file and its
+  adjacent sidecar through safe filesystem helpers, then returns a read-only
+  round-trip plan
 
 Compatibility re-exports remain available from `src/filesystem/localFilePlanning.ts`
 for older callers.
@@ -31,6 +34,18 @@ for older callers.
 - `candidate`: the source file is known, but the sidecar is missing
 - `ready`: the sidecar is present and matches the source path
 - `blocked`: the sidecar is malformed or describes a different source path
+
+## Round-trip planner
+
+`planLocalFileRoundTrip()` is read-only and explicit-file-only.
+
+- it inspects one source path and the adjacent `.prism.json` path only
+- it does not scan folders or recurse
+- it does not write sidecars
+- it does not process media
+- it does not call external APIs
+- it does not create database state
+- it uses existing safe read/stat helpers supplied by the caller
 
 ## What this layer does not do
 

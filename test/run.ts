@@ -35,6 +35,7 @@ import {
   buildSidecarPath,
   buildSidecarPlan,
   createInitialSidecar,
+  planLocalFileRoundTrip,
   updateSidecarHashFields,
   validateSidecarShape,
 } from "../src/index.js";
@@ -91,6 +92,55 @@ function filesystemOutput<K extends FilesystemOperationOutput["operation"]>(
   assert.ok(result.output, `expected filesystem output for ${operation}`);
   assert.equal(result.output.operation, operation);
   return result.output as Extract<FilesystemOperationOutput, { operation: K }>;
+}
+
+function filesystemRoundTripIO(adapter: ReturnType<typeof createFilesystemAdapter>) {
+  let seq = 0;
+
+  return {
+    statPath: async (filePath: string) => {
+      const result = await adapter.execute(
+        filesystemAction(`roundtrip-${seq++}`, "statPath", "statPath", "read_only", { path: filePath }),
+        {},
+      );
+      if (!result.success || !result.output) {
+        const error = new Error(result.error?.message ?? "statPath failed");
+        (error as { code?: string }).code = result.error?.code;
+        (error as { details?: unknown }).details = result.error?.details;
+        throw error;
+      }
+      const output = filesystemOutput(result, "statPath");
+      return { kind: output.stat.kind, size: output.stat.size };
+    },
+    readTextFile: async (filePath: string) => {
+      const result = await adapter.execute(
+        filesystemAction(`roundtrip-${seq++}`, "readTextFile", "readTextFile", "read_only", { path: filePath }),
+        {},
+      );
+      if (!result.success || !result.output) {
+        const error = new Error(result.error?.message ?? "readTextFile failed");
+        (error as { code?: string }).code = result.error?.code;
+        (error as { details?: unknown }).details = result.error?.details;
+        throw error;
+      }
+      const output = filesystemOutput(result, "readTextFile");
+      return output.content;
+    },
+    computeSha256: async (filePath: string) => {
+      const result = await adapter.execute(
+        filesystemAction(`roundtrip-${seq++}`, "computeSha256", "computeSha256", "read_only", { path: filePath }),
+        {},
+      );
+      if (!result.success || !result.output) {
+        const error = new Error(result.error?.message ?? "computeSha256 failed");
+        (error as { code?: string }).code = result.error?.code;
+        (error as { details?: unknown }).details = result.error?.details;
+        throw error;
+      }
+      const output = filesystemOutput(result, "computeSha256");
+      return output.sha256;
+    },
+  };
 }
 
 async function freshEngine(name: string, opts: { ollamaSwapDelayMs?: number } = {}): Promise<ExecutionEngine> {
@@ -635,6 +685,130 @@ async function main() {
     assert.equal(blockedPlan.status, "blocked");
     assert.equal(blockedPlan.sidecarStatus, "invalid");
     assert.deepEqual(blockedPlan.reasons, ["source_path_mismatch"]);
+  });
+
+  await test("explicit file round-trip planner classifies source and adjacent sidecar safely", async () => {
+    const roundtripRoot = path.join(ROOT, "roundtrip");
+    fs.rmSync(roundtripRoot, { recursive: true, force: true });
+    fs.mkdirSync(roundtripRoot, { recursive: true });
+
+    const adapter = createFilesystemAdapter({
+      id: "filesystem-roundtrip",
+      allowedRoots: [roundtripRoot],
+      baseDir: roundtripRoot,
+    });
+    const io = filesystemRoundTripIO(adapter);
+
+    const missingSidecarSourcePath = path.join("notes", "draft.txt");
+    fs.mkdirSync(path.join(roundtripRoot, "notes"), { recursive: true });
+    fs.writeFileSync(path.join(roundtripRoot, missingSidecarSourcePath), "draft content");
+    const missingSidecarPlan = await planLocalFileRoundTrip({ sourcePath: missingSidecarSourcePath, filesystem: io });
+    assert.equal(missingSidecarPlan.sourceStatus, "present");
+    assert.equal(missingSidecarPlan.sidecarStatus, "missing");
+    assert.equal(missingSidecarPlan.recommendedAction, "create_sidecar");
+    assert.equal(missingSidecarPlan.sidecarPath, `${missingSidecarSourcePath}.prism.json`);
+    assert.equal(missingSidecarPlan.sourceFacts?.sizeBytes, Buffer.byteLength("draft content"));
+
+    const readySourcePath = path.join("notes", "ready.txt");
+    const readyContent = "ready content";
+    const readyHash = createHash("sha256").update(readyContent).digest("hex");
+    const readySidecar = createInitialSidecar({
+      assetId: "asset-ready-001",
+      sourcePath: readySourcePath,
+      canonicalPath: readySourcePath,
+      kind: "note",
+      sha256: readyHash,
+      sizeBytes: Buffer.byteLength(readyContent),
+      createdAt: "2026-06-23T00:00:00.000Z",
+      updatedAt: "2026-06-23T00:00:00.000Z",
+      tags: ["roundtrip"],
+      derivedFiles: [],
+      analysisStatus: "pending",
+      approvalState: "unreviewed",
+      notes: [],
+    });
+    fs.writeFileSync(path.join(roundtripRoot, readySourcePath), readyContent);
+    fs.writeFileSync(path.join(roundtripRoot, `${readySourcePath}.prism.json`), JSON.stringify(readySidecar, null, 2) + "\n");
+    const readyPlan = await planLocalFileRoundTrip({ sourcePath: readySourcePath, filesystem: io });
+    assert.equal(readyPlan.sourceStatus, "present");
+    assert.equal(readyPlan.sidecarStatus, "valid");
+    assert.equal(readyPlan.recommendedAction, "ready");
+    assert.equal(readyPlan.sourceFacts?.sizeBytes, Buffer.byteLength(readyContent));
+    assert.equal(readyPlan.sourceFacts?.sha256, readyHash);
+    assert.equal(readyPlan.sidecar?.assetId, "asset-ready-001");
+
+    const staleSourcePath = path.join("notes", "stale.txt");
+    const staleContent = "stale content";
+    const staleHash = createHash("sha256").update(staleContent).digest("hex");
+    const staleSidecar = createInitialSidecar({
+      assetId: "asset-stale-001",
+      sourcePath: staleSourcePath,
+      canonicalPath: staleSourcePath,
+      kind: "note",
+      sha256: "not-the-source-hash",
+      sizeBytes: 123,
+      createdAt: "2026-06-23T00:00:00.000Z",
+      updatedAt: "2026-06-23T00:00:00.000Z",
+      tags: [],
+      derivedFiles: [],
+      analysisStatus: "pending",
+      approvalState: "unreviewed",
+      notes: [],
+    });
+    fs.writeFileSync(path.join(roundtripRoot, staleSourcePath), staleContent);
+    fs.writeFileSync(path.join(roundtripRoot, `${staleSourcePath}.prism.json`), JSON.stringify(staleSidecar, null, 2) + "\n");
+    const stalePlan = await planLocalFileRoundTrip({ sourcePath: staleSourcePath, filesystem: io });
+    assert.equal(stalePlan.sidecarStatus, "stale");
+    assert.equal(stalePlan.recommendedAction, "update_sidecar_hash");
+    assert.equal(stalePlan.sourceFacts?.sha256, staleHash);
+    assert.deepEqual(stalePlan.reasons.sort(), ["sha256_mismatch", "sizeBytes_mismatch"]);
+
+    const malformedSourcePath = path.join("notes", "broken.txt");
+    fs.writeFileSync(path.join(roundtripRoot, malformedSourcePath), "broken content");
+    fs.writeFileSync(path.join(roundtripRoot, `${malformedSourcePath}.prism.json`), "{ not json");
+    const malformedPlan = await planLocalFileRoundTrip({ sourcePath: malformedSourcePath, filesystem: io });
+    assert.equal(malformedPlan.sidecarStatus, "malformed");
+    assert.equal(malformedPlan.recommendedAction, "review_sidecar");
+    assert.ok(malformedPlan.reasons.some((reason) => reason.includes("malformed")));
+
+    const mismatchedSourcePath = path.join("notes", "mismatch.txt");
+    const mismatchedSidecar = createInitialSidecar({
+      assetId: "asset-mismatch-001",
+      sourcePath: "notes/other.txt",
+      canonicalPath: "notes/other.txt",
+      kind: "note",
+      sha256: "abc",
+      sizeBytes: 3,
+      createdAt: "2026-06-23T00:00:00.000Z",
+      updatedAt: "2026-06-23T00:00:00.000Z",
+      tags: [],
+      derivedFiles: [],
+      analysisStatus: "pending",
+      approvalState: "unreviewed",
+      notes: [],
+    });
+    fs.writeFileSync(path.join(roundtripRoot, mismatchedSourcePath), "mismatch content");
+    fs.writeFileSync(path.join(roundtripRoot, `${mismatchedSourcePath}.prism.json`), JSON.stringify(mismatchedSidecar, null, 2) + "\n");
+    const mismatchedPlan = await planLocalFileRoundTrip({ sourcePath: mismatchedSourcePath, filesystem: io });
+    assert.equal(mismatchedPlan.sidecarStatus, "mismatched_source");
+    assert.equal(mismatchedPlan.recommendedAction, "review_sidecar");
+    assert.equal(mismatchedPlan.sidecar?.sourcePath, "notes/other.txt");
+
+    const missingSourcePlan = await planLocalFileRoundTrip({
+      sourcePath: path.join("notes", "missing.txt"),
+      filesystem: io,
+    });
+    assert.equal(missingSourcePlan.sourceStatus, "missing");
+    assert.equal(missingSourcePlan.sidecarStatus, "blocked");
+    assert.equal(missingSourcePlan.recommendedAction, "blocked");
+
+    const blockedPlan = await planLocalFileRoundTrip({
+      sourcePath: path.join("..", "escape.txt"),
+      filesystem: io,
+    });
+    assert.equal(blockedPlan.sourceStatus, "blocked");
+    assert.equal(blockedPlan.sidecarStatus, "blocked");
+    assert.equal(blockedPlan.recommendedAction, "blocked");
   });
 
   await test("real filesystem adapter stays inside allowed roots and returns deterministic metadata", async () => {
