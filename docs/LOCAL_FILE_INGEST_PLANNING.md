@@ -29,6 +29,9 @@ The canonical helpers live in `src/ingest/sidecar.ts`.
   draft, patch, review, ready, or blocked recommendation
 - `planSidecarWrite(recommendation)` turns a recommendation into an
   approval-gated write plan without writing anything
+- `executeSidecarWritePlan(input)` is the first
+  approval-gated write executor and writes only sidecar files through the
+  existing filesystem adapter/path guard boundary
 
 Compatibility re-exports remain available from `src/filesystem/localFilePlanning.ts`
 for older callers.
@@ -64,6 +67,19 @@ for older callers.
 
 - it does not write, create, update, delete, move, or rename files
 - planned writes require `local_write` approval and a later execution sprint
+- it does not scan folders
+- it does not watch files
+- it does not use a database
+- it does not process media
+- it does not call external APIs
+- it does not perform destructive operations
+
+`executeSidecarWritePlan()` is write-executor-only.
+
+- it writes sidecars only
+- it does not write source files
+- it requires explicit `local_write` approval
+- it uses the existing filesystem adapter and path guard boundary
 - it does not scan folders
 - it does not watch files
 - it does not use a database

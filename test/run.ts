@@ -38,8 +38,10 @@ import {
   planLocalFileRoundTrip,
   recommendSidecarAction,
   planSidecarWrite,
+  executeSidecarWritePlan,
   updateSidecarHashFields,
   validateSidecarShape,
+  type SidecarWritePlan,
 } from "../src/index.js";
 import { dataBoundaryFor } from "../src/types.js";
 import { Wizard, MAX_QUESTIONS } from "../src/wizard/wizard.js";
@@ -1175,6 +1177,279 @@ async function main() {
     assert.equal(unknownPlan.status, "blocked");
     assert.equal(unknownPlan.operation, "none");
     assert.ok(unknownPlan.warnings.some((warning) => warning.includes("unsupported recommendation action")));
+  });
+
+  await test("sidecar write executor writes approved create plans and blocks missing approval", async () => {
+    const fixedNow = () => "2026-06-23T01:02:03.000Z";
+    const fsRoot = path.join(ROOT, "sidecar-executor-create");
+    fs.rmSync(fsRoot, { recursive: true, force: true });
+    fs.mkdirSync(fsRoot, { recursive: true });
+    fs.mkdirSync(path.join(fsRoot, "notes"), { recursive: true });
+    fs.writeFileSync(path.join(fsRoot, "notes", "draft.txt"), "draft content");
+
+    const adapter = createFilesystemAdapter({
+      id: "filesystem-sidecar-executor-create",
+      allowedRoots: [fsRoot],
+      baseDir: fsRoot,
+    });
+
+    const sourcePath = "notes/draft.txt";
+    const sidecarPath = `${sourcePath}.prism.json`;
+    const recommendation = recommendSidecarAction(
+      {
+        sourcePath,
+        sidecarPath,
+        sourceStatus: "present" as const,
+        sidecarStatus: "missing" as const,
+        sourceFacts: {
+          sizeBytes: Buffer.byteLength("draft content"),
+          sha256: createHash("sha256").update("draft content").digest("hex"),
+        },
+        sidecar: null,
+        reasons: ["sidecar_missing"],
+        recommendedAction: "create_sidecar" as const,
+      },
+      { now: fixedNow },
+    );
+    const plan = planSidecarWrite(recommendation);
+    const planSnapshot = JSON.stringify(plan);
+    const planJsonSnapshot = JSON.stringify(plan.json);
+
+    const blocked = await executeSidecarWritePlan({ plan, filesystem: adapter });
+    assert.equal(JSON.stringify(plan), planSnapshot);
+    assert.equal(JSON.stringify(plan.json), planJsonSnapshot);
+    assert.equal(blocked.status, "blocked");
+    assert.equal(blocked.operation, "none");
+    assert.equal(blocked.sourcePath, sourcePath);
+    assert.equal(blocked.sidecarPath, sidecarPath);
+    assert.deepEqual(blocked.reasons, ["local_write_approval_required"]);
+    assert.equal(fs.existsSync(path.join(fsRoot, sidecarPath)), false);
+
+    const written = await executeSidecarWritePlan({
+      plan,
+      filesystem: adapter,
+      approval: { granted: true, approver: "tester" },
+    });
+    assert.equal(JSON.stringify(plan), planSnapshot);
+    assert.equal(JSON.stringify(plan.json), planJsonSnapshot);
+    assert.equal(written.status, "written");
+    assert.equal(written.operation, "create_sidecar");
+    assert.equal(written.sourcePath, sourcePath);
+    assert.equal(written.sidecarPath, sidecarPath);
+    assert.deepEqual(written.reasons, ["sidecar_missing"]);
+    assert.deepEqual(written.warnings, []);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(fsRoot, sidecarPath), "utf-8")), plan.json);
+    assert.equal(fs.readFileSync(path.join(fsRoot, "notes", "draft.txt"), "utf-8"), "draft content");
+
+    const readyPlan = planSidecarWrite({
+      action: "ready",
+      reason: "sidecar_ready",
+      sidecarPath,
+      sourcePath,
+      warnings: [],
+    });
+    const skipped = await executeSidecarWritePlan({
+      plan: readyPlan,
+      filesystem: adapter,
+      approval: { granted: true, approver: "tester" },
+    });
+    assert.equal(skipped.status, "skipped");
+    assert.equal(skipped.operation, "none");
+    assert.equal(skipped.sourcePath, sourcePath);
+    assert.equal(skipped.sidecarPath, sidecarPath);
+    assert.deepEqual(skipped.reasons, ["sidecar_ready"]);
+  });
+
+  await test("sidecar write executor updates hash fields only after revalidation", async () => {
+    const fixedNow = () => "2026-06-23T01:02:03.000Z";
+    const fsRoot = path.join(ROOT, "sidecar-executor-update");
+    fs.rmSync(fsRoot, { recursive: true, force: true });
+    fs.mkdirSync(fsRoot, { recursive: true });
+    fs.mkdirSync(path.join(fsRoot, "notes"), { recursive: true });
+
+    const adapter = createFilesystemAdapter({
+      id: "filesystem-sidecar-executor-update",
+      allowedRoots: [fsRoot],
+      baseDir: fsRoot,
+    });
+
+    const sourcePath = "notes/stale.txt";
+    const sidecarPath = `${sourcePath}.prism.json`;
+    const sourceContent = "fresh content";
+    const sourceHash = createHash("sha256").update(sourceContent).digest("hex");
+    fs.writeFileSync(path.join(fsRoot, sourcePath), sourceContent);
+
+    const staleSidecar = createInitialSidecar({
+      assetId: "asset-notes-stale.txt",
+      sourcePath,
+      canonicalPath: sourcePath,
+      kind: "note",
+      sha256: "old-hash",
+      sizeBytes: 1,
+      createdAt: "2026-06-23T00:00:00.000Z",
+      updatedAt: "2026-06-23T00:00:00.000Z",
+      tags: ["draft"],
+      derivedFiles: [],
+      analysisStatus: "pending",
+      approvalState: "unreviewed",
+      notes: [],
+    });
+    fs.writeFileSync(path.join(fsRoot, sidecarPath), `${JSON.stringify(staleSidecar, null, 2)}\n`);
+
+    const recommendation = recommendSidecarAction(
+      {
+        sourcePath,
+        sidecarPath,
+        sourceStatus: "present" as const,
+        sidecarStatus: "stale" as const,
+        sourceFacts: {
+          sizeBytes: Buffer.byteLength(sourceContent),
+          sha256: sourceHash,
+        },
+        sidecar: staleSidecar,
+        reasons: ["sha256_mismatch", "sizeBytes_mismatch"],
+        recommendedAction: "update_sidecar_hash" as const,
+      },
+      { now: fixedNow },
+    );
+    const plan = planSidecarWrite(recommendation);
+    const planSnapshot = JSON.stringify(plan);
+    const patchSnapshot = JSON.stringify(plan.patch);
+
+    const blocked = await executeSidecarWritePlan({ plan, filesystem: adapter });
+    assert.equal(JSON.stringify(plan), planSnapshot);
+    assert.equal(JSON.stringify(plan.patch), patchSnapshot);
+    assert.equal(blocked.status, "blocked");
+    assert.equal(blocked.operation, "none");
+    assert.deepEqual(blocked.reasons, ["local_write_approval_required"]);
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(fsRoot, sidecarPath), "utf-8")),
+      staleSidecar,
+    );
+
+    const written = await executeSidecarWritePlan({
+      plan,
+      filesystem: adapter,
+      approval: { granted: true, approver: "tester" },
+    });
+    assert.equal(JSON.stringify(plan), planSnapshot);
+    assert.equal(JSON.stringify(plan.patch), patchSnapshot);
+    assert.equal(written.status, "written");
+    assert.equal(written.operation, "update_sidecar");
+    assert.equal(written.sourcePath, sourcePath);
+    assert.equal(written.sidecarPath, sidecarPath);
+    const updatedSidecar = JSON.parse(fs.readFileSync(path.join(fsRoot, sidecarPath), "utf-8"));
+    assert.equal(updatedSidecar.sha256, sourceHash);
+    assert.equal(updatedSidecar.sizeBytes, Buffer.byteLength(sourceContent));
+    assert.equal(updatedSidecar.updatedAt, "2026-06-23T01:02:03.000Z");
+    assert.equal(updatedSidecar.assetId, staleSidecar.assetId);
+    assert.equal(updatedSidecar.sourcePath, staleSidecar.sourcePath);
+    assert.deepEqual(updatedSidecar.tags, staleSidecar.tags);
+
+    const mismatchSourcePath = "notes/mismatch.txt";
+    const mismatchSidecarPath = `${mismatchSourcePath}.prism.json`;
+    const mismatchContent = "mismatch content";
+    const mismatchHash = createHash("sha256").update(mismatchContent).digest("hex");
+    fs.writeFileSync(path.join(fsRoot, mismatchSourcePath), mismatchContent);
+    const mismatchSidecar = createInitialSidecar({
+      assetId: "asset-notes-mismatch.txt",
+      sourcePath: mismatchSourcePath,
+      canonicalPath: mismatchSourcePath,
+      kind: "note",
+      sha256: "old-hash",
+      sizeBytes: 4,
+      createdAt: "2026-06-23T00:00:00.000Z",
+      updatedAt: "2026-06-23T00:00:00.000Z",
+      tags: [],
+      derivedFiles: [],
+      analysisStatus: "pending",
+      approvalState: "unreviewed",
+      notes: [],
+    });
+    fs.writeFileSync(path.join(fsRoot, mismatchSidecarPath), `${JSON.stringify(mismatchSidecar, null, 2)}\n`);
+    const mismatchRecommendation = recommendSidecarAction(
+      {
+        sourcePath: mismatchSourcePath,
+        sidecarPath: mismatchSidecarPath,
+        sourceStatus: "present" as const,
+        sidecarStatus: "stale" as const,
+        sourceFacts: {
+          sizeBytes: Buffer.byteLength(mismatchContent),
+          sha256: mismatchHash,
+        },
+        sidecar: mismatchSidecar,
+        reasons: ["sha256_mismatch", "sizeBytes_mismatch"],
+        recommendedAction: "update_sidecar_hash" as const,
+      },
+      { now: fixedNow },
+    );
+    const mismatchPlan = planSidecarWrite(mismatchRecommendation);
+    const mismatchPlanSnapshot = JSON.stringify(mismatchPlan);
+    const mismatchDriftedSidecar = { ...mismatchSidecar, sourcePath: "notes/other.txt", canonicalPath: "notes/other.txt" };
+    fs.writeFileSync(path.join(fsRoot, mismatchSidecarPath), `${JSON.stringify(mismatchDriftedSidecar, null, 2)}\n`);
+    const mismatchBefore = fs.readFileSync(path.join(fsRoot, mismatchSidecarPath), "utf-8");
+
+    const mismatchResult = await executeSidecarWritePlan({
+      plan: mismatchPlan,
+      filesystem: adapter,
+      approval: { granted: true, approver: "tester" },
+    });
+    assert.equal(JSON.stringify(mismatchPlan), mismatchPlanSnapshot);
+    assert.equal(mismatchResult.status, "blocked");
+    assert.equal(mismatchResult.operation, "update_sidecar");
+    assert.deepEqual(mismatchResult.reasons, ["source_path_mismatch"]);
+    assert.equal(fs.readFileSync(path.join(fsRoot, mismatchSidecarPath), "utf-8"), mismatchBefore);
+  });
+
+  await test("sidecar write executor rejects forged plans outside allowed roots", async () => {
+    const fsRoot = path.join(ROOT, "sidecar-executor-escape");
+    fs.rmSync(fsRoot, { recursive: true, force: true });
+    fs.mkdirSync(fsRoot, { recursive: true });
+
+    const adapter = createFilesystemAdapter({
+      id: "filesystem-sidecar-executor-escape",
+      allowedRoots: [fsRoot],
+      baseDir: fsRoot,
+    });
+
+    const sourcePath = path.join("..", "escape.txt");
+    const sidecarPath = `${sourcePath}.prism.json`;
+    const forgedJson = createInitialSidecar({
+      assetId: "asset-escape",
+      sourcePath,
+      canonicalPath: sourcePath,
+      kind: "note",
+      sha256: "abc",
+      sizeBytes: 3,
+      createdAt: "2026-06-23T00:00:00.000Z",
+      updatedAt: "2026-06-23T00:00:00.000Z",
+      tags: [],
+      derivedFiles: [],
+      analysisStatus: "pending",
+      approvalState: "unreviewed",
+      notes: [],
+    });
+    const forgedPlan: SidecarWritePlan = {
+      status: "planned",
+      operation: "create_sidecar",
+      approvalType: "local_write",
+      sourcePath,
+      sidecarPath,
+      content: `${JSON.stringify(forgedJson, null, 2)}\n`,
+      json: forgedJson,
+      reasons: ["sidecar_missing"],
+      warnings: [],
+      safetyChecks: [],
+    };
+
+    const result = await executeSidecarWritePlan({
+      plan: forgedPlan,
+      filesystem: adapter,
+      approval: { granted: true, approver: "tester" },
+    });
+    assert.equal(result.status, "blocked");
+    assert.equal(result.operation, "create_sidecar");
+    assert.ok(result.reasons.some((reason) => reason === "path_traversal_blocked" || reason === "path_outside_allowed_roots"));
   });
 
   await test("real filesystem adapter stays inside allowed roots and returns deterministic metadata", async () => {
