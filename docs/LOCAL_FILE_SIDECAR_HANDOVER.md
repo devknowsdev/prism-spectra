@@ -3,7 +3,7 @@
 Last-Updated: 2026-06-23
 
 This packet summarizes the explicit-file sidecar work completed across
-Sprints 008-015 so another coding agent can integrate without re-reading every
+Sprints 008-021 so another coding agent can integrate without re-reading every
 prior sprint.
 
 ## Current Status
@@ -13,6 +13,7 @@ prior sprint.
 - schema versioning exists
 - planner exists
 - validation report exists
+- approval review model exists
 - recommendation layer exists
 - write-plan layer exists
 - approval-gated executor exists
@@ -80,7 +81,6 @@ The command is re-exported from:
 ## Suggested Next Sprints
 
 - explicit batch planner preview, no writes
-- UI approval review model, no writes
 - import-sidecar validation report, no writes
 - sidecar schema versioning, no migration
 - fixture cleanup and test organization

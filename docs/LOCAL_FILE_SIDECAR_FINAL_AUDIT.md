@@ -9,7 +9,7 @@ Last-Updated: 2026-06-23
 - integration readiness verdict: ready for future Prism repo integration
 
 This audit closes out the explicit-file sidecar subsystem delivered across
-Sprints 008-019.
+Sprints 008-021.
 
 ## File Map
 
@@ -23,6 +23,8 @@ Sprints 008-019.
 - `src/ingest/localFileSidecarCommand.ts`: explicit-file orchestration command
 - `src/ingest/sidecarValidationReport.ts`: read-only validation report for one
   explicit source file / sidecar pair
+- `src/ingest/sidecarApprovalReview.ts`: read-only approval review model for
+  one explicit source file / sidecar pair
 - `src/ingest/index.ts`: public ingest barrel export
 - `src/index.ts`: package-level public export surface
 - `docs/LOCAL_FILE_SIDECAR_CONVENTION.md`: sidecar naming, schema versioning,
@@ -41,6 +43,7 @@ Sprints 008-019.
 
 - `runLocalFileSidecarCommand()`
 - `validateLocalFileSidecar()`
+- `buildSidecarApprovalReview()`
 - `buildSidecarPath()`
 - `createInitialSidecar()`
 - `validateSidecarShape()`
@@ -114,6 +117,7 @@ The current test suite covers:
 - command contract and examples
 - schema versioning semantics
 - validation report semantics
+- approval review semantics
 - JSON-serializable command and report results
 - no-write behavior where required
 
@@ -147,7 +151,6 @@ The subsystem is ready for future Prism repo integration because:
 ## Recommended Next Subsystem Options
 
 - explicit batch planner preview, no writes
-- UI approval review model, no writes
 - adapter contract hardening
 - Prism Beam integration handoff
 - test organization cleanup

@@ -34,6 +34,7 @@ import {
   PRISM_SIDECAR_SUFFIX,
   PRISM_SIDECAR_SCHEMA_VERSION,
   buildSidecarPath,
+  buildSidecarApprovalReview,
   buildSidecarPlan,
   createInitialSidecar,
   planLocalFileRoundTrip,
@@ -47,13 +48,16 @@ import {
   type LocalFileRoundTripPlan,
   type LocalFileSidecarCommandInput,
   type LocalFileSidecarCommandResult,
+  type SidecarApprovalReview,
   type SidecarRecommendation,
   type SidecarValidationReport,
   type SidecarWriteExecutionResult,
   type SidecarWritePlan,
 } from "../src/index.js";
 import {
+  buildSidecarApprovalReview as buildSidecarApprovalReviewFromIngestBarrel,
   validateLocalFileSidecar as validateLocalFileSidecarFromIngestBarrel,
+  type SidecarApprovalReview as SidecarApprovalReviewFromIngest,
   type SidecarValidationReport as SidecarValidationReportFromIngest,
 } from "../src/ingest/index.js";
 import { dataBoundaryFor } from "../src/types.js";
@@ -172,6 +176,19 @@ function tracingFilesystemAdapter(adapter: ReturnType<typeof createFilesystemAda
       },
     },
   };
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === "object") {
+    Object.freeze(value);
+    for (const child of Object.values(value as Record<string, unknown>)) {
+      if (child && typeof child === "object" && !Object.isFrozen(child)) {
+        deepFreeze(child);
+      }
+    }
+  }
+
+  return value;
 }
 
 async function freshEngine(name: string, opts: { ollamaSwapDelayMs?: number } = {}): Promise<ExecutionEngine> {
@@ -1020,6 +1037,168 @@ async function main() {
     assert.ok(!traced.operations.includes("writeJsonFile"));
     assert.ok(!traced.operations.includes("writeTextFile"));
     assert.ok(!traced.operations.includes("unlink"));
+  });
+
+  await test("sidecar approval review converts read-only sidecar states into caller-facing approval models", async () => {
+    assert.equal(typeof buildSidecarApprovalReviewFromIngestBarrel, "function");
+
+    const fsRoot = path.join(ROOT, "sidecar-approval-review");
+    fs.rmSync(fsRoot, { recursive: true, force: true });
+    fs.mkdirSync(fsRoot, { recursive: true });
+    fs.mkdirSync(path.join(fsRoot, "notes"), { recursive: true });
+
+    const adapter = createFilesystemAdapter({
+      id: "filesystem-sidecar-approval-review",
+      allowedRoots: [fsRoot],
+      baseDir: fsRoot,
+    });
+    const io = filesystemRoundTripIO(adapter);
+
+    const createSourcePath = path.join("notes", "draft.txt");
+    fs.writeFileSync(path.join(fsRoot, createSourcePath), "draft content");
+    const createPlan = planSidecarWrite(
+      recommendSidecarAction(
+        await planLocalFileRoundTrip({ sourcePath: createSourcePath, filesystem: io }),
+        { now: () => "2026-06-23T01:02:03.000Z" },
+      ),
+    );
+
+    const createReview = buildSidecarApprovalReview({ writePlan: createPlan });
+    assert.equal(createReview.status, "approval_required");
+    assert.equal(createReview.approvalType, "local_write");
+    assert.equal(createReview.proposedOperation, "create_sidecar");
+    assert.equal(createReview.canApprove, true);
+    assert.equal(createReview.riskLevel, "low");
+    assert.ok(createReview.userFacingChanges.includes("schemaVersion"));
+    assert.equal(JSON.parse(JSON.stringify(createReview)).status, "approval_required");
+    const createRoundTrip: SidecarApprovalReview = JSON.parse(JSON.stringify(createReview));
+    assert.equal(createRoundTrip.approvalType, "local_write");
+    const createRoundTripFromIngest: SidecarApprovalReviewFromIngest = JSON.parse(JSON.stringify(createReview));
+    assert.equal(createRoundTripFromIngest.proposedOperation, "create_sidecar");
+
+    const staleSourcePath = path.join("notes", "stale.txt");
+    fs.writeFileSync(path.join(fsRoot, staleSourcePath), "stale content");
+    fs.writeFileSync(
+      path.join(fsRoot, `${staleSourcePath}.prism.json`),
+      `${JSON.stringify(
+        createInitialSidecar({
+          assetId: "asset-notes-stale.txt",
+          sourcePath: staleSourcePath,
+          canonicalPath: staleSourcePath,
+          kind: "note",
+          sha256: "old-hash",
+          sizeBytes: 1,
+          createdAt: "2026-06-23T00:00:00.000Z",
+          updatedAt: "2026-06-23T00:00:00.000Z",
+          tags: ["draft"],
+          derivedFiles: [],
+          analysisStatus: "pending",
+          approvalState: "unreviewed",
+          notes: [],
+        }),
+        null,
+        2,
+      )}\n`,
+    );
+    const stalePlan = planSidecarWrite(
+      recommendSidecarAction(
+        await planLocalFileRoundTrip({ sourcePath: staleSourcePath, filesystem: io }),
+        { now: () => "2026-06-23T01:02:03.000Z" },
+      ),
+    );
+    const staleReview = buildSidecarApprovalReview({ writePlan: stalePlan });
+    assert.equal(staleReview.status, "approval_required");
+    assert.equal(staleReview.proposedOperation, "update_sidecar");
+    assert.equal(staleReview.canApprove, true);
+    assert.deepEqual(staleReview.userFacingChanges, ["sha256", "sizeBytes", "updatedAt"]);
+
+    const readyReport: SidecarValidationReport = {
+      status: "valid",
+      sourcePath: "notes/ready.txt",
+      sidecarPath: "notes/ready.txt.prism.json",
+      sourceStatus: "present",
+      sidecarStatus: "valid",
+      schemaVersionStatus: "current",
+      issues: [],
+      recommendedAction: "none",
+      canAutoPlan: false,
+      canExecuteWithApproval: false,
+    };
+    const readyReview = buildSidecarApprovalReview({ validationReport: readyReport });
+    assert.equal(readyReview.status, "not_applicable");
+    assert.equal(readyReview.approvalType, "none");
+    assert.equal(readyReview.proposedOperation, "none");
+    assert.equal(readyReview.canApprove, false);
+
+    const malformedReport: SidecarValidationReport = {
+      status: "review_needed",
+      sourcePath: "notes/broken.txt",
+      sidecarPath: "notes/broken.txt.prism.json",
+      sourceStatus: "present",
+      sidecarStatus: "malformed",
+      schemaVersionStatus: "not_applicable",
+      issues: [{ code: "sidecar_json_malformed", severity: "error", message: "Sidecar JSON could not be parsed." }],
+      recommendedAction: "review_sidecar",
+      canAutoPlan: false,
+      canExecuteWithApproval: false,
+    };
+    const malformedReview = buildSidecarApprovalReview({ validationReport: malformedReport });
+    assert.equal(malformedReview.status, "blocked");
+    assert.equal(malformedReview.canApprove, false);
+    assert.equal(malformedReview.riskLevel, "blocked");
+
+    const futureReport: SidecarValidationReport = {
+      status: "review_needed",
+      sourcePath: "notes/future.txt",
+      sidecarPath: "notes/future.txt.prism.json",
+      sourceStatus: "present",
+      sidecarStatus: "valid",
+      schemaVersionStatus: "unsupported",
+      issues: [{ code: "unsupported_schemaVersion", severity: "error", message: "Sidecar schemaVersion is unsupported and requires review." }],
+      recommendedAction: "review_sidecar",
+      canAutoPlan: false,
+      canExecuteWithApproval: false,
+    };
+    const futureReview = buildSidecarApprovalReview({ validationReport: futureReport });
+    assert.equal(futureReview.status, "blocked");
+    assert.equal(futureReview.canApprove, false);
+
+    const blockedReport: SidecarValidationReport = {
+      status: "blocked",
+      sourcePath: "notes/escape.txt",
+      sidecarPath: "notes/escape.txt.prism.json",
+      sourceStatus: "blocked",
+      sidecarStatus: "blocked",
+      schemaVersionStatus: "not_applicable",
+      issues: [{ code: "path_traversal_blocked", severity: "error", message: "Path traversal was blocked." }],
+      recommendedAction: "blocked",
+      canAutoPlan: false,
+      canExecuteWithApproval: false,
+    };
+    const blockedReview = buildSidecarApprovalReview({ validationReport: blockedReport });
+    assert.equal(blockedReview.status, "blocked");
+    assert.equal(blockedReview.canApprove, false);
+
+    const frozenInput = deepFreeze({
+      writePlan: deepFreeze({
+        ...stalePlan,
+        reasons: [...stalePlan.reasons],
+        warnings: [...stalePlan.warnings],
+        safetyChecks: [...stalePlan.safetyChecks],
+      }),
+    });
+    const frozenSnapshot = JSON.stringify(frozenInput);
+    const frozenReview = buildSidecarApprovalReview(frozenInput);
+    assert.equal(frozenReview.status, "approval_required");
+    assert.equal(JSON.stringify(frozenInput), frozenSnapshot);
+    assert.equal(JSON.parse(JSON.stringify(frozenReview)).canApprove, true);
+
+    const plannerReview = buildSidecarApprovalReview({
+      planner: await planLocalFileRoundTrip({ sourcePath: createSourcePath, filesystem: io }),
+    });
+    assert.equal(plannerReview.status, "approval_required");
+    assert.equal(plannerReview.approvalType, "local_write");
+    assert.equal(plannerReview.canApprove, true);
   });
 
   await test("explicit file round-trip planner classifies source and adjacent sidecar safely", async () => {
