@@ -647,6 +647,7 @@ async function main() {
     fs.writeFileSync(path.join(fsRoot, "allowed.txt"), "allowed");
     fs.writeFileSync(path.join(escapeRoot, "escape.txt"), "escape");
     fs.symlinkSync(path.join(escapeRoot, "escape.txt"), path.join(fsRoot, "linked.txt"));
+    fs.symlinkSync(path.join(fsRoot, "allowed.txt"), path.join(fsRoot, "inner-linked.txt"));
 
     const adapter = createFilesystemAdapter({
       id: "filesystem-boundary",
@@ -656,25 +657,53 @@ async function main() {
 
     const blockedRead = await adapter.execute(filesystemAction("fb1", "readTextFile", "readTextFile", "read_only", { path: "../filesystem-escape/escape.txt" }), {});
     assert.equal(blockedRead.blocked, true);
-    assert.equal(blockedRead.error?.code, "path_outside_allowed_root");
+    assert.equal(blockedRead.error?.code, "path_traversal_blocked");
 
     const blockedWrite = await adapter.execute(
       filesystemAction("fb2", "writeTextFile", "writeTextFile", "local_write", { path: "../filesystem-escape/escape.txt", content: "nope" }),
       {},
     );
     assert.equal(blockedWrite.blocked, true);
-    assert.equal(blockedWrite.error?.code, "path_outside_allowed_root");
+    assert.equal(blockedWrite.error?.code, "path_traversal_blocked");
 
     const blockedTraversal = await adapter.execute(
       filesystemAction("fb3", "readTextFile", "readTextFile", "read_only", { path: "nested/../../filesystem-escape/escape.txt" }),
       {},
     );
     assert.equal(blockedTraversal.blocked, true);
-    assert.equal(blockedTraversal.error?.code, "path_outside_allowed_root");
+    assert.equal(blockedTraversal.error?.code, "path_traversal_blocked");
 
     const blockedSymlink = await adapter.execute(filesystemAction("fb4", "readTextFile", "readTextFile", "read_only", { path: "linked.txt" }), {});
     assert.equal(blockedSymlink.blocked, true);
-    assert.equal(blockedSymlink.error?.code, "symlink_not_supported");
+    assert.equal(blockedSymlink.error?.code, "symlink_rejected");
+
+    const blockedInnerSymlink = await adapter.execute(
+      filesystemAction("fb4b", "readTextFile", "readTextFile", "read_only", { path: "inner-linked.txt" }),
+      {},
+    );
+    assert.equal(blockedInnerSymlink.blocked, true);
+    assert.equal(blockedInnerSymlink.error?.code, "symlink_rejected");
+
+    const blockedParentEscape = await adapter.execute(
+      filesystemAction("fb4c", "writeTextFile", "writeTextFile", "local_write", {
+        path: path.join(fsRoot, "..", "filesystem-escape", "parent-escape.txt"),
+        content: "nope",
+      }),
+      {},
+    );
+    assert.equal(blockedParentEscape.blocked, true);
+    assert.equal(blockedParentEscape.error?.code, "path_outside_allowed_roots");
+
+    const blockedSidecarEscape = await adapter.execute(
+      filesystemAction("fb4d", "writeJsonSidecar", "writeJsonSidecar", "local_write", {
+        path: "allowed.txt",
+        data: { hello: "world" },
+        sidecarSuffix: "../../escape.json",
+      }),
+      {},
+    );
+    assert.equal(blockedSidecarEscape.blocked, true);
+    assert.equal(blockedSidecarEscape.error?.code, "path_traversal_blocked");
 
     const destructive = await adapter.execute(
       filesystemAction("fb5", "deletePath", "deletePath", "destructive", { path: "allowed.txt" }, "required"),

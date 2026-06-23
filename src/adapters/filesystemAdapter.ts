@@ -14,6 +14,7 @@ import {
   nowIso,
 } from "./types.js";
 import { blockedAdapterResult, ensureApprovalAllowed } from "./approvalGuard.js";
+import { createFilesystemPathGuard, type FilesystemPathGuard } from "./filesystemPathGuard.js";
 
 export const FILESYSTEM_OPERATIONS = [
   "readTextFile",
@@ -143,11 +144,6 @@ interface FilesystemAdapterDetails {
   stat?: FilesystemStatSnapshot;
 }
 
-function isInsideRoot(root: string, candidate: string): boolean {
-  const rel = path.relative(root, candidate);
-  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
-}
-
 function errorWithDetails(
   adapterId: string,
   actionId: string,
@@ -209,143 +205,41 @@ function serializeMetadata(details: FilesystemAdapterDetails, allowedRoots: stri
   };
 }
 
-async function realpathIfExists(candidate: string): Promise<string | null> {
-  try {
-    return await fs.realpath(candidate);
-  } catch {
-    return null;
-  }
+function buildSupportedOperationError(adapterId: string, actionId: string, operation: string, targetPath: string, allowedRoots: string[]) {
+  return errorWithDetails(
+    adapterId,
+    actionId,
+    "unsupported_operation",
+    `Unsupported filesystem operation: ${operation}.`,
+    { operation, targetPath, allowedRoots },
+  );
 }
 
-async function nearestExistingAncestor(candidate: string): Promise<string | null> {
-  let current = candidate;
-  for (;;) {
-    if (fsSync.existsSync(current)) {
-      return current;
-    }
-    const parent = path.dirname(current);
-    if (parent === current) {
-      return null;
-    }
-    current = parent;
-  }
+function isFilesystemAdapterError(value: unknown): value is AdapterError {
+  return !!value && typeof value === "object" && "adapterId" in value && "actionId" in value && "code" in value && "message" in value;
 }
 
-function resolveTargetPath(baseDir: string, inputPath: string): string {
-  return path.isAbsolute(inputPath) ? path.resolve(inputPath) : path.resolve(baseDir, inputPath);
+function isReadOperation(operation: string): boolean {
+  return operation === "readTextFile" || operation === "listDirectory" || operation === "statPath" || operation === "computeSha256" || operation === "readJsonFile";
 }
 
-async function validateReadablePath(
-  targetPath: string,
-  allowedRoots: string[],
-  adapterId: string,
-  actionId: string,
-): Promise<{ targetPath: string; resolvedPath: string; root: string }> {
-  const root = allowedRoots.find((allowedRoot) => isInsideRoot(allowedRoot, targetPath));
-  if (!root) {
-    throw errorWithDetails(
-      adapterId,
-      actionId,
-      "path_outside_allowed_root",
-      `Path ${targetPath} is outside the allowed roots.`,
-      { targetPath, allowedRoots, kind: "read" },
-    );
+function mapFilesystemFailure(adapterId: string, actionId: string, operation: string, targetPath: string, error: unknown): AdapterError {
+  const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (code === "ENOENT") {
+    return createAdapterError(adapterId, actionId, "file_not_found", message, { operation, targetPath, code });
   }
 
-  const realPath = await realpathIfExists(targetPath);
-  if (!realPath) {
-    throw errorWithDetails(
-      adapterId,
-      actionId,
-      "path_not_found",
-      `Path ${targetPath} does not exist.`,
-      { targetPath, allowedRoots, kind: "read" },
-    );
+  if (code === "ENOTDIR" || code === "EISDIR") {
+    return createAdapterError(adapterId, actionId, "not_a_directory", message, { operation, targetPath, code });
   }
 
-  if (realPath !== targetPath) {
-    throw errorWithDetails(
-      adapterId,
-      actionId,
-      "symlink_not_supported",
-      `Symlinked paths are not allowed for ${targetPath}.`,
-      { targetPath, resolvedPath: realPath, allowedRoots, kind: "read" },
-    );
-  }
-
-  if (!allowedRoots.some((allowedRoot) => isInsideRoot(allowedRoot, realPath))) {
-    throw errorWithDetails(
-      adapterId,
-      actionId,
-      "path_outside_allowed_root",
-      `Path ${targetPath} resolves outside the allowed roots.`,
-      { targetPath, resolvedPath: realPath, allowedRoots, kind: "read" },
-    );
-  }
-
-  return { targetPath, resolvedPath: realPath, root };
-}
-
-async function validateWritablePath(
-  targetPath: string,
-  allowedRoots: string[],
-  adapterId: string,
-  actionId: string,
-): Promise<{ targetPath: string; root: string; parentPath: string; parentResolvedPath: string }> {
-  const root = allowedRoots.find((allowedRoot) => isInsideRoot(allowedRoot, targetPath));
-  if (!root) {
-    throw errorWithDetails(
-      adapterId,
-      actionId,
-      "path_outside_allowed_root",
-      `Path ${targetPath} is outside the allowed roots.`,
-      { targetPath, allowedRoots, kind: "write" },
-    );
-  }
-
-  const ancestor = await nearestExistingAncestor(targetPath);
-  if (!ancestor) {
-    throw errorWithDetails(
-      adapterId,
-      actionId,
-      "missing_ancestor",
-      `Path ${targetPath} has no existing ancestor inside the allowed roots.`,
-      { targetPath, allowedRoots, kind: "write" },
-    );
-  }
-
-  const realAncestor = await realpathIfExists(ancestor);
-  if (!realAncestor) {
-    throw errorWithDetails(
-      adapterId,
-      actionId,
-      "path_not_found",
-      `Path ${targetPath} has no resolvable ancestor.`,
-      { targetPath, allowedRoots, kind: "write" },
-    );
-  }
-
-  if (realAncestor !== ancestor) {
-    throw errorWithDetails(
-      adapterId,
-      actionId,
-      "symlink_not_supported",
-      `Symlinked paths are not allowed for ${targetPath}.`,
-      { targetPath, resolvedPath: realAncestor, allowedRoots, kind: "write" },
-    );
-  }
-
-  if (!allowedRoots.some((allowedRoot) => isInsideRoot(allowedRoot, realAncestor))) {
-    throw errorWithDetails(
-      adapterId,
-      actionId,
-      "path_outside_allowed_root",
-      `Path ${targetPath} resolves outside the allowed roots.`,
-      { targetPath, resolvedPath: realAncestor, allowedRoots, kind: "write" },
-    );
-  }
-
-  return { targetPath, root, parentPath: ancestor, parentResolvedPath: realAncestor };
+  return createAdapterError(adapterId, actionId, isReadOperation(operation) ? "read_failed" : "write_failed", message, {
+    operation,
+    targetPath,
+    code,
+  });
 }
 
 async function readTextFileData(resolvedPath: string): Promise<{ content: string; bytesRead: number; sha256: string }> {
@@ -366,27 +260,6 @@ async function writeTextFileData(resolvedPath: string, content: string): Promise
   };
 }
 
-function buildSupportedOperationError(adapterId: string, actionId: string, operation: string, targetPath: string, allowedRoots: string[]) {
-  return errorWithDetails(
-    adapterId,
-    actionId,
-    "unsupported_operation",
-    `Unsupported filesystem operation: ${operation}.`,
-    { operation, targetPath, allowedRoots },
-  );
-}
-
-function isAdapterErrorLike(value: unknown): value is AdapterError {
-  return (
-    !!value &&
-    typeof value === "object" &&
-    "adapterId" in value &&
-    "actionId" in value &&
-    "code" in value &&
-    "message" in value
-  );
-}
-
 export function createFilesystemAdapter(config: FilesystemAdapterConfig): AdapterContract<FilesystemOperationOutput> {
   if (!config.allowedRoots.length) {
     throw new Error("Filesystem adapter requires at least one allowed root.");
@@ -396,12 +269,13 @@ export function createFilesystemAdapter(config: FilesystemAdapterConfig): Adapte
   const adapterName = config.name ?? "Filesystem Adapter";
   const sidecarSuffix = config.sidecarSuffix ?? ".sidecar.json";
   const jsonIndent = config.jsonIndent ?? 2;
-  const allowedRoots = config.allowedRoots.map((root) => fsSync.realpathSync(path.resolve(root)));
-  const baseDir = fsSync.realpathSync(path.resolve(config.baseDir ?? allowedRoots[0]));
-
-  if (!allowedRoots.some((root) => isInsideRoot(root, baseDir))) {
-    throw new Error(`Filesystem adapter baseDir ${baseDir} must be inside one of the allowed roots.`);
-  }
+  const pathGuard: FilesystemPathGuard = createFilesystemPathGuard({
+    adapterId,
+    allowedRoots: config.allowedRoots,
+    baseDir: config.baseDir,
+  });
+  const allowedRoots = pathGuard.allowedRoots;
+  const baseDir = pathGuard.baseDir;
 
   const descriptor = {
     id: adapterId,
@@ -533,8 +407,7 @@ export function createFilesystemAdapter(config: FilesystemAdapterConfig): Adapte
 
         switch (operation) {
           case "readTextFile": {
-            const targetAbs = resolveTargetPath(baseDir, targetPath);
-            const { resolvedPath, root } = await validateReadablePath(targetAbs, allowedRoots, descriptor.id, action.id);
+            const { resolvedPath, root } = await pathGuard.validateReadablePath(targetPath, action.id, "file");
             const data = await readTextFileData(resolvedPath);
             return createAdapterResult<FilesystemOperationOutput>(descriptor, action, {
               success: true,
@@ -564,10 +437,11 @@ export function createFilesystemAdapter(config: FilesystemAdapterConfig): Adapte
           }
 
           case "writeTextFile": {
-            const targetAbs = resolveTargetPath(baseDir, targetPath);
-            const { root } = await validateWritablePath(targetAbs, allowedRoots, descriptor.id, action.id);
+            const targetAbs = pathGuard.resolveTargetPath(targetPath);
+            const { root } = await pathGuard.validateWritablePath(targetPath, action.id, "file");
             const content = String(input.content ?? "");
             await fs.mkdir(path.dirname(targetAbs), { recursive: true });
+            await pathGuard.validateWritablePath(targetPath, action.id, "file");
             const data = await writeTextFileData(targetAbs, content);
             const writtenRealPath = await fs.realpath(targetAbs);
             return createAdapterResult<FilesystemOperationOutput>(descriptor, action, {
@@ -597,8 +471,7 @@ export function createFilesystemAdapter(config: FilesystemAdapterConfig): Adapte
           }
 
           case "listDirectory": {
-            const targetAbs = resolveTargetPath(baseDir, targetPath);
-            const { resolvedPath, root } = await validateReadablePath(targetAbs, allowedRoots, descriptor.id, action.id);
+            const { resolvedPath, root } = await pathGuard.validateReadablePath(targetPath, action.id, "directory");
             const entries = await fs.readdir(resolvedPath, { withFileTypes: true });
             const mapped = await Promise.all(
               entries
@@ -640,10 +513,11 @@ export function createFilesystemAdapter(config: FilesystemAdapterConfig): Adapte
           }
 
           case "ensureDirectory": {
-            const targetAbs = resolveTargetPath(baseDir, targetPath);
-            const { root } = await validateWritablePath(targetAbs, allowedRoots, descriptor.id, action.id);
+            const targetAbs = pathGuard.resolveTargetPath(targetPath);
+            const { root } = await pathGuard.validateWritablePath(targetPath, action.id, "directory");
             const existedBefore = fsSync.existsSync(targetAbs);
             await fs.mkdir(targetAbs, { recursive: true });
+            await pathGuard.validateWritablePath(targetPath, action.id, "directory");
             const madePath = await fs.realpath(targetAbs);
             return createAdapterResult<FilesystemOperationOutput>(descriptor, action, {
               success: true,
@@ -669,8 +543,7 @@ export function createFilesystemAdapter(config: FilesystemAdapterConfig): Adapte
           }
 
           case "statPath": {
-            const targetAbs = resolveTargetPath(baseDir, targetPath);
-            const { resolvedPath, root } = await validateReadablePath(targetAbs, allowedRoots, descriptor.id, action.id);
+            const { resolvedPath, root } = await pathGuard.validateReadablePath(targetPath, action.id, "any");
             const stats = await fs.stat(resolvedPath);
             const snapshot = statSnapshotFromStats(stats);
             return createAdapterResult<FilesystemOperationOutput>(descriptor, action, {
@@ -698,8 +571,7 @@ export function createFilesystemAdapter(config: FilesystemAdapterConfig): Adapte
           }
 
           case "computeSha256": {
-            const targetAbs = resolveTargetPath(baseDir, targetPath);
-            const { resolvedPath, root } = await validateReadablePath(targetAbs, allowedRoots, descriptor.id, action.id);
+            const { resolvedPath, root } = await pathGuard.validateReadablePath(targetPath, action.id, "file");
             const bytes = await fs.readFile(resolvedPath);
             const sha256 = hashBytes(bytes);
             return createAdapterResult<FilesystemOperationOutput>(descriptor, action, {
@@ -729,24 +601,16 @@ export function createFilesystemAdapter(config: FilesystemAdapterConfig): Adapte
           }
 
           case "writeJsonSidecar": {
-            const targetAbs = resolveTargetPath(baseDir, targetPath);
-            const { root } = await validateWritablePath(targetAbs, allowedRoots, descriptor.id, action.id);
-            const targetResolvedPath = await realpathIfExists(targetAbs);
-            if (!targetResolvedPath) {
-              throw errorWithDetails(
-                descriptor.id,
-                action.id,
-                "path_not_found",
-                `Path ${targetAbs} does not exist.`,
-                { targetPath, allowedRoots, kind: "write" },
-              );
-            }
-            const sidecarTarget = resolveTargetPath(baseDir, `${targetPath}${input.sidecarSuffix ?? sidecarSuffix}`);
-            await validateWritablePath(sidecarTarget, allowedRoots, descriptor.id, action.id);
+            const { root } = await pathGuard.validateWritablePath(targetPath, action.id, "file");
+            const { resolvedPath: targetResolvedPath } = await pathGuard.validateReadablePath(targetPath, action.id, "file");
+            const sidecarRelativePath = `${targetPath}${input.sidecarSuffix ?? sidecarSuffix}`;
+            const sidecarTarget = pathGuard.resolveTargetPath(sidecarRelativePath);
+            await pathGuard.validateWritablePath(sidecarRelativePath, action.id, "file");
             const jsonValue = input.data ?? input.json ?? {};
             const jsonText = formatJson(jsonValue, input.jsonIndent ?? jsonIndent);
             const bytes = toBuffer(jsonText);
             await fs.mkdir(path.dirname(sidecarTarget), { recursive: true });
+            await pathGuard.validateWritablePath(sidecarRelativePath, action.id, "file");
             await fs.writeFile(sidecarTarget, bytes);
             const realSidecar = await fs.realpath(sidecarTarget);
             return createAdapterResult<FilesystemOperationOutput>(descriptor, action, {
@@ -780,8 +644,7 @@ export function createFilesystemAdapter(config: FilesystemAdapterConfig): Adapte
           }
 
           case "readJsonFile": {
-            const targetAbs = resolveTargetPath(baseDir, targetPath);
-            const { resolvedPath, root } = await validateReadablePath(targetAbs, allowedRoots, descriptor.id, action.id);
+            const { resolvedPath, root } = await pathGuard.validateReadablePath(targetPath, action.id, "file");
             const bytes = await fs.readFile(resolvedPath);
             const text = bytes.toString("utf8");
             let data: unknown;
@@ -838,11 +701,12 @@ export function createFilesystemAdapter(config: FilesystemAdapterConfig): Adapte
           }
 
           case "writeJsonFile": {
-            const targetAbs = resolveTargetPath(baseDir, targetPath);
-            const { root } = await validateWritablePath(targetAbs, allowedRoots, descriptor.id, action.id);
+            const targetAbs = pathGuard.resolveTargetPath(targetPath);
+            const { root } = await pathGuard.validateWritablePath(targetPath, action.id, "file");
             const jsonText = formatJson(input.data ?? input.json ?? {}, input.jsonIndent ?? jsonIndent);
             const bytes = toBuffer(jsonText);
             await fs.mkdir(path.dirname(targetAbs), { recursive: true });
+            await pathGuard.validateWritablePath(targetPath, action.id, "file");
             await fs.writeFile(targetAbs, bytes);
             const realPath = await fs.realpath(targetAbs);
             return createAdapterResult<FilesystemOperationOutput>(descriptor, action, {
@@ -885,7 +749,7 @@ export function createFilesystemAdapter(config: FilesystemAdapterConfig): Adapte
             );
         }
       } catch (error) {
-        if (isAdapterErrorLike(error)) {
+        if (isFilesystemAdapterError(error)) {
           const adapterError = error;
           return blockedAdapterResult<FilesystemOperationOutput>(
             descriptor,
@@ -926,16 +790,7 @@ export function createFilesystemAdapter(config: FilesystemAdapterConfig): Adapte
         return blockedAdapterResult<FilesystemOperationOutput>(
           descriptor,
           action,
-          createAdapterError(
-            descriptor.id,
-            action.id,
-            "filesystem_error",
-            error instanceof Error ? error.message : String(error),
-            {
-              operation,
-              targetPath: typeof action.input?.path === "string" ? action.input.path : "",
-            },
-          ),
+          mapFilesystemFailure(descriptor.id, action.id, operation, typeof action.input?.path === "string" ? action.input.path : "", error),
           serializeMetadata(
             {
               operation,

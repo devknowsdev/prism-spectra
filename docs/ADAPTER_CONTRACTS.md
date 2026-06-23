@@ -98,12 +98,23 @@ file operations.
 
 - every requested path is resolved against the adapter base directory or taken
   as an absolute path
-- the resolved path must stay inside one of the configured allowed roots
-- `../` traversal is blocked when it would escape an allowed root
-- symlinked paths are handled conservatively and are blocked rather than
-  followed
+- all configured allowed roots are resolved up front, and `baseDir` must live
+  inside one of them
+- `path_outside_allowed_roots` is used when a path starts outside the allowed
+  set
+- `path_traversal_blocked` is used for `..` traversal attempts, including
+  nested traversal segments
+- symlinks are rejected conservatively with `symlink_rejected`; the adapter
+  does not follow them for reads or writes
+- hard links are not treated as a special escape case; they are handled as
+  ordinary files as long as the link path itself stays inside an allowed root
 - the adapter does not trust hidden path jumps, mount tricks, or external
   escape hatches
+- path checks are repeated immediately before writes and again after parent
+  directory creation when practical, but the adapter still cannot eliminate all
+  TOCTOU races
+- file-not-found and directory-shape failures are surfaced with
+  `file_not_found` and `not_a_directory`
 
 ### Approval and risk behavior
 
@@ -119,11 +130,12 @@ file operations.
 - the sidecar filename uses a suffix-based convention so the source file is
   left intact
 - JSON output is stable and newline-terminated
+- sidecar writes must pass the same path-boundary checks as normal writes, so
+  a malicious suffix cannot escape an allowed root
 
 ### Unsupported operations
 
-- delete
-- recursive delete
+- delete and recursive delete
 - move or rename outside the adapter's simple local-safe scope
 - chmod / chown
 - shell execution
@@ -132,6 +144,18 @@ file operations.
 - media processing
 - database writes
 - cloud sync
+- other destructive filesystem operations that are not explicitly declared
+
+### Future hardening options
+
+Later hardening passes could add:
+
+- fd-based open/write flows that reduce the remaining race window further
+- path-specific operation locks for heavier local contention
+- dedicated hard-link provenance checks if the product ever needs them
+- audit logging for path boundary rejections
+- a separate watcher capability with explicit approval and provenance rules
+- stricter rename/move semantics if those operations are ever introduced
 
 ### Future file-watcher direction
 

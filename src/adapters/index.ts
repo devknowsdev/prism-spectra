@@ -1,6 +1,13 @@
 export * from "./types.js";
 export * from "./approvalGuard.js";
 export * from "./registry.js";
+export { createFilesystemPathGuard } from "./filesystemPathGuard.js";
+export type {
+  FilesystemPathGuard,
+  FilesystemPathGuardConfig,
+  FilesystemReadablePath,
+  FilesystemWritablePath,
+} from "./filesystemPathGuard.js";
 export { createFilesystemAdapter } from "./filesystemAdapter.js";
 export type {
   FilesystemAdapterConfig,
