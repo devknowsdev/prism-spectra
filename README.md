@@ -34,6 +34,15 @@ For the implementation handover packet, see
 For the current build boundary and stabilization rationale, see
 [docs/BUILD_STABILIZATION_NOTES.md](docs/BUILD_STABILIZATION_NOTES.md).
 
+## Capability palette research
+
+For the open-source capability-palette harvest, see
+[docs/CAPABILITY_PALETTE_HARVEST.md](docs/CAPABILITY_PALETTE_HARVEST.md).
+
+For the proposed capability manifest schema, resource governance model, and
+Codex-ready implementation sprint, see
+[docs/CAPABILITY_MANIFEST_AND_RESOURCE_GOVERNANCE.md](docs/CAPABILITY_MANIFEST_AND_RESOURCE_GOVERNANCE.md).
+
 ## What this repo is for
 
 - Deterministic graph building and routing
