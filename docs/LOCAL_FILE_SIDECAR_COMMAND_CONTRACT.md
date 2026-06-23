@@ -103,6 +103,9 @@ Future Prism repos should treat this API as a small, safe contract surface:
 - treat Prism sidecars as local metadata, not media analysis output
 - do not infer folder ingestion from this API
 
+For concrete integration examples, see
+[docs/LOCAL_FILE_SIDECAR_COMMAND_EXAMPLES.md](docs/LOCAL_FILE_SIDECAR_COMMAND_EXAMPLES.md).
+
 ## Relationship To The Pipeline
 
 The command composes the existing canonical helpers rather than redefining the
@@ -114,4 +117,3 @@ contract in each caller:
 - `executeSidecarWritePlan()`
 
 Canonical sidecar semantics remain in `src/ingest/sidecar.ts`.
-

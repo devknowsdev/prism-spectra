@@ -25,6 +25,9 @@ and [docs/LOCAL_FILE_INGEST_PLANNING.md](docs/LOCAL_FILE_INGEST_PLANNING.md).
 For the explicit-file sidecar command contract, see
 [docs/LOCAL_FILE_SIDECAR_COMMAND_CONTRACT.md](docs/LOCAL_FILE_SIDECAR_COMMAND_CONTRACT.md).
 
+For copy-paste integration examples, see
+[docs/LOCAL_FILE_SIDECAR_COMMAND_EXAMPLES.md](docs/LOCAL_FILE_SIDECAR_COMMAND_EXAMPLES.md).
+
 For the current build boundary and stabilization rationale, see
 [docs/BUILD_STABILIZATION_NOTES.md](docs/BUILD_STABILIZATION_NOTES.md).
 

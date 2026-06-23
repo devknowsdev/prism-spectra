@@ -42,6 +42,11 @@ import {
   runLocalFileSidecarCommand,
   updateSidecarHashFields,
   validateSidecarShape,
+  type LocalFileRoundTripPlan,
+  type LocalFileSidecarCommandInput,
+  type LocalFileSidecarCommandResult,
+  type SidecarRecommendation,
+  type SidecarWriteExecutionResult,
   type SidecarWritePlan,
 } from "../src/index.js";
 import { dataBoundaryFor } from "../src/types.js";
@@ -1779,6 +1784,163 @@ async function main() {
     assert.equal(escapeExecute.status, "blocked");
     assert.ok(escapeExecute.planner.reasons.some((reason) => reason === "path_traversal_blocked" || reason === "path_outside_allowed_roots"));
     assert.ok(!tracedMismatch.operations.includes("writeJsonFile"));
+  });
+
+  await test("public ingest examples stay explicit-file, write-free, and approval-gated", async () => {
+    assert.equal(typeof buildSidecarPath, "function");
+    assert.equal(typeof createInitialSidecar, "function");
+    assert.equal(typeof planLocalFileRoundTrip, "function");
+    assert.equal(typeof recommendSidecarAction, "function");
+    assert.equal(typeof planSidecarWrite, "function");
+    assert.equal(typeof executeSidecarWritePlan, "function");
+    assert.equal(typeof runLocalFileSidecarCommand, "function");
+
+    const planOnlyRoot = path.join(ROOT, "sidecar-examples-plan");
+    fs.rmSync(planOnlyRoot, { recursive: true, force: true });
+    fs.mkdirSync(planOnlyRoot, { recursive: true });
+    fs.mkdirSync(path.join(planOnlyRoot, "notes"), { recursive: true });
+    fs.writeFileSync(path.join(planOnlyRoot, "notes", "example.txt"), "example content");
+
+    const planOnlyAdapter = tracingFilesystemAdapter(
+      createFilesystemAdapter({
+        id: "filesystem-sidecar-examples-plan",
+        allowedRoots: [planOnlyRoot],
+        baseDir: planOnlyRoot,
+      }),
+    );
+
+    const planOnlyInput: LocalFileSidecarCommandInput = {
+      mode: "plan_only",
+      sourcePath: "notes/example.txt",
+      filesystemAdapter: planOnlyAdapter.adapter,
+    };
+    const planOnlyResult = await runLocalFileSidecarCommand(planOnlyInput);
+    const planOnlyPlanner: LocalFileRoundTripPlan = planOnlyResult.planner;
+    const planOnlyRecommendation: SidecarRecommendation = planOnlyResult.recommendation;
+    const planOnlyResultRoundTrip: LocalFileSidecarCommandResult = JSON.parse(JSON.stringify(planOnlyResult));
+    void planOnlyPlanner;
+    void planOnlyRecommendation;
+    void planOnlyResultRoundTrip;
+    assert.equal(planOnlyResult.status, "planned");
+    assert.equal(planOnlyResult.execution, undefined);
+    assert.equal(planOnlyResult.recommendation.action, "create_sidecar");
+    assert.equal(JSON.stringify(planOnlyResult).length > 0, true);
+    assert.ok(!planOnlyAdapter.operations.includes("writeJsonFile"));
+    assert.ok(!planOnlyAdapter.operations.includes("writeTextFile"));
+
+    const createRoot = path.join(ROOT, "sidecar-examples-create");
+    fs.rmSync(createRoot, { recursive: true, force: true });
+    fs.mkdirSync(createRoot, { recursive: true });
+    fs.mkdirSync(path.join(createRoot, "notes"), { recursive: true });
+    fs.writeFileSync(path.join(createRoot, "notes", "example.txt"), "example content");
+
+    const createAdapter = tracingFilesystemAdapter(
+      createFilesystemAdapter({
+        id: "filesystem-sidecar-examples-create",
+        allowedRoots: [createRoot],
+        baseDir: createRoot,
+      }),
+    );
+
+    const createResult = await runLocalFileSidecarCommand({
+      mode: "execute_approved",
+      sourcePath: "notes/example.txt",
+      filesystemAdapter: createAdapter.adapter,
+      approval: { granted: true, approver: "tester" },
+    });
+    const createExecution: SidecarWriteExecutionResult | undefined = createResult.execution;
+    const createRoundTrip: LocalFileSidecarCommandResult = JSON.parse(JSON.stringify(createResult));
+    void createExecution;
+    void createRoundTrip;
+    assert.equal(createResult.status, "written");
+    assert.equal(createResult.writePlan.operation, "create_sidecar");
+    assert.equal(createResult.execution?.status, "written");
+    assert.equal(fs.existsSync(path.join(createRoot, "notes", "example.txt.prism.json")), true);
+    assert.ok(createAdapter.operations.includes("writeJsonFile"));
+    assert.ok(!createAdapter.operations.includes("writeTextFile"));
+    assert.ok(!createAdapter.operations.includes("unlink"));
+
+    const blockedRoot = path.join(ROOT, "sidecar-examples-blocked");
+    fs.rmSync(blockedRoot, { recursive: true, force: true });
+    fs.mkdirSync(blockedRoot, { recursive: true });
+    fs.mkdirSync(path.join(blockedRoot, "notes"), { recursive: true });
+    fs.writeFileSync(path.join(blockedRoot, "notes", "example.txt"), "example content");
+
+    const blockedAdapter = tracingFilesystemAdapter(
+      createFilesystemAdapter({
+        id: "filesystem-sidecar-examples-blocked",
+        allowedRoots: [blockedRoot],
+        baseDir: blockedRoot,
+      }),
+    );
+
+    const blockedResult = await runLocalFileSidecarCommand({
+      mode: "execute_approved",
+      sourcePath: "notes/example.txt",
+      filesystemAdapter: blockedAdapter.adapter,
+    });
+    assert.equal(blockedResult.status, "blocked");
+    assert.ok(blockedResult.reasons.includes("local_write_approval_required"));
+    assert.equal(fs.existsSync(path.join(blockedRoot, "notes", "example.txt.prism.json")), false);
+    assert.ok(!blockedAdapter.operations.includes("writeJsonFile"));
+
+    const staleRoot = path.join(ROOT, "sidecar-examples-stale");
+    fs.rmSync(staleRoot, { recursive: true, force: true });
+    fs.mkdirSync(staleRoot, { recursive: true });
+    fs.mkdirSync(path.join(staleRoot, "notes"), { recursive: true });
+    const staleSourcePath = "notes/stale.txt";
+    const staleContent = "stale content";
+    const staleHash = createHash("sha256").update(staleContent).digest("hex");
+    fs.writeFileSync(path.join(staleRoot, staleSourcePath), staleContent);
+    const staleSidecar = createInitialSidecar({
+      assetId: "asset-notes-stale.txt",
+      sourcePath: staleSourcePath,
+      canonicalPath: staleSourcePath,
+      kind: "note",
+      sha256: "old-hash",
+      sizeBytes: 1,
+      createdAt: "2026-06-23T01:02:03.000Z",
+      updatedAt: "2026-06-23T01:02:03.000Z",
+      tags: ["draft", "keep"],
+      derivedFiles: ["notes/stale-preview.json"],
+      analysisStatus: "pending",
+      approvalState: "unreviewed",
+      notes: ["preserve me"],
+    });
+    fs.writeFileSync(path.join(staleRoot, `${staleSourcePath}.prism.json`), `${JSON.stringify(staleSidecar, null, 2)}\n`);
+
+    const staleAdapter = tracingFilesystemAdapter(
+      createFilesystemAdapter({
+        id: "filesystem-sidecar-examples-stale",
+        allowedRoots: [staleRoot],
+        baseDir: staleRoot,
+      }),
+    );
+
+    const staleResult = await runLocalFileSidecarCommand({
+      mode: "execute_approved",
+      sourcePath: staleSourcePath,
+      filesystemAdapter: staleAdapter.adapter,
+      approval: { granted: true, approver: "tester" },
+    });
+    assert.equal(staleResult.status, "written");
+    assert.equal(staleResult.writePlan.operation, "update_sidecar");
+    assert.equal(staleResult.execution?.status, "written");
+    const staleWritten = JSON.parse(fs.readFileSync(path.join(staleRoot, `${staleSourcePath}.prism.json`), "utf-8"));
+    assert.equal(staleWritten.sha256, staleHash);
+    assert.equal(staleWritten.sizeBytes, Buffer.byteLength(staleContent));
+    assert.equal(staleWritten.assetId, staleSidecar.assetId);
+    assert.equal(staleWritten.sourcePath, staleSidecar.sourcePath);
+    assert.equal(staleWritten.canonicalPath, staleSidecar.canonicalPath);
+    assert.deepEqual(staleWritten.tags, staleSidecar.tags);
+    assert.deepEqual(staleWritten.derivedFiles, staleSidecar.derivedFiles);
+    assert.equal(staleWritten.analysisStatus, staleSidecar.analysisStatus);
+    assert.equal(staleWritten.approvalState, staleSidecar.approvalState);
+    assert.deepEqual(staleWritten.notes, staleSidecar.notes);
+    assert.ok(typeof staleWritten.updatedAt === "string" && staleWritten.updatedAt.length > 0);
+    assert.equal(JSON.parse(JSON.stringify(staleResult)).status, "written");
+    assert.ok(!staleAdapter.operations.includes("writeTextFile"));
+    assert.ok(!staleAdapter.operations.includes("unlink"));
   });
 
   await test("real filesystem adapter stays inside allowed roots and returns deterministic metadata", async () => {
