@@ -168,7 +168,7 @@ export function deriveAttachmentPreviewSummary(input: {
   const largeAttachment = sizeBytes != null && sizeBytes >= attachmentPreviewPolicy.largeAttachmentWarningBytes;
   const riskNotes: string[] = [];
   if (largeAttachment) {
-    riskNotes.push("Large attachments may take longer to preview in the browser.");
+    riskNotes.push("Large attachments may take longer and use more memory while previewing in the browser.");
   }
 
   const hasSourcePath = safeText(input.sourcePath, "").length > 0;
@@ -188,7 +188,7 @@ export function deriveAttachmentPreviewSummary(input: {
     };
   }
 
-  if (kind === "image" || kind === "audio" || kind === "video" || kind === "pdf") {
+  if (attachmentPreviewPolicy.inlineKinds.includes(kind)) {
     return {
       kind,
       status: "available",
@@ -196,13 +196,13 @@ export function deriveAttachmentPreviewSummary(input: {
         kind === "image"
           ? "Browser-native image preview"
           : kind === "audio"
-            ? "Browser audio preview"
+            ? "Waveform preview available"
             : kind === "video"
               ? "Browser video preview"
               : "Browser PDF preview",
       safeToRenderInline: true,
       requiresExternalTool: false,
-      requiresUserAction: false,
+      requiresUserAction: kind === "audio",
       capabilityId: previewCapabilityId(kind),
       riskNotes,
       source,

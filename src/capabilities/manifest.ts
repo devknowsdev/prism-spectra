@@ -437,7 +437,7 @@ export const seedCapabilityManifests: readonly CapabilityManifest[] = [
   {
     id: "wavesurfer.audio.preview",
     title: "wavesurfer.js Audio Preview",
-    description: "Calm waveform preview surface for local audio review and regions.",
+    description: "Lazy, local-only waveform preview surface for supported audio attachments.",
     category: "audio",
     source: {
       package: "wavesurfer.js",
@@ -448,8 +448,8 @@ export const seedCapabilityManifests: readonly CapabilityManifest[] = [
     },
     runtime: {
       loadMode: "lazy",
-      cpuProfile: "tiny",
-      memoryProfile: "small",
+      cpuProfile: "small",
+      memoryProfile: "medium",
       supportsCancellation: true,
       supportsProgress: false,
       supportsPreview: true,
@@ -467,19 +467,28 @@ export const seedCapabilityManifests: readonly CapabilityManifest[] = [
       approvalClass: "observe",
       reversible: true,
       checkpointPolicy: "none",
-      riskNotes: ["preview-only audio rendering"],
+      riskNotes: [
+        "preview-only audio rendering",
+        "Large audio files may use more memory while wavesurfer.js decodes the waveform in the browser.",
+      ],
     },
     io: {
       inputTypes: ["audio-file"],
-      outputTypes: ["waveform-preview", "regions", "timestamp-markers"],
-      sideEffects: ["reads_audio_files"],
+      outputTypes: ["waveform-preview", "playback-state"],
+      sideEffects: ["reads_local_audio_bytes"],
     },
     ui: {
-      surfaces: ["attachments", "changes", "command_palette"],
+      surfaces: ["attachments", "changes"],
       density: "calm",
     },
     provenance: {
-      eventTypes: ["capability.registered", "capability.job.preview_ready"],
+      eventTypes: [
+        "capability.registered",
+        "attachment.audio.preview.opened",
+        "attachment.audio.preview.ready",
+        "attachment.audio.preview.closed",
+        "attachment.audio.preview.failed",
+      ],
       storesArtifacts: false,
       storesSettings: true,
       storesModelInfo: false,

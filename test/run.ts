@@ -2703,6 +2703,31 @@ async function main() {
     }
   });
 
+  await test("wavesurfer audio preview manifest stays lazy, local-only, and observe-only", async () => {
+    const manifest = seedCapabilityManifests.find((item) => item.id === "wavesurfer.audio.preview");
+    assert.ok(manifest);
+    assert.equal(manifest?.runtime.loadMode, "lazy");
+    assert.equal(manifest?.runtime.cpuProfile, "small");
+    assert.equal(manifest?.runtime.memoryProfile, "medium");
+    assert.equal(manifest?.runtime.supportsPreview, true);
+    assert.equal(manifest?.runtime.supportsCancellation, true);
+    assert.equal(manifest?.runtime.supportsProgress, false);
+    assert.equal(manifest?.boundaries.localOnly, true);
+    assert.equal(manifest?.boundaries.remoteOptional, false);
+    assert.equal(manifest?.boundaries.remoteRequired, false);
+    assert.equal(manifest?.boundaries.sendsUserDataOffMachine, false);
+    assert.equal(manifest?.boundaries.modelDownloadRequired, false);
+    assert.equal(manifest?.safety.approvalClass, "observe");
+    assert.equal(manifest?.safety.checkpointPolicy, "none");
+    assert.ok(manifest?.safety.riskNotes.some((note) => /memory/i.test(note)));
+    assert.deepEqual(manifest?.io.inputTypes, ["audio-file"]);
+    assert.deepEqual(manifest?.io.outputTypes, ["waveform-preview", "playback-state"]);
+    assert.ok(manifest?.provenance.eventTypes.includes("attachment.audio.preview.opened"));
+    assert.ok(manifest?.provenance.eventTypes.includes("attachment.audio.preview.ready"));
+    assert.ok(manifest?.provenance.eventTypes.includes("attachment.audio.preview.closed"));
+    assert.ok(manifest?.provenance.eventTypes.includes("attachment.audio.preview.failed"));
+  });
+
   await test("capability manifest validation rejects empty ids", async () => {
     const manifest = structuredClone(seedCapabilityManifests[0]);
     manifest.id = "";
@@ -3110,7 +3135,10 @@ async function main() {
     });
     assert.equal(audioPreview.kind, "audio");
     assert.equal(audioPreview.status, "available");
+    assert.equal(audioPreview.safeToRenderInline, true);
+    assert.equal(audioPreview.requiresUserAction, true);
     assert.equal(audioPreview.capabilityId, "wavesurfer.audio.preview");
+    assert.equal(audioPreview.riskNotes.some((note) => /memory/i.test(note)), false);
 
     const videoPreview = deriveAttachmentPreviewSummary({
       displayName: "clip.mp4",
@@ -3140,8 +3168,10 @@ async function main() {
       sizeBytes: 1024,
       sourcePath: "uploads/archive.bin",
     });
-    assert.ok(unknownPreview.kind === "binary" || unknownPreview.kind === "unknown");
-    assert.equal(unknownPreview.status === "unsupported" || unknownPreview.status === "unavailable", true);
+    assert.equal(unknownPreview.kind, "binary");
+    assert.equal(unknownPreview.status, "unsupported");
+    assert.equal(unknownPreview.safeToRenderInline, false);
+    assert.equal(unknownPreview.requiresUserAction, false);
 
     const largePreview = deriveAttachmentPreviewSummary({
       displayName: "bulk.pdf",
@@ -3150,7 +3180,9 @@ async function main() {
       sizeBytes: 8 * 1024 * 1024,
       sourcePath: "uploads/bulk.pdf",
     });
-    assert.ok(largePreview.riskNotes.some((note) => note.toLowerCase().includes("large")));
+    assert.equal(largePreview.kind, "pdf");
+    assert.equal(largePreview.status, "available");
+    assert.ok(largePreview.riskNotes.some((note) => note.toLowerCase().includes("memory")));
 
     const missingMimePreview = deriveAttachmentPreviewSummary({
       displayName: "untitled",
@@ -3159,7 +3191,9 @@ async function main() {
       sizeBytes: null,
       sourcePath: "uploads/untitled",
     });
-    assert.ok(typeof missingMimePreview.kind === "string");
+    assert.equal(missingMimePreview.kind, "unknown");
+    assert.equal(missingMimePreview.status, "unsupported");
+    assert.equal(missingMimePreview.safeToRenderInline, false);
   });
 
   await test("e2e: daemon execute-graph and rollback via API", async () => {
@@ -3230,13 +3264,17 @@ async function main() {
     assert.match(workbenchHtml, /Recent events/);
     assert.match(workbenchHtml, /Related conversation/);
     assert.match(workbenchHtml, /Preview/);
+    assert.match(workbenchHtml, /Load waveform preview/);
     const attachmentsSectionStart = workbenchHtml.indexOf('<section class="view" data-section="attachments"');
     const attachmentsSectionEnd = workbenchHtml.indexOf('<section class="view" data-section="approvals"');
     const attachmentsSection = attachmentsSectionStart >= 0 && attachmentsSectionEnd > attachmentsSectionStart
       ? workbenchHtml.slice(attachmentsSectionStart, attachmentsSectionEnd)
       : workbenchHtml;
-    assert.ok(!/Google Drive|Dropbox|Box|Companion|Webcam|Delete attachment|Move attachment|autoplay|file:\/\//i.test(attachmentsSection));
-    assert.ok(!/wavesurfer|sharp|ffmpeg/i.test(attachmentsSection));
+    assert.ok(!/Google Drive|Dropbox|Box|Companion|Webcam|Delete attachment|Move attachment|file:\/\//i.test(attachmentsSection));
+    assert.ok(!/<(?:audio|video)[^>]*\bautoplay\b/i.test(attachmentsSection));
+    assert.ok(!/<audio\b[^>]*controls/i.test(attachmentsSection));
+    assert.ok(!/microphone|recording|export|ffmpeg|whisper|tone\.js|meyda|essentia/i.test(attachmentsSection));
+    assert.ok(!/wavesurfer/i.test(attachmentsSection));
 
     const resumeResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/resume`);
     assert.equal(resumeResponse.ok, true);
@@ -3461,6 +3499,7 @@ async function main() {
     assert.equal(imagePreviewResponse.ok, true);
     assert.ok((imagePreviewResponse.headers.get("content-type") || "").includes("image/png"));
     assert.ok((imagePreviewResponse.headers.get("content-disposition") || "").includes("inline"));
+    assert.equal(imagePreviewResponse.headers.get("access-control-allow-origin"), null);
     assert.ok((await imagePreviewResponse.arrayBuffer()).byteLength > 0);
 
     const imagePreviewPayloadResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments/${imageAttachmentId}`);
@@ -3468,6 +3507,39 @@ async function main() {
     const imagePreviewPayload = await imagePreviewPayloadResponse.json();
     assert.equal(imagePreviewPayload.attachment.preview.kind, "image");
     assert.equal(imagePreviewPayload.attachment.preview.status, "available");
+    assert.equal(imagePreviewPayload.attachment.preview.requiresUserAction, false);
+
+    const audioUploadResponse = await fetch(`http://127.0.0.1:${port}/api/v1/upload`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-local-token": token },
+      body: JSON.stringify({
+        filename: "preview.wav",
+        contentType: "audio/wav",
+        contentBase64: "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=",
+        conversationId,
+      }),
+    });
+    assert.equal(audioUploadResponse.ok, true);
+    const audioUploadPayload = await audioUploadResponse.json();
+    const audioAttachmentId = Number(audioUploadPayload.id);
+    assert.ok(Number.isFinite(audioAttachmentId));
+
+    const audioAttachmentDetailResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments/${audioAttachmentId}`);
+    assert.equal(audioAttachmentDetailResponse.ok, true);
+    const audioAttachmentDetailPayload = await audioAttachmentDetailResponse.json();
+    assert.equal(audioAttachmentDetailPayload.attachment.preview.kind, "audio");
+    assert.equal(audioAttachmentDetailPayload.attachment.preview.status, "available");
+    assert.equal(audioAttachmentDetailPayload.attachment.preview.requiresUserAction, true);
+    assert.equal(audioAttachmentDetailPayload.attachment.preview.capabilityId, "wavesurfer.audio.preview");
+    assert.ok(audioAttachmentDetailPayload.attachment.preview.safeToRenderInline);
+    assert.equal(audioAttachmentDetailPayload.attachment.preview.requiresExternalTool, false);
+
+    const audioPreviewResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments/${audioAttachmentId}/preview`);
+    assert.equal(audioPreviewResponse.ok, true);
+    assert.ok((audioPreviewResponse.headers.get("content-type") || "").includes("audio/wav"));
+    assert.ok((audioPreviewResponse.headers.get("content-disposition") || "").includes("inline"));
+    assert.equal(audioPreviewResponse.headers.get("access-control-allow-origin"), null);
+    assert.ok((await audioPreviewResponse.arrayBuffer()).byteLength > 0);
 
     const previewDb = new DatabaseSync(path.join(tmp, ".demo", "daemon.db"));
     const escapePath = path.join(tmp, "escape-preview.txt");
@@ -3479,6 +3551,27 @@ async function main() {
     assert.equal(escapedPreviewResponse.status, 403);
     const escapedPreviewPayload = await escapedPreviewResponse.json();
     assert.match(String(escapedPreviewPayload.error || ""), /preview path is not allowed/i);
+
+    const symlinkPath = path.join(tmp, "uploads", "audio-preview-link.wav");
+    const symlinkTarget = path.join(tmp, "outside-audio-preview.wav");
+    fs.writeFileSync(symlinkTarget, "outside preview");
+    try {
+      fs.symlinkSync(symlinkTarget, symlinkPath);
+      const symlinkDb = new DatabaseSync(path.join(tmp, ".demo", "daemon.db"));
+      try {
+        symlinkDb.prepare("UPDATE attachments SET path = ? WHERE id = ?").run(symlinkPath, audioAttachmentId);
+        const symlinkPreviewResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments/${audioAttachmentId}/preview`);
+        assert.equal(symlinkPreviewResponse.status, 403);
+        const symlinkPreviewPayload = await symlinkPreviewResponse.json();
+        assert.match(String(symlinkPreviewPayload.error || ""), /preview path is not allowed/i);
+      } finally {
+        symlinkDb.close();
+      }
+    } catch (error) {
+      if (!(error instanceof Error) || !/operation not permitted|EPERM/i.test(error.message)) {
+        throw error;
+      }
+    }
 
     const unsupportedPreviewResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments/${attachmentId}/preview`);
     assert.equal(unsupportedPreviewResponse.status, 415);

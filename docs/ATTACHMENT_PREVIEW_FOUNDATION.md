@@ -47,7 +47,7 @@ The classifier only uses existing attachment metadata:
 ## Classification Rules
 
 - `image/*` attachments can preview inline through a safe local preview route.
-- `audio/*` attachments can preview inline with browser-native audio controls.
+- `audio/*` attachments can preview inline through a safe local preview route, with waveform UI loaded lazily after explicit user action.
 - `video/*` attachments can preview inline with browser-native video controls.
 - `application/pdf` attachments can preview inline with browser-native PDF embedding when the browser supports it.
 - `text/*` attachments stay conservative and point to a future safe text preview route.
@@ -73,8 +73,8 @@ If the attachment storage cannot serve bytes safely, the route should remain una
 
 ## Browser-Native Preview Rules
 
-- Use native HTML only.
-- Do not add waveform, thumbnail, or transcoding libraries.
+- Use native HTML only for the baseline preview kinds.
+- Keep specialized waveform, thumbnail, and transcoding libraries manifest-gated and lazy-loaded.
 - Do not autoplay media.
 - Do not fetch remote preview URLs.
 - Do not expose local file paths as direct links.
@@ -85,7 +85,7 @@ This sprint is only the foundation for later preview work such as:
 
 - text preview rendering
 - image thumbnails
-- audio preview with `wavesurfer.js`
+- audio waveform refinements with `wavesurfer.js`
 - image processing with `sharp`
 - video clips and contact sheets with `ffmpeg`
 - OCR later
