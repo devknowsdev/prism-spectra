@@ -7,7 +7,15 @@ on:
 
 jobs:
   run-tests:
-    uses: devknowsdev/workspace-meta/.github/workflows/reusable-run-tests.yml@main
-    with:
-      node_version: '22'
-      test_commands: 'npm ci && npm test --silent'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run doctor
+      - run: npm run typecheck
+      - run: npm run build

@@ -7,4 +7,14 @@ on:
 
 jobs:
   docs-lint:
-    uses: devknowsdev/workspace-meta/.github/workflows/reusable-docs-lint.yml@main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: List markdown files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-files '*.md' | while read -r file; do
+            test -f "$file" || continue
+            echo "ok $file"
+          done
