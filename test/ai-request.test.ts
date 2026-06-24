@@ -52,7 +52,9 @@ async function main() {
   assert.ok(result.usage.tokensIn > 0);
   assert.ok(result.usage.tokensOut > 0);
 
-  const summary = engine.taskHistory.dataBoundarySummary("ai-request:prism-focus");
+  const summary = engine.taskHistory
+    .dataBoundarySummary("ai-request:prism-focus")
+    .map((row) => ({ ...row }));
   assert.deepEqual(summary, [{ dataBoundary: "local", count: 1 }]);
 
   engine.close();
