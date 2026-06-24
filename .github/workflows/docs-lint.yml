@@ -7,4 +7,20 @@ on:
 
 jobs:
   docs-lint:
-    uses: devknowsdev/workspace-meta/.github/workflows/reusable-docs-lint.yml@main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check markdown files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-files '*.md' | while read -r file; do
+            test -f "$file" || continue
+            test -s "$file" || continue
+            tail -c 1 "$file" | od -An -t x1 | grep -q '0a'
+            if grep -nE '[[:blank:]]$' "$file"; then
+              echo "Trailing whitespace in $file"
+              exit 1
+            fi
+            echo "ok $file"
+          done
