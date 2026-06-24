@@ -986,16 +986,16 @@
     function renderResume(data) {
       const resume = data?.resume ?? null;
       const statusText = resume
-        ? `${resume.daemonStatus} · ${resume.mode} · ${resume.pendingApprovalsCount} approval${resume.pendingApprovalsCount === 1 ? "" : "s"} pending`
+        ? `${resume.daemonStatus} · ${resume.mode} · ${resume.pendingApprovalsCount} approval${resume.pendingApprovalsCount === 1 ? "" : "s"} pending · ${resume.recentEventCount} event${resume.recentEventCount === 1 ? "" : "s"}`
         : "Read-only fallback state";
       resumeStatus.textContent = statusText;
 
       if (!resume) {
         resumeMeta.innerHTML = [
           renderKeyValueCard("Current project", "Prism Spectra workspace placeholder"),
-          renderKeyValueCard("Last activity", "Awaiting daemon state projection"),
+          renderKeyValueCard("Last event", "Awaiting daemon state projection"),
           renderKeyValueCard("Pending approvals", "None yet, approval queue will appear here"),
-          renderKeyValueCard("Changed items", "No change timeline connected yet"),
+          renderKeyValueCard("Recent events", "No event ledger connected yet"),
         ].join("");
         resumeNextSafeAction.innerHTML = "<span>Review the manifest list or wait for a real resume snapshot.</span>";
         renderEmptyCard(resumeCheckpoints, "No checkpoints available yet.");
@@ -1006,7 +1006,8 @@
       resumeMeta.innerHTML = [
         renderKeyValueCard("Current project", resume.projectLabel || "Prism Spectra workspace placeholder"),
         renderKeyValueCard("Work dir", resume.workDirLabel || ".demo/work"),
-        renderKeyValueCard("Last activity", resume.lastActivitySummary || "No daemon activity has been recorded yet."),
+        renderKeyValueCard("Last event", resume.lastEventSummary || resume.lastActivitySummary || "No event ledger entries yet."),
+        renderKeyValueCard("Recent events", String(resume.recentEventCount)),
         renderKeyValueCard("Pending approvals", String(resume.pendingApprovalsCount)),
         renderKeyValueCard("Changed items", String(resume.changedItemsCount)),
       ].join("");
@@ -1060,7 +1061,7 @@
         return;
       }
 
-      approvalsStatus.textContent = `${approvals.count} approval${approvals.count === 1 ? "" : "s"} queued`;
+      approvalsStatus.textContent = `${approvals.count} pending approval${approvals.count === 1 ? "" : "s"} · ${approvals.totalCount} total`;
       if (approvals.items.length === 0) {
         renderEmptyCard(approvalsEmpty, approvals.emptyStateMessage);
         approvalsList.innerHTML = "";
@@ -1072,12 +1073,16 @@
         <article class="timeline-card">
           <div class="timeline-topline">
             <strong>${escapeHtml(approval.actionSummary)}</strong>
-            <span>${approval.approvalClass}${approval.example ? " · example" : ""}</span>
+            <span>${escapeHtml(approval.status)} · ${escapeHtml(approval.approvalClass)}</span>
           </div>
           <div class="field-list">
             <div class="field">
+              <div class="k">Requested by</div>
+              <div class="v">${escapeHtml(approval.requestedBy)}</div>
+            </div>
+            <div class="field">
               <div class="k">Affected files/artifacts</div>
-              <div class="v">${escapeHtml(approval.affectedItems.join(", ") || "none yet")}</div>
+              <div class="v">${escapeHtml([...(approval.relatedArtifactIds || []), ...(approval.relatedFilePaths || [])].join(", ") || "none yet")}</div>
             </div>
             <div class="field">
               <div class="k">Checkpoint policy</div>
@@ -1085,7 +1090,7 @@
             </div>
             <div class="field">
               <div class="k">Preview availability</div>
-              <div class="v">${approval.previewAvailable ? "Preview is available" : "Preview is unavailable; risk note required."}</div>
+              <div class="v">${approval.previewAvailable ? "Preview is available" : "Preview is unavailable; risk note required."}${approval.previewSummary ? ` ${escapeHtml(approval.previewSummary)}` : ""}</div>
             </div>
             <div class="field">
               <div class="k">Local / remote boundary</div>
@@ -1093,7 +1098,7 @@
             </div>
             <div class="field">
               <div class="k">CLI equivalent</div>
-              <div class="v"><code>${escapeHtml(approval.cliEquivalent)}</code></div>
+              <div class="v"><code>${escapeHtml(approval.cliEquivalent || "CLI equivalent placeholder")}</code></div>
             </div>
           </div>
           <div class="risk" style="margin-top: 12px;">
@@ -1127,7 +1132,7 @@
         <article class="timeline-card">
           <div class="timeline-topline">
             <strong>${escapeHtml(change.summary)}</strong>
-            <span>${escapeHtml(change.time)}</span>
+            <span>${escapeHtml(change.time)} · ${escapeHtml(change.sourceKind)} · ${escapeHtml(change.sourceLabel)}</span>
           </div>
           <div class="field-list">
             <div class="field">
@@ -1143,8 +1148,16 @@
               <div class="v">${escapeHtml(change.relatedCapabilityId || "none")}</div>
             </div>
             <div class="field">
+              <div class="k">Related conversation</div>
+              <div class="v">${escapeHtml(change.relatedConversationId || "none")}</div>
+            </div>
+            <div class="field">
               <div class="k">Related checkpoint</div>
               <div class="v">${escapeHtml(change.relatedCheckpointId == null ? "none" : String(change.relatedCheckpointId))}</div>
+            </div>
+            <div class="field">
+              <div class="k">Related approval</div>
+              <div class="v">${escapeHtml(change.relatedApprovalId || "none")}</div>
             </div>
           </div>
         </article>

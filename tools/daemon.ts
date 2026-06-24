@@ -10,7 +10,16 @@ import cp from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { GraphBuilder, ExecutionEngine, buildWorkbenchApprovals, buildWorkbenchChanges, buildWorkbenchResume, seedCapabilityManifests } from "../src/index.js";
+import {
+  GraphBuilder,
+  ExecutionEngine,
+  InMemoryApprovalQueue,
+  InMemoryPrismEventLedger,
+  buildWorkbenchApprovals,
+  buildWorkbenchChanges,
+  buildWorkbenchResume,
+  seedCapabilityManifests,
+} from "../src/index.js";
 import { TaskGraph } from "../src/taskGraph/graph.js";
 
 const PORT = Number(process.env.AI_FORGE_DAEMON_PORT ?? 3000);
@@ -78,8 +87,25 @@ function getWorkbenchContext() {
   };
 }
 
+function getWorkbenchOptions(
+  ledger: InMemoryPrismEventLedger,
+  approvalQueue: InMemoryApprovalQueue,
+) {
+  const ctx = getWorkbenchContext();
+  return {
+    projectLabel: ctx.projectLabel,
+    workDirLabel: ctx.workDirLabel,
+    daemonStatus: "healthy" as const,
+    mode: "read-only" as const,
+    eventLedger: ledger,
+    approvalQueue,
+  };
+}
+
 async function start() {
   const { engine, graphBuilder } = await initEngine();
+  const eventLedger = new InMemoryPrismEventLedger();
+  const approvalQueue = new InMemoryApprovalQueue(eventLedger);
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -93,24 +119,40 @@ async function start() {
         return jsonResponse(res, 200, { manifests: seedCapabilityManifests });
       }
 
-      if (req.method === "GET" && url.pathname === "/api/v1/workbench/resume") {
-        const ctx = getWorkbenchContext();
+      if (req.method === "GET" && url.pathname === "/api/v1/events") {
+        const limit = Number(url.searchParams.get("limit") || 50);
+        const events = eventLedger.list({ limit });
+        const totalCount = eventLedger.list().length;
         return jsonResponse(res, 200, {
-          resume: buildWorkbenchResume(engine.memory, {
-            projectLabel: ctx.projectLabel,
-            workDirLabel: ctx.workDirLabel,
-            daemonStatus: "healthy",
-            mode: "read-only",
-          }),
+          events,
+          count: events.length,
+          totalCount,
+        });
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/v1/approvals") {
+        const approvals = approvalQueue.listApprovals();
+        const pendingApprovals = approvalQueue.listApprovals({ status: "pending" });
+        return jsonResponse(res, 200, {
+          approvals,
+          count: approvals.length,
+          pendingCount: pendingApprovals.length,
+          totalCount: approvals.length,
+        });
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/v1/workbench/resume") {
+        return jsonResponse(res, 200, {
+          resume: buildWorkbenchResume(engine.memory, getWorkbenchOptions(eventLedger, approvalQueue)),
         });
       }
 
       if (req.method === "GET" && url.pathname === "/api/v1/workbench/approvals") {
-        return jsonResponse(res, 200, { approvals: buildWorkbenchApprovals(engine.memory) });
+        return jsonResponse(res, 200, { approvals: buildWorkbenchApprovals(getWorkbenchOptions(eventLedger, approvalQueue)) });
       }
 
       if (req.method === "GET" && url.pathname === "/api/v1/workbench/changes") {
-        return jsonResponse(res, 200, { changes: buildWorkbenchChanges(engine.memory) });
+        return jsonResponse(res, 200, { changes: buildWorkbenchChanges(engine.memory, getWorkbenchOptions(eventLedger, approvalQueue)) });
       }
 
       if (!url.pathname.startsWith("/api/v1/")) return jsonResponse(res, 404, { error: "not found" });

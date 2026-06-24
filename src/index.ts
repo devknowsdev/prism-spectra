@@ -34,5 +34,7 @@ export { loadForgeConfig, ensureForgeDirs, exampleConfigPath, defaultForgePaths 
 export type { ForgeConfig } from "./config/loadConfig.js";
 export { probeAllProviders, applyProviderProbe } from "./config/providerProbe.js";
 export type { ProviderStatus } from "./config/providerProbe.js";
+export * from "./events/index.js";
+export * from "./approvals/index.js";
 export * from "./capabilities/index.js";
 export * from "./workbench/index.js";

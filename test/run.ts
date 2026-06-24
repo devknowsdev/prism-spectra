@@ -33,10 +33,16 @@ import {
 import {
   PRISM_SIDECAR_SUFFIX,
   PRISM_SIDECAR_SCHEMA_VERSION,
+  MemoryDB,
   buildSidecarPath,
   buildSidecarApprovalReview,
   buildSidecarPlan,
   createInitialSidecar,
+  InMemoryApprovalQueue,
+  InMemoryPrismEventLedger,
+  buildWorkbenchApprovals,
+  buildWorkbenchChanges,
+  buildWorkbenchResume,
   planLocalFileRoundTrip,
   recommendSidecarAction,
   planSidecarWrite,
@@ -206,6 +212,13 @@ async function freshEngine(name: string, opts: { ollamaSwapDelayMs?: number } = 
   });
   await engine.init();
   return engine;
+}
+
+function freshMemoryDB(name: string): MemoryDB {
+  const dir = path.join(ROOT, name);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  return new MemoryDB(path.join(dir, "workbench.db"));
 }
 
 let passed = 0;
@@ -2780,6 +2793,168 @@ async function main() {
     assert.equal(parsed[0].title, seedCapabilityManifests[0].title);
   });
 
+  await test("event ledger appends, filters, limits, and returns newest-first", async () => {
+    const ledger = new InMemoryPrismEventLedger();
+    const first = ledger.append({
+      time: "2026-06-24T09:00:00.000Z",
+      type: "system.notice",
+      summary: "first event",
+      severity: "info",
+      source: "system",
+      relatedCapabilityId: "cap.alpha",
+    });
+    const second = ledger.append({
+      time: "2026-06-24T10:00:00.000Z",
+      type: "job.failed",
+      summary: "second event",
+      severity: "high",
+      source: "job",
+      relatedArtifactId: "artifact-1",
+    });
+    const third = ledger.append({
+      time: "2026-06-24T11:00:00.000Z",
+      type: "approval.requested",
+      summary: "third event",
+      severity: "medium",
+      source: "approval",
+      relatedApprovalId: "approval-1",
+      relatedCapabilityId: "cap.alpha",
+    });
+
+    assert.equal(ledger.get(second.id)?.summary, "second event");
+    assert.deepEqual(ledger.list({ limit: 2 }).map((event) => event.id), [third.id, second.id]);
+    assert.deepEqual(ledger.list({ type: "job.failed" }).map((event) => event.id), [second.id]);
+    assert.deepEqual(ledger.list({ severity: "high" }).map((event) => event.id), [second.id]);
+    assert.deepEqual(ledger.list({ relatedCapabilityId: "cap.alpha" }).map((event) => event.id), [third.id, first.id]);
+    assert.deepEqual(ledger.list({ relatedArtifactId: "artifact-1" }).map((event) => event.id), [second.id]);
+    ledger.clear();
+    assert.equal(ledger.list().length, 0);
+  });
+
+  await test("approval queue requests, resolves, and emits ledger events without executing anything", async () => {
+    const ledger = new InMemoryPrismEventLedger();
+    const queue = new InMemoryApprovalQueue(ledger);
+    const requested = queue.requestApproval({
+      title: "Approve thumbnail write",
+      summary: "Write derived thumbnail artifacts after preview.",
+      approvalClass: "write",
+      checkpointPolicy: "before_write",
+      relatedCapabilityId: "sharp.image.thumbnail",
+      relatedArtifactIds: ["artifact-123"],
+      relatedFilePaths: ["images/photo.png"],
+      previewAvailable: true,
+      previewSummary: "Preview is available before write.",
+      cliEquivalent: "prism approvals request --write",
+      riskNotes: ["Derived thumbnails should remain reversible."],
+      localRemoteBoundary: "local-only",
+      requestedBy: "tester",
+    });
+
+    assert.equal(requested.status, "pending");
+    assert.equal(queue.listApprovals().length, 1);
+    assert.equal(queue.getApproval(requested.id)?.requestedBy, "tester");
+    assert.equal(ledger.list({ type: "approval.requested" }).length, 1);
+
+    const resolved = queue.resolveApproval(requested.id, {
+      status: "approved",
+      decidedAt: "2026-06-24T12:00:00.000Z",
+      decidedBy: "reviewer",
+      reason: "Looks safe.",
+    });
+
+    assert.equal(resolved.status, "approved");
+    assert.equal(queue.getApproval(requested.id)?.status, "approved");
+    assert.equal(queue.getApproval(requested.id)?.decision?.reason, "Looks safe.");
+    assert.equal(ledger.list({ type: "approval.resolved" }).length, 1);
+    assert.equal(ledger.list({ relatedApprovalId: requested.id }).length, 1);
+  });
+
+  await test("workbench data spine reflects queue and event ledger state", async () => {
+    const db = freshMemoryDB("workbench-spine");
+    db.db.prepare("INSERT INTO checkpoints (project_id, graph_id, node_id, sha, had_changes) VALUES (?, ?, ?, ?, ?)").run(
+      "prism-spectra",
+      "graph-1",
+      "node-1",
+      "sha-123",
+      1,
+    );
+    db.db.prepare("INSERT INTO conversations (title, metadata) VALUES (?, ?)").run("Workbench chat", null);
+
+    const ledger = new InMemoryPrismEventLedger();
+    const queue = new InMemoryApprovalQueue(ledger);
+    const requested = queue.requestApproval({
+      title: "Review attachment ingest",
+      summary: "Approve future attachment ingest preview support.",
+      approvalClass: "preview",
+      checkpointPolicy: "before_preview",
+      relatedCapabilityId: "uppy.attachment.ingest",
+      relatedArtifactIds: ["attachment-1"],
+      relatedFilePaths: ["attachments/example.txt"],
+      previewAvailable: true,
+      previewSummary: "Preview can be rendered safely.",
+      cliEquivalent: "prism approvals request --preview",
+      riskNotes: ["Keep the ingest preview read-only."],
+      localRemoteBoundary: "local-only",
+      requestedBy: "workbench",
+    });
+    ledger.append({
+      time: "2026-06-24T11:30:00.000Z",
+      type: "system.notice",
+      summary: "Manual ledger note",
+      severity: "info",
+      source: "system",
+    });
+
+    const approvals = buildWorkbenchApprovals({ approvalQueue: queue });
+    assert.equal(approvals.count, 1);
+    assert.equal(approvals.pendingCount, 1);
+    assert.equal(approvals.totalCount, 1);
+    assert.equal(approvals.items[0].id, requested.id);
+
+    const changes = buildWorkbenchChanges(db, { approvalQueue: queue, eventLedger: ledger });
+    assert.ok(changes.ledgerCount >= 2);
+    assert.ok(changes.derivedCount >= 2);
+    assert.ok(changes.items.some((item) => item.sourceKind === "ledger"));
+    assert.ok(changes.items.some((item) => item.sourceKind === "derived"));
+
+    const resume = buildWorkbenchResume(db, {
+      projectLabel: "prism-spectra",
+      workDirLabel: ".demo/work",
+      approvalQueue: queue,
+      eventLedger: ledger,
+    });
+    assert.equal(resume.pendingApprovalsCount, 1);
+    assert.equal(resume.recentEventCount, 2);
+    assert.equal(resume.lastEventSummary, "Manual ledger note");
+    assert.equal(resume.nextSafeAction, "Review pending approvals");
+    db.close();
+  });
+
+  await test("workbench data spine empty states remain calm and valid", async () => {
+    const db = freshMemoryDB("workbench-empty");
+    const ledger = new InMemoryPrismEventLedger();
+    const queue = new InMemoryApprovalQueue(ledger);
+
+    const approvals = buildWorkbenchApprovals({ approvalQueue: queue });
+    const changes = buildWorkbenchChanges(db, { approvalQueue: queue, eventLedger: ledger });
+    const resume = buildWorkbenchResume(db, {
+      projectLabel: "prism-spectra",
+      workDirLabel: ".demo/work",
+      approvalQueue: queue,
+      eventLedger: ledger,
+    });
+
+    assert.equal(approvals.count, 0);
+    assert.equal(approvals.items.length, 0);
+    assert.equal(changes.count, 0);
+    assert.equal(changes.items.length, 0);
+    assert.equal(resume.pendingApprovalsCount, 0);
+    assert.equal(resume.recentEventCount, 0);
+    assert.equal(resume.lastEventSummary, "No events recorded yet.");
+    assert.equal(resume.nextSafeAction, "No urgent action");
+    db.close();
+  });
+
   await test("e2e: daemon execute-graph and rollback via API", async () => {
     // spawn the daemon in a temporary cwd so it uses an isolated .demo/work
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "aiforge-e2e-"));
@@ -2838,6 +3013,8 @@ async function main() {
     assert.match(workbenchHtml, /Settings/);
     assert.match(workbenchHtml, /Load mode/);
     assert.match(workbenchHtml, /Reset filters/);
+    assert.match(workbenchHtml, /Recent events/);
+    assert.match(workbenchHtml, /Related conversation/);
 
     const resumeResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/resume`);
     assert.equal(resumeResponse.ok, true);
@@ -2850,12 +3027,16 @@ async function main() {
     assert.ok(Array.isArray(resumePayload.resume.recentCheckpoints));
     assert.ok(Array.isArray(resumePayload.resume.recentConversations));
     assert.equal(resumePayload.resume.pendingApprovalsCount, 0);
+    assert.equal(resumePayload.resume.recentEventCount, 0);
+    assert.equal(resumePayload.resume.lastEventSummary, "No events recorded yet.");
 
     const approvalsResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/approvals`);
     assert.equal(approvalsResponse.ok, true);
     const approvalsPayload = await approvalsResponse.json();
     assert.ok(approvalsPayload.approvals);
     assert.equal(approvalsPayload.approvals.count, 0);
+    assert.equal(approvalsPayload.approvals.pendingCount, 0);
+    assert.equal(approvalsPayload.approvals.totalCount, 0);
     assert.deepEqual(approvalsPayload.approvals.items, []);
     assert.ok(String(approvalsPayload.approvals.emptyStateMessage).length > 0);
 
@@ -2864,9 +3045,26 @@ async function main() {
     const changesPayload = await changesResponse.json();
     assert.ok(changesPayload.changes);
     assert.equal(typeof changesPayload.changes.count, "number");
+    assert.equal(typeof changesPayload.changes.ledgerCount, "number");
+    assert.equal(typeof changesPayload.changes.derivedCount, "number");
     assert.ok(Array.isArray(changesPayload.changes.items));
     assert.equal(changesPayload.changes.count, changesPayload.changes.items.length);
     assert.ok(String(changesPayload.changes.emptyStateMessage).length > 0);
+
+    const eventsResponse = await fetch(`http://127.0.0.1:${port}/api/v1/events`);
+    assert.equal(eventsResponse.ok, true);
+    const eventsPayload = await eventsResponse.json();
+    assert.ok(Array.isArray(eventsPayload.events));
+    assert.equal(eventsPayload.count, eventsPayload.events.length);
+    assert.equal(eventsPayload.totalCount, 0);
+
+    const approvalsRouteResponse = await fetch(`http://127.0.0.1:${port}/api/v1/approvals`);
+    assert.equal(approvalsRouteResponse.ok, true);
+    const approvalsRoutePayload = await approvalsRouteResponse.json();
+    assert.ok(Array.isArray(approvalsRoutePayload.approvals));
+    assert.equal(approvalsRoutePayload.count, approvalsRoutePayload.approvals.length);
+    assert.equal(approvalsRoutePayload.pendingCount, 0);
+    assert.equal(approvalsRoutePayload.totalCount, 0);
 
     // POST to execute-graph (streaming). Use a simple node that writes a file.
     const graph = { id: "g-e2e", projectId: "p-e2e", nodes: [{ id: "n1", packet: { intent: "create marker", node_type: "ui", context: { targetFile: "marker.txt" }, filePaths: ["marker.txt"], dependencies: [] } }] };

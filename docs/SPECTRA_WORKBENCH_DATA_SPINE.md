@@ -3,6 +3,7 @@
 This document records the read-only data spine that powers the first Spectra Workbench shell.
 
 - The workbench reads daemon-derived summaries for resume, approvals, changes, and capability metadata.
+- It now also reads the in-memory event ledger and approval queue contracts introduced in Sprint 025.
 - No heavy capabilities are integrated here.
 - No write routes are added by this scaffold.
 - No execution path is exposed through the workbench data routes.
@@ -12,6 +13,8 @@ This document records the read-only data spine that powers the first Spectra Wor
 
 The current read-only routes are:
 
+- `GET /api/v1/events`
+- `GET /api/v1/approvals`
 - `GET /api/v1/workbench/resume`
 - `GET /api/v1/workbench/approvals`
 - `GET /api/v1/workbench/changes`

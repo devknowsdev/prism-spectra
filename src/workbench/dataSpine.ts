@@ -1,4 +1,6 @@
+import type { ApprovalQueue, ApprovalRequest, ApprovalStatus } from "../approvals/index.js";
 import type { MemoryDB } from "../memory/db.js";
+import type { PrismEvent, PrismEventLedger } from "../events/index.js";
 
 export type WorkbenchDaemonStatus = "starting" | "healthy" | "degraded";
 export type WorkbenchMode = "read-only";
@@ -27,22 +29,36 @@ export interface WorkbenchLastActivity {
   time: string;
   type: string;
   summary: string;
+  sourceKind: "ledger" | "derived";
+  sourceLabel: string;
   relatedArtifactId: string | null;
   relatedCapabilityId: string | null;
+  relatedConversationId: string | null;
   relatedCheckpointId: number | null;
+  relatedApprovalId: string | null;
   severity: "info" | "low" | "medium" | "high";
 }
 
 export interface WorkbenchApprovalItem {
   id: string;
+  createdAt: string;
+  updatedAt: string;
+  status: ApprovalStatus;
+  title: string;
+  summary: string;
   actionSummary: string;
-  affectedItems: string[];
   approvalClass: string;
   checkpointPolicy: string;
+  relatedCapabilityId: string | null;
+  relatedArtifactIds: string[];
+  relatedFilePaths: string[];
   previewAvailable: boolean;
+  previewSummary: string | null;
+  cliEquivalent: string | null;
+  requestedBy: string;
   localBoundary: string;
-  cliEquivalent: string;
   riskNotes: string[];
+  decision: ApprovalRequest["decision"];
   example: boolean;
 }
 
@@ -51,9 +67,13 @@ export interface WorkbenchChangeItem {
   time: string;
   type: string;
   summary: string;
+  sourceKind: "ledger" | "derived";
+  sourceLabel: string;
   relatedArtifactId: string | null;
   relatedCapabilityId: string | null;
+  relatedConversationId: string | null;
   relatedCheckpointId: number | null;
+  relatedApprovalId: string | null;
   severity: "info" | "low" | "medium" | "high";
 }
 
@@ -64,6 +84,8 @@ export interface WorkbenchResumeData {
   workDirLabel: string;
   lastActivity: WorkbenchLastActivity | null;
   lastActivitySummary: string;
+  lastEventSummary: string;
+  recentEventCount: number;
   pendingApprovalsCount: number;
   changedItemsCount: number;
   recentCheckpoints: WorkbenchCheckpointSummary[];
@@ -74,12 +96,16 @@ export interface WorkbenchResumeData {
 
 export interface WorkbenchApprovalsData {
   count: number;
+  pendingCount: number;
+  totalCount: number;
   items: WorkbenchApprovalItem[];
   emptyStateMessage: string;
 }
 
 export interface WorkbenchChangesData {
   count: number;
+  ledgerCount: number;
+  derivedCount: number;
   items: WorkbenchChangeItem[];
   emptyStateMessage: string;
 }
@@ -91,10 +117,12 @@ export interface WorkbenchDataSpine {
 }
 
 export interface BuildWorkbenchDataSpineOptions {
-  projectLabel: string;
-  workDirLabel: string;
+  projectLabel?: string;
+  workDirLabel?: string;
   daemonStatus?: WorkbenchDaemonStatus;
   mode?: WorkbenchMode;
+  eventLedger?: PrismEventLedger;
+  approvalQueue?: ApprovalQueue;
 }
 
 function safeText(value: unknown, fallback = ""): string {
@@ -106,23 +134,6 @@ function safeText(value: unknown, fallback = ""): string {
 function optionalText(value: unknown): string | null {
   const text = safeText(value, "");
   return text.length > 0 ? text : null;
-}
-
-function parseDetailsForCapabilityId(raw: unknown): string | null {
-  if (typeof raw !== "string" || raw.trim().length === 0) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") {
-      return null;
-    }
-    const candidate = (parsed as Record<string, unknown>).capabilityId ?? (parsed as Record<string, unknown>).manifestId ?? (parsed as Record<string, unknown>).capability;
-    return safeText(candidate, "") || null;
-  } catch {
-    return null;
-  }
 }
 
 function summarizeCheckpoint(row: Record<string, unknown>): WorkbenchCheckpointSummary {
@@ -178,152 +189,149 @@ function listRecentConversations(db: MemoryDB, limit: number): WorkbenchConversa
   return rows.map(summarizeConversation);
 }
 
-function listRecentChanges(db: MemoryDB, limit: number): WorkbenchChangeItem[] {
+function pickRelatedCapabilityId(event: PrismEvent | undefined): string | null {
+  return event?.relatedCapabilityId ?? null;
+}
+
+function ledgerEventToChange(event: PrismEvent): WorkbenchChangeItem {
+  return {
+    id: `ledger:${event.id}`,
+    time: event.time,
+    type: event.type,
+    summary: event.summary,
+    sourceKind: "ledger",
+    sourceLabel: "Event ledger",
+    relatedArtifactId: event.relatedArtifactId ?? null,
+    relatedCapabilityId: pickRelatedCapabilityId(event),
+    relatedConversationId: event.relatedConversationId ?? null,
+    relatedCheckpointId: event.relatedCheckpointId ?? null,
+    relatedApprovalId: event.relatedApprovalId ?? null,
+    severity: event.severity,
+  };
+}
+
+function checkpointToChange(row: Record<string, unknown>): WorkbenchChangeItem {
+  const hadChanges = Number(row.had_changes ?? 0) === 1;
+  const rolledBack = Number(row.rolled_back ?? 0) === 1;
+  const checkpointId = Number(row.id ?? 0);
+  return {
+    id: `checkpoint:${checkpointId}`,
+    time: safeText(row.created_at, ""),
+    type: "checkpoint.created",
+    summary: `Checkpoint recorded for node ${safeText(row.node_id, "unknown node")} (${hadChanges ? "changes" : "no changes"})${rolledBack ? " and rolled back" : ""}.`,
+    sourceKind: "derived",
+    sourceLabel: "Checkpoint summary",
+    relatedArtifactId: safeText(row.sha, "") || null,
+    relatedCapabilityId: null,
+    relatedConversationId: null,
+    relatedCheckpointId: checkpointId || null,
+    relatedApprovalId: null,
+    severity: rolledBack ? "low" : hadChanges ? "medium" : "info",
+  };
+}
+
+function conversationToChange(row: Record<string, unknown>): WorkbenchChangeItem {
+  const conversationId = Number(row.id ?? 0);
+  return {
+    id: `conversation:${conversationId}`,
+    time: safeText(row.created_at, ""),
+    type: "conversation.created",
+    summary: `Conversation ${safeText(row.title, "") || "untitled"} opened.`,
+    sourceKind: "derived",
+    sourceLabel: "Conversation summary",
+    relatedArtifactId: `conversation:${conversationId}`,
+    relatedCapabilityId: null,
+    relatedConversationId: String(conversationId),
+    relatedCheckpointId: null,
+    relatedApprovalId: null,
+    severity: "info",
+  };
+}
+
+function approvalToItem(approval: ApprovalRequest): WorkbenchApprovalItem {
+  return {
+    id: approval.id,
+    createdAt: approval.createdAt,
+    updatedAt: approval.updatedAt,
+    status: approval.status,
+    title: approval.title,
+    summary: approval.summary,
+    actionSummary: approval.title,
+    approvalClass: approval.approvalClass,
+    checkpointPolicy: approval.checkpointPolicy,
+    relatedCapabilityId: optionalText(approval.relatedCapabilityId),
+    relatedArtifactIds: [...approval.relatedArtifactIds],
+    relatedFilePaths: [...approval.relatedFilePaths],
+    previewAvailable: approval.previewAvailable,
+    previewSummary: optionalText(approval.previewSummary),
+    cliEquivalent: optionalText(approval.cliEquivalent),
+    requestedBy: approval.requestedBy,
+    localBoundary: approval.localRemoteBoundary,
+    riskNotes: [...approval.riskNotes],
+    decision: approval.decision ? structuredClone(approval.decision) : null,
+    example: false,
+  };
+}
+
+function chooseNextSafeAction(pendingApprovalsCount: number, recentEventCount: number): string {
+  if (pendingApprovalsCount > 0) {
+    return "Review pending approvals";
+  }
+  if (recentEventCount > 0) {
+    return "Review recent changes";
+  }
+  return "No urgent action";
+}
+
+function collectDerivedChangeItems(db: MemoryDB, limit: number): WorkbenchChangeItem[] {
   const checkpoints = db.db
-    .prepare(
-      "SELECT id, graph_id, node_id, sha, had_changes, rolled_back, created_at, rolled_back_at FROM checkpoints ORDER BY created_at DESC, id DESC LIMIT ?"
-    )
+    .prepare("SELECT id, node_id, sha, had_changes, rolled_back, created_at FROM checkpoints ORDER BY created_at DESC, id DESC LIMIT ?")
     .all(limit) as Record<string, unknown>[];
-  const auditRows = db.db
-    .prepare(
-      "SELECT id, scope, object_id, action, details, actor, created_at FROM audit_log ORDER BY created_at DESC, id DESC LIMIT ?"
-    )
-    .all(limit) as Record<string, unknown>[];
-  const attachmentRows = db.db
-    .prepare(
-      "SELECT id, attachment_id, action, details, actor, created_at FROM attachment_audit ORDER BY created_at DESC, id DESC LIMIT ?"
-    )
-    .all(limit) as Record<string, unknown>[];
-  const conversationRows = db.db
-    .prepare(
-      "SELECT id, title, created_at FROM conversations ORDER BY created_at DESC, id DESC LIMIT ?"
-    )
-    .all(limit) as Record<string, unknown>[];
-  const messageRows = db.db
-    .prepare(
-      "SELECT m.id, m.conversation_id, m.role, m.created_at, c.title AS conversation_title FROM messages m LEFT JOIN conversations c ON c.id = m.conversation_id ORDER BY m.created_at DESC, m.id DESC LIMIT ?"
-    )
-    .all(limit) as Record<string, unknown>[];
-  const attachmentRowsLatest = db.db
-    .prepare(
-      "SELECT id, conversation_id, filename, content_type, size, created_at FROM attachments ORDER BY created_at DESC, id DESC LIMIT ?"
-    )
+  const conversations = db.db
+    .prepare("SELECT id, title, created_at FROM conversations ORDER BY created_at DESC, id DESC LIMIT ?")
     .all(limit) as Record<string, unknown>[];
 
-  const items: WorkbenchChangeItem[] = [];
+  const items = [
+    ...checkpoints.map(checkpointToChange),
+    ...conversations.map(conversationToChange),
+  ];
 
-  for (const row of checkpoints) {
-    const hadChanges = Number(row.had_changes ?? 0) === 1;
-    const rolledBack = Number(row.rolled_back ?? 0) === 1;
-    items.push({
-      id: `checkpoint:${row.id}`,
-      time: safeText(row.created_at, ""),
-      type: "checkpoint.created",
-      summary: `Checkpoint recorded for node ${safeText(row.node_id, "unknown node")} (${hadChanges ? "changes" : "no changes"})${rolledBack ? " and rolled back" : ""}.`,
-      relatedArtifactId: safeText(row.sha, "") || null,
-      relatedCapabilityId: null,
-      relatedCheckpointId: Number(row.id ?? 0),
-      severity: rolledBack ? "low" : hadChanges ? "medium" : "info",
-    });
-  }
-
-  for (const row of auditRows) {
-    const capabilityId = parseDetailsForCapabilityId(row.details);
-    items.push({
-      id: `audit:${row.id}`,
-      time: safeText(row.created_at, ""),
-      type: `${safeText(row.scope, "audit")}.${safeText(row.action, "event")}`,
-      summary: `Audit event ${safeText(row.action, "event")} for ${safeText(row.object_id, "unknown object")}.`,
-      relatedArtifactId: safeText(row.object_id, "") || null,
-      relatedCapabilityId: capabilityId,
-      relatedCheckpointId: null,
-      severity: "info",
-    });
-  }
-
-  for (const row of attachmentRows) {
-    const capabilityId = parseDetailsForCapabilityId(row.details);
-    items.push({
-      id: `attachment-audit:${row.id}`,
-      time: safeText(row.created_at, ""),
-      type: `attachment.${safeText(row.action, "event")}`,
-      summary: `Attachment audit: ${safeText(row.action, "event")} for attachment ${safeText(row.attachment_id, "unknown")}.`,
-      relatedArtifactId: safeText(row.attachment_id, "") || null,
-      relatedCapabilityId: capabilityId,
-      relatedCheckpointId: null,
-      severity: "info",
-    });
-  }
-
-  for (const row of conversationRows) {
-    items.push({
-      id: `conversation:${row.id}`,
-      time: safeText(row.created_at, ""),
-      type: "conversation.created",
-      summary: `Conversation ${safeText(row.title, "") || "untitled"} opened.`,
-      relatedArtifactId: `conversation:${safeText(row.id, "")}`,
-      relatedCapabilityId: null,
-      relatedCheckpointId: null,
-      severity: "info",
-    });
-  }
-
-  for (const row of messageRows) {
-    items.push({
-      id: `message:${row.id}`,
-      time: safeText(row.created_at, ""),
-      type: "message.created",
-      summary: `Message ${safeText(row.role, "message")} recorded${safeText(row.conversation_title, "") ? ` in ${safeText(row.conversation_title, "")}` : ""}.`,
-      relatedArtifactId: `conversation:${safeText(row.conversation_id, "")}`,
-      relatedCapabilityId: null,
-      relatedCheckpointId: null,
-      severity: "info",
-    });
-  }
-
-  for (const row of attachmentRowsLatest) {
-    items.push({
-      id: `attachment:${row.id}`,
-      time: safeText(row.created_at, ""),
-      type: "attachment.created",
-      summary: `Attachment ${safeText(row.filename, "untitled file")} stored${safeText(row.conversation_id, "") ? ` for conversation ${safeText(row.conversation_id, "")}` : ""}.`,
-      relatedArtifactId: safeText(row.filename, "") || `attachment:${safeText(row.id, "")}`,
-      relatedCapabilityId: null,
-      relatedCheckpointId: null,
-      severity: "info",
-    });
-  }
-
-  items.sort((a, b) => b.time.localeCompare(a.time) || b.id.localeCompare(a.id));
+  items.sort((left, right) => right.time.localeCompare(left.time) || left.id.localeCompare(right.id));
   return items.slice(0, limit);
 }
 
-function chooseNextSafeAction(resume: Pick<WorkbenchResumeData, "pendingApprovalsCount" | "changedItemsCount" | "recentConversations">): string {
-  if (resume.pendingApprovalsCount > 0) {
-    return "Review pending approvals before taking any write or remote action.";
-  }
-  if (resume.changedItemsCount > 0) {
-    return "Open Changes to inspect the latest read-only provenance trail.";
-  }
-  if (resume.recentConversations.length > 0) {
-    return "Open the newest conversation and keep the shell in read-only mode.";
-  }
-  return "Stay in Resume and wait for daemon data or manifest-driven next steps.";
-}
+export function buildWorkbenchChanges(db: MemoryDB, options: BuildWorkbenchDataSpineOptions, limit = 12): WorkbenchChangesData {
+  const ledgerEvents = options.eventLedger?.list({ limit }) ?? [];
+  const ledgerItems = ledgerEvents.map(ledgerEventToChange);
+  const derivedItems = collectDerivedChangeItems(db, limit);
+  const items = [...ledgerItems, ...derivedItems].sort((left, right) => {
+    if (left.time === right.time) {
+      if (left.sourceKind === right.sourceKind) {
+        return left.id.localeCompare(right.id);
+      }
+      return left.sourceKind === "ledger" ? -1 : 1;
+    }
+    return right.time.localeCompare(left.time);
+  }).slice(0, limit);
 
-export function buildWorkbenchChanges(db: MemoryDB, limit = 12): WorkbenchChangesData {
-  const items = listRecentChanges(db, limit);
   return {
     count: items.length,
+    ledgerCount: ledgerItems.length,
+    derivedCount: derivedItems.length,
     items,
     emptyStateMessage: "No changes are available yet. This is an intentional read-only empty state.",
   };
 }
 
-export function buildWorkbenchApprovals(_db: MemoryDB): WorkbenchApprovalsData {
+export function buildWorkbenchApprovals(options: BuildWorkbenchDataSpineOptions, limit = 25): WorkbenchApprovalsData {
+  const pending = options.approvalQueue?.listApprovals({ status: "pending", limit }) ?? [];
+  const all = options.approvalQueue?.listApprovals({ limit }) ?? [];
+
   return {
-    count: 0,
-    items: [],
+    count: pending.length,
+    pendingCount: pending.length,
+    totalCount: all.length,
+    items: pending.map(approvalToItem),
     emptyStateMessage: "No pending approvals are queued yet. Approval execution remains gated elsewhere.",
   };
 }
@@ -331,32 +339,38 @@ export function buildWorkbenchApprovals(_db: MemoryDB): WorkbenchApprovalsData {
 export function buildWorkbenchResume(db: MemoryDB, options: BuildWorkbenchDataSpineOptions): WorkbenchResumeData {
   const recentCheckpoints = listRecentCheckpoints(db, 5);
   const recentConversations = listRecentConversations(db, 5);
-  const approvals = buildWorkbenchApprovals(db);
-  const changes = buildWorkbenchChanges(db, 12);
-  const lastActivity = changes.items[0] ?? null;
+  const approvals = buildWorkbenchApprovals(options);
+  const changes = buildWorkbenchChanges(db, options, 12);
+  const allLedgerEvents = options.eventLedger?.list() ?? [];
+  const lastLedgerEvent = allLedgerEvents[0] ?? null;
+  const lastActivity = lastLedgerEvent ? ledgerEventToChange(lastLedgerEvent) : null;
+  const recentEventCount = allLedgerEvents.length;
+  const lastEventSummary = lastLedgerEvent?.summary ?? "No events recorded yet.";
+
   const resume: WorkbenchResumeData = {
     daemonStatus: options.daemonStatus ?? "healthy",
     mode: options.mode ?? "read-only",
-    projectLabel: options.projectLabel,
-    workDirLabel: options.workDirLabel,
+    projectLabel: options.projectLabel ?? "workspace",
+    workDirLabel: options.workDirLabel ?? ".demo/work",
     lastActivity,
-    lastActivitySummary: lastActivity?.summary ?? "No daemon activity has been recorded yet.",
-    pendingApprovalsCount: approvals.count,
+    lastActivitySummary: lastEventSummary,
+    lastEventSummary,
+    recentEventCount,
+    pendingApprovalsCount: approvals.pendingCount,
     changedItemsCount: changes.count,
     recentCheckpoints,
     recentConversations,
-    nextSafeAction: "Stay in Resume and wait for daemon data or manifest-driven next steps.",
+    nextSafeAction: chooseNextSafeAction(approvals.pendingCount, recentEventCount),
     emptyStateMessage: "No daemon history has been recorded yet. Empty states here are intentional.",
   };
 
-  resume.nextSafeAction = chooseNextSafeAction(resume);
   return resume;
 }
 
 export function buildWorkbenchDataSpine(db: MemoryDB, options: BuildWorkbenchDataSpineOptions): WorkbenchDataSpine {
   return {
     resume: buildWorkbenchResume(db, options),
-    approvals: buildWorkbenchApprovals(db),
-    changes: buildWorkbenchChanges(db),
+    approvals: buildWorkbenchApprovals(options),
+    changes: buildWorkbenchChanges(db, options),
   };
 }
