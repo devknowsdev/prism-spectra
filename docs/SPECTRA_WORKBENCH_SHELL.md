@@ -26,6 +26,8 @@ This is the first calm UI shell for Prism Spectra.
 ## Current screens
 
 - Resume
+- Conversations
+- Attachments
 - Approvals
 - Changes
 - Capabilities
@@ -35,6 +37,7 @@ This is the first calm UI shell for Prism Spectra.
 
 - Connect approvals to real daemon state.
 - Connect changes to provenance events and checkpoints.
+- Connect conversations and attachments to richer project-memory views.
 - Connect resume to actual project status.
 - Keep sidecar behavior unchanged.
 - Grow the shell incrementally rather than turning it into a generic dashboard.

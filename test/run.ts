@@ -40,9 +40,13 @@ import {
   createInitialSidecar,
   InMemoryApprovalQueue,
   InMemoryPrismEventLedger,
+  getWorkbenchAttachment,
+  getWorkbenchConversation,
   buildWorkbenchApprovals,
   buildWorkbenchChanges,
   buildWorkbenchResume,
+  listWorkbenchAttachments,
+  listWorkbenchConversations,
   planLocalFileRoundTrip,
   recommendSidecarAction,
   planSidecarWrite,
@@ -2955,6 +2959,101 @@ async function main() {
     db.close();
   });
 
+  await test("workbench project memory projections surface conversations and attachments", async () => {
+    const db = freshMemoryDB("workbench-memory");
+    db.db.prepare(
+      "INSERT INTO conversations (id, title, metadata, created_at) VALUES (?, ?, ?, ?)"
+    ).run(
+      7,
+      "Project memory thread",
+      JSON.stringify({
+        summary: "A calm project-memory thread for the workbench.",
+        relatedCheckpointId: 17,
+        relatedArtifactId: "artifact-thread-7",
+      }),
+      "2026-06-24T09:00:00.000Z",
+    );
+    db.db.prepare(
+      "INSERT INTO messages (id, conversation_id, role, provider, model, prompt, response, response_sha, attachments, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).run(
+      41,
+      7,
+      "assistant",
+      "ollama",
+      "llama",
+      "What changed?",
+      "We added project-memory workbench surfaces.",
+      "sha-message-41",
+      JSON.stringify(["notes.md"]),
+      "2026-06-24T09:05:00.000Z",
+    );
+    db.db.prepare(
+      "INSERT INTO attachments (id, conversation_id, filename, path, content_type, size, sha256, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    ).run(
+      81,
+      7,
+      "notes.md",
+      "notes/notes.md",
+      "text/markdown",
+      42,
+      "sha-attachment-81",
+      "2026-06-24T09:10:00.000Z",
+    );
+    db.db.prepare("INSERT INTO attachment_tags (attachment_id, tag, created_at) VALUES (?, ?, ?)")
+      .run(81, "reference", "2026-06-24T09:11:00.000Z");
+    db.db.prepare("INSERT INTO attachment_audit (attachment_id, action, details, actor, created_at) VALUES (?, ?, ?, ?, ?)")
+      .run(81, "upload", JSON.stringify({ filename: "notes.md", size: 42 }), "daemon", "2026-06-24T09:12:00.000Z");
+
+    const conversations = listWorkbenchConversations(db, 10);
+    assert.equal(conversations.totalCount, 1);
+    assert.equal(conversations.items[0].id, 7);
+    assert.equal(conversations.items[0].messageCount, 1);
+    assert.equal(conversations.items[0].attachmentCount, 1);
+    assert.equal(conversations.items[0].relatedCheckpointId, 17);
+    assert.equal(conversations.items[0].relatedArtifactId, "artifact-thread-7");
+
+    const conversation = getWorkbenchConversation(db, 7);
+    assert.ok(conversation);
+    assert.equal(conversation?.messages.length, 1);
+    assert.equal(conversation?.attachments.length, 1);
+    assert.equal(conversation?.metadata?.relatedArtifactId, "artifact-thread-7");
+
+    const attachments = listWorkbenchAttachments(db, 10);
+    assert.equal(attachments.totalCount, 1);
+    assert.equal(attachments.items[0].id, 81);
+    assert.equal(attachments.items[0].tags[0], "reference");
+    assert.equal(attachments.items[0].metadataStatus.includes("typed"), true);
+
+    const attachment = getWorkbenchAttachment(db, 81);
+    assert.ok(attachment);
+    assert.equal(attachment?.relatedConversations[0].id, 7);
+    assert.equal(attachment?.relatedMessages.length, 1);
+    assert.equal(attachment?.auditTrail.length, 1);
+    assert.equal(attachment?.repairAvailable, true);
+
+    const resume = buildWorkbenchResume(db, {
+      projectLabel: "prism-spectra",
+      workDirLabel: ".demo/work",
+      approvalQueue: new InMemoryApprovalQueue(new InMemoryPrismEventLedger()),
+      eventLedger: new InMemoryPrismEventLedger(),
+    });
+    assert.equal(resume.recentConversationCount, 1);
+    assert.equal(resume.recentAttachmentCount, 1);
+    assert.equal(resume.latestConversationSummary, "A calm project-memory thread for the workbench.");
+    assert.equal(resume.latestAttachmentSummary, "notes.md");
+    assert.equal(resume.nextSafeAction, "Review recent project memory");
+
+    const changes = buildWorkbenchChanges(db, {
+      approvalQueue: new InMemoryApprovalQueue(new InMemoryPrismEventLedger()),
+      eventLedger: new InMemoryPrismEventLedger(),
+    });
+    assert.ok(changes.derivedCount >= 3);
+    assert.ok(changes.items.some((item) => item.type === "conversation.created"));
+    assert.ok(changes.items.some((item) => item.type === "message.summary"));
+    assert.ok(changes.items.some((item) => item.type === "attachment.summary"));
+    db.close();
+  });
+
   await test("e2e: daemon execute-graph and rollback via API", async () => {
     // spawn the daemon in a temporary cwd so it uses an isolated .demo/work
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "aiforge-e2e-"));
@@ -3011,6 +3110,8 @@ async function main() {
     assert.match(workbenchHtml, /Approvals/);
     assert.match(workbenchHtml, /Changes/);
     assert.match(workbenchHtml, /Settings/);
+    assert.match(workbenchHtml, /Conversations/);
+    assert.match(workbenchHtml, /Attachments/);
     assert.match(workbenchHtml, /Load mode/);
     assert.match(workbenchHtml, /Reset filters/);
     assert.match(workbenchHtml, /Recent events/);
@@ -3026,9 +3127,146 @@ async function main() {
     assert.equal(typeof resumePayload.resume.workDirLabel, "string");
     assert.ok(Array.isArray(resumePayload.resume.recentCheckpoints));
     assert.ok(Array.isArray(resumePayload.resume.recentConversations));
+    assert.ok(Array.isArray(resumePayload.resume.recentAttachments));
     assert.equal(resumePayload.resume.pendingApprovalsCount, 0);
     assert.equal(resumePayload.resume.recentEventCount, 0);
     assert.equal(resumePayload.resume.lastEventSummary, "No events recorded yet.");
+
+    const createConversationResponse = await fetch(`http://127.0.0.1:${port}/api/v1/conversations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-local-token": token },
+      body: JSON.stringify({
+        title: "Workbench memory thread",
+        metadata: {
+          summary: "A calm project-memory conversation.",
+          relatedCheckpointId: 17,
+          relatedArtifactId: "artifact-thread-7",
+        },
+      }),
+    });
+    assert.equal(createConversationResponse.ok, true);
+    const createConversationPayload = await createConversationResponse.json();
+    const conversationId = Number(createConversationPayload.id);
+    assert.ok(Number.isFinite(conversationId));
+
+    const messageResponse = await fetch(`http://127.0.0.1:${port}/api/v1/conversations/${conversationId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-local-token": token },
+      body: JSON.stringify({
+        role: "assistant",
+        provider: "ollama",
+        model: "llama",
+        prompt: "What changed?",
+        response: "We added project-memory workbench surfaces.",
+        attachments: ["notes.md"],
+      }),
+    });
+    assert.equal(messageResponse.ok, true);
+
+    const uploadResponse = await fetch(`http://127.0.0.1:${port}/api/v1/upload`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-local-token": token },
+      body: JSON.stringify({
+        filename: "notes.md",
+        contentType: "text/markdown",
+        contentBase64: Buffer.from("workbench memory notes").toString("base64"),
+        conversationId,
+      }),
+    });
+    assert.equal(uploadResponse.ok, true);
+    const uploadPayload = await uploadResponse.json();
+    const attachmentId = Number(uploadPayload.id);
+    assert.ok(Number.isFinite(attachmentId));
+
+    const tagResponse = await fetch(`http://127.0.0.1:${port}/api/v1/attachments/${attachmentId}/tags`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-local-token": token },
+      body: JSON.stringify({ tag: "reference" }),
+    });
+    assert.equal(tagResponse.ok, true);
+
+    const conversationsRouteResponse = await fetch(`http://127.0.0.1:${port}/api/v1/conversations`, {
+      headers: { "x-local-token": token },
+    });
+    assert.equal(conversationsRouteResponse.ok, true);
+    const conversationsRoutePayload = await conversationsRouteResponse.json();
+    assert.ok(Array.isArray(conversationsRoutePayload.conversations));
+    assert.ok(conversationsRoutePayload.conversations.some((row: any) => Number(row.id) === conversationId));
+
+    const conversationMessagesResponse = await fetch(`http://127.0.0.1:${port}/api/v1/conversations/${conversationId}/messages`, {
+      headers: { "x-local-token": token },
+    });
+    assert.equal(conversationMessagesResponse.ok, true);
+    const conversationMessagesPayload = await conversationMessagesResponse.json();
+    assert.equal(conversationMessagesPayload.messages.length, 1);
+
+    const conversationAttachmentsResponse = await fetch(`http://127.0.0.1:${port}/api/v1/conversations/${conversationId}/attachments`, {
+      headers: { "x-local-token": token },
+    });
+    assert.equal(conversationAttachmentsResponse.ok, true);
+    const conversationAttachmentsPayload = await conversationAttachmentsResponse.json();
+    assert.equal(conversationAttachmentsPayload.attachments.length, 1);
+
+    const attachmentsRouteResponse = await fetch(`http://127.0.0.1:${port}/api/v1/attachments`, {
+      headers: { "x-local-token": token },
+    });
+    assert.equal(attachmentsRouteResponse.ok, true);
+    const attachmentsRoutePayload = await attachmentsRouteResponse.json();
+    assert.ok(Array.isArray(attachmentsRoutePayload.attachments));
+    assert.ok(attachmentsRoutePayload.attachments.some((row: any) => Number(row.id) === attachmentId));
+
+    const attachmentMetaResponse = await fetch(`http://127.0.0.1:${port}/api/v1/attachments/${attachmentId}/meta`, {
+      headers: { "x-local-token": token },
+    });
+    assert.equal(attachmentMetaResponse.ok, true);
+    const attachmentMetaPayload = await attachmentMetaResponse.json();
+    assert.equal(Number(attachmentMetaPayload.attachment.id), attachmentId);
+
+    const workbenchConversationsResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/conversations`);
+    assert.equal(workbenchConversationsResponse.ok, true);
+    const workbenchConversationsPayload = await workbenchConversationsResponse.json();
+    assert.ok(Array.isArray(workbenchConversationsPayload.conversations));
+    assert.ok(workbenchConversationsPayload.conversations.some((row: any) => Number(row.id) === conversationId));
+
+    const workbenchConversationDetailResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/conversations/${conversationId}`);
+    assert.equal(workbenchConversationDetailResponse.ok, true);
+    const workbenchConversationDetailPayload = await workbenchConversationDetailResponse.json();
+    assert.equal(Number(workbenchConversationDetailPayload.conversation.id), conversationId);
+    assert.equal(workbenchConversationDetailPayload.conversation.messages.length, 1);
+    assert.equal(workbenchConversationDetailPayload.conversation.attachments.length, 1);
+
+    const workbenchAttachmentsResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments`);
+    assert.equal(workbenchAttachmentsResponse.ok, true);
+    const workbenchAttachmentsPayload = await workbenchAttachmentsResponse.json();
+    assert.ok(Array.isArray(workbenchAttachmentsPayload.attachments));
+    assert.ok(workbenchAttachmentsPayload.attachments.some((row: any) => Number(row.id) === attachmentId));
+
+    const workbenchAttachmentDetailResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments/${attachmentId}`);
+    assert.equal(workbenchAttachmentDetailResponse.ok, true);
+    const workbenchAttachmentDetailPayload = await workbenchAttachmentDetailResponse.json();
+    assert.equal(Number(workbenchAttachmentDetailPayload.attachment.id), attachmentId);
+    assert.equal(workbenchAttachmentDetailPayload.attachment.relatedConversations[0].id, conversationId);
+
+    const postWorkbenchConversationResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/conversations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-local-token": token },
+      body: JSON.stringify({ title: "not allowed" }),
+    });
+    assert.equal(postWorkbenchConversationResponse.status, 404);
+
+    const postWorkbenchAttachmentResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-local-token": token },
+      body: JSON.stringify({ title: "not allowed" }),
+    });
+    assert.equal(postWorkbenchAttachmentResponse.status, 404);
+
+    const resumeAfterMemoryResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/resume`);
+    assert.equal(resumeAfterMemoryResponse.ok, true);
+    const resumeAfterMemoryPayload = await resumeAfterMemoryResponse.json();
+    assert.equal(resumeAfterMemoryPayload.resume.recentConversationCount >= 1, true);
+    assert.equal(resumeAfterMemoryPayload.resume.recentAttachmentCount >= 1, true);
+    assert.equal(resumeAfterMemoryPayload.resume.nextSafeAction, "Review recent project memory");
 
     const approvalsResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/approvals`);
     assert.equal(approvalsResponse.ok, true);
@@ -3049,6 +3287,9 @@ async function main() {
     assert.equal(typeof changesPayload.changes.derivedCount, "number");
     assert.ok(Array.isArray(changesPayload.changes.items));
     assert.equal(changesPayload.changes.count, changesPayload.changes.items.length);
+    assert.ok(changesPayload.changes.items.some((item: any) => item.type === "conversation.created"));
+    assert.ok(changesPayload.changes.items.some((item: any) => item.type === "message.summary"));
+    assert.ok(changesPayload.changes.items.some((item: any) => item.type === "attachment.summary"));
     assert.ok(String(changesPayload.changes.emptyStateMessage).length > 0);
 
     const eventsResponse = await fetch(`http://127.0.0.1:${port}/api/v1/events`);
