@@ -1,4 +1,6 @@
 import type { ApprovalQueue, ApprovalRequest, ApprovalStatus } from "../approvals/index.js";
+import { listWorkbenchAttachments, type WorkbenchAttachmentSummary as WorkbenchProjectAttachmentSummary } from "./attachments.js";
+import { listWorkbenchConversations, type WorkbenchConversationSummary as WorkbenchProjectConversationSummary } from "./conversations.js";
 import type { MemoryDB } from "../memory/db.js";
 import type { PrismEvent, PrismEventLedger } from "../events/index.js";
 
@@ -16,7 +18,7 @@ export interface WorkbenchCheckpointSummary {
   rolledBackAt: string | null;
 }
 
-export interface WorkbenchConversationSummary {
+export interface WorkbenchResumeConversationSummary {
   id: number;
   title: string | null;
   messageCount: number;
@@ -87,9 +89,14 @@ export interface WorkbenchResumeData {
   lastEventSummary: string;
   recentEventCount: number;
   pendingApprovalsCount: number;
+  recentConversationCount: number;
+  recentAttachmentCount: number;
   changedItemsCount: number;
   recentCheckpoints: WorkbenchCheckpointSummary[];
-  recentConversations: WorkbenchConversationSummary[];
+  recentConversations: WorkbenchProjectConversationSummary[];
+  recentAttachments: WorkbenchProjectAttachmentSummary[];
+  latestConversationSummary: string;
+  latestAttachmentSummary: string;
   nextSafeAction: string;
   emptyStateMessage: string;
 }
@@ -149,7 +156,7 @@ function summarizeCheckpoint(row: Record<string, unknown>): WorkbenchCheckpointS
   };
 }
 
-function summarizeConversation(row: Record<string, unknown>): WorkbenchConversationSummary {
+function summarizeConversation(row: Record<string, unknown>): WorkbenchResumeConversationSummary {
   return {
     id: Number(row.id ?? 0),
     title: optionalText(row.title),
@@ -168,7 +175,7 @@ function listRecentCheckpoints(db: MemoryDB, limit: number): WorkbenchCheckpoint
   return rows.map(summarizeCheckpoint);
 }
 
-function listRecentConversations(db: MemoryDB, limit: number): WorkbenchConversationSummary[] {
+function listRecentConversations(db: MemoryDB, limit: number): WorkbenchResumeConversationSummary[] {
   const rows = db.db
     .prepare(
       `
@@ -248,6 +255,53 @@ function conversationToChange(row: Record<string, unknown>): WorkbenchChangeItem
   };
 }
 
+function previewText(value: unknown, fallback: string): string {
+  const text = safeText(value, "");
+  if (!text) return fallback;
+  return text.length > 120 ? `${text.slice(0, 117)}…` : text;
+}
+
+function messageToChange(row: Record<string, unknown>): WorkbenchChangeItem {
+  const messageId = Number(row.id ?? 0);
+  const conversationId = Number(row.conversation_id ?? 0);
+  const messagePreview = previewText(row.response ?? row.prompt, "Message recorded.");
+  return {
+    id: `message:${messageId}`,
+    time: safeText(row.created_at, ""),
+    type: "message.summary",
+    summary: `Message ${messageId} in conversation ${conversationId || "unknown"}: ${messagePreview}`,
+    sourceKind: "derived",
+    sourceLabel: "Message summary",
+    relatedArtifactId: `message:${messageId}`,
+    relatedCapabilityId: null,
+    relatedConversationId: conversationId ? String(conversationId) : null,
+    relatedCheckpointId: null,
+    relatedApprovalId: null,
+    severity: "info",
+  };
+}
+
+function attachmentToChange(row: Record<string, unknown>): WorkbenchChangeItem {
+  const attachmentId = Number(row.id ?? 0);
+  const conversationId = row.conversation_id == null ? null : Number(row.conversation_id);
+  const filename = safeText(row.filename, `attachment-${attachmentId}`);
+  const size = Number(row.size ?? 0);
+  return {
+    id: `attachment:${attachmentId}`,
+    time: safeText(row.created_at, ""),
+    type: "attachment.summary",
+    summary: `Attachment ${filename}${size > 0 ? ` (${size} bytes)` : ""} recorded.`,
+    sourceKind: "derived",
+    sourceLabel: "Attachment summary",
+    relatedArtifactId: `attachment:${attachmentId}`,
+    relatedCapabilityId: null,
+    relatedConversationId: conversationId ? String(conversationId) : null,
+    relatedCheckpointId: null,
+    relatedApprovalId: null,
+    severity: "info",
+  };
+}
+
 function approvalToItem(approval: ApprovalRequest): WorkbenchApprovalItem {
   return {
     id: approval.id,
@@ -273,9 +327,17 @@ function approvalToItem(approval: ApprovalRequest): WorkbenchApprovalItem {
   };
 }
 
-function chooseNextSafeAction(pendingApprovalsCount: number, recentEventCount: number): string {
+function chooseNextSafeAction(
+  pendingApprovalsCount: number,
+  recentConversationCount: number,
+  recentAttachmentCount: number,
+  recentEventCount: number,
+): string {
   if (pendingApprovalsCount > 0) {
     return "Review pending approvals";
+  }
+  if (recentConversationCount > 0 || recentAttachmentCount > 0) {
+    return "Review recent project memory";
   }
   if (recentEventCount > 0) {
     return "Review recent changes";
@@ -290,10 +352,18 @@ function collectDerivedChangeItems(db: MemoryDB, limit: number): WorkbenchChange
   const conversations = db.db
     .prepare("SELECT id, title, created_at FROM conversations ORDER BY created_at DESC, id DESC LIMIT ?")
     .all(limit) as Record<string, unknown>[];
+  const messages = db.db
+    .prepare("SELECT id, conversation_id, prompt, response, created_at FROM messages ORDER BY created_at DESC, id DESC LIMIT ?")
+    .all(limit) as Record<string, unknown>[];
+  const attachments = db.db
+    .prepare("SELECT id, conversation_id, filename, size, created_at FROM attachments ORDER BY created_at DESC, id DESC LIMIT ?")
+    .all(limit) as Record<string, unknown>[];
 
   const items = [
     ...checkpoints.map(checkpointToChange),
     ...conversations.map(conversationToChange),
+    ...messages.map(messageToChange),
+    ...attachments.map(attachmentToChange),
   ];
 
   items.sort((left, right) => right.time.localeCompare(left.time) || left.id.localeCompare(right.id));
@@ -338,7 +408,8 @@ export function buildWorkbenchApprovals(options: BuildWorkbenchDataSpineOptions,
 
 export function buildWorkbenchResume(db: MemoryDB, options: BuildWorkbenchDataSpineOptions): WorkbenchResumeData {
   const recentCheckpoints = listRecentCheckpoints(db, 5);
-  const recentConversations = listRecentConversations(db, 5);
+  const recentConversationCollection = listWorkbenchConversations(db, 5);
+  const recentAttachmentCollection = listWorkbenchAttachments(db, 5);
   const approvals = buildWorkbenchApprovals(options);
   const changes = buildWorkbenchChanges(db, options, 12);
   const allLedgerEvents = options.eventLedger?.list() ?? [];
@@ -346,6 +417,8 @@ export function buildWorkbenchResume(db: MemoryDB, options: BuildWorkbenchDataSp
   const lastActivity = lastLedgerEvent ? ledgerEventToChange(lastLedgerEvent) : null;
   const recentEventCount = allLedgerEvents.length;
   const lastEventSummary = lastLedgerEvent?.summary ?? "No events recorded yet.";
+  const latestConversationSummary = recentConversationCollection.items[0]?.summary ?? "No conversations recorded yet.";
+  const latestAttachmentSummary = recentAttachmentCollection.items[0]?.filename ?? "No attachments recorded yet.";
 
   const resume: WorkbenchResumeData = {
     daemonStatus: options.daemonStatus ?? "healthy",
@@ -357,10 +430,20 @@ export function buildWorkbenchResume(db: MemoryDB, options: BuildWorkbenchDataSp
     lastEventSummary,
     recentEventCount,
     pendingApprovalsCount: approvals.pendingCount,
+    recentConversationCount: recentConversationCollection.totalCount,
+    recentAttachmentCount: recentAttachmentCollection.totalCount,
     changedItemsCount: changes.count,
     recentCheckpoints,
-    recentConversations,
-    nextSafeAction: chooseNextSafeAction(approvals.pendingCount, recentEventCount),
+    recentConversations: recentConversationCollection.items,
+    recentAttachments: recentAttachmentCollection.items,
+    latestConversationSummary,
+    latestAttachmentSummary,
+    nextSafeAction: chooseNextSafeAction(
+      approvals.pendingCount,
+      recentConversationCollection.totalCount,
+      recentAttachmentCollection.totalCount,
+      recentEventCount,
+    ),
     emptyStateMessage: "No daemon history has been recorded yet. Empty states here are intentional.",
   };
 

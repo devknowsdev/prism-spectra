@@ -458,6 +458,115 @@
       font-size: 13px;
     }
 
+    .split-pane {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+      gap: 14px;
+      align-items: start;
+    }
+
+    .memory-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .memory-card {
+      display: block;
+      width: 100%;
+      text-align: left;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel-2);
+      color: var(--text);
+      padding: 14px;
+      cursor: pointer;
+    }
+
+    .memory-card:hover,
+    .memory-card:focus-visible {
+      outline: none;
+      border-color: rgba(139, 92, 246, 0.35);
+      background: var(--panel-3);
+    }
+
+    .memory-card.selected {
+      background: rgba(139, 92, 246, 0.09);
+      border-color: rgba(139, 92, 246, 0.45);
+      box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.15) inset;
+    }
+
+    .memory-card strong,
+    .memory-card .title {
+      display: block;
+      margin: 0 0 6px;
+      font-size: 14px;
+      letter-spacing: -0.01em;
+    }
+
+    .memory-card .label {
+      margin-top: 4px;
+      color: var(--dim);
+      font-size: 11px;
+      font-family: var(--mono);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .memory-card .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .memory-detail {
+      position: sticky;
+      top: 18px;
+    }
+
+    .detail-stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .detail-block {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel-2);
+      padding: 14px;
+    }
+
+    .detail-block h4 {
+      margin: 0 0 10px;
+      font-size: 14px;
+      letter-spacing: -0.01em;
+    }
+
+    .detail-block .mini-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .detail-chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .detail-chip {
+      border: 1px solid var(--line);
+      background: var(--panel-3);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 5px 8px;
+      font-size: 11px;
+      font-family: var(--mono);
+      white-space: nowrap;
+    }
+
     .toolbar {
       display: flex;
       align-items: center;
@@ -592,9 +701,11 @@
       .status-pills { justify-content: flex-start; }
       .content { padding: 16px; }
       .meta-grid, .field, .setting { grid-template-columns: 1fr; }
+      .split-pane { grid-template-columns: 1fr; }
       .filter-bar { grid-template-columns: 1fr; }
       .filter-toggle { padding-top: 0; }
       .timeline-card .field { grid-template-columns: 1fr; }
+      .memory-detail { position: static; }
     }
   </style>
 </head>
@@ -610,17 +721,23 @@
         <button type="button" data-view="resume" aria-current="page">
           <span>Resume</span><small>1</small>
         </button>
+        <button type="button" data-view="conversations">
+          <span>Conversations</span><small>2</small>
+        </button>
+        <button type="button" data-view="attachments">
+          <span>Attachments</span><small>3</small>
+        </button>
         <button type="button" data-view="approvals">
-          <span>Approvals</span><small>2</small>
+          <span>Approvals</span><small>4</small>
         </button>
         <button type="button" data-view="changes">
-          <span>Changes</span><small>3</small>
+          <span>Changes</span><small>5</small>
         </button>
         <button type="button" data-view="capabilities">
-          <span>Capabilities</span><small>4</small>
+          <span>Capabilities</span><small>6</small>
         </button>
         <button type="button" data-view="settings">
-          <span>Settings</span><small>5</small>
+          <span>Settings</span><small>7</small>
         </button>
       </nav>
 
@@ -672,6 +789,129 @@
                 <span>Read-only daemon data</span>
               </div>
               <div id="resume-conversations" class="stack"></div>
+            </div>
+            <div class="card">
+              <div class="section-title">
+                <h3>Recent attachments</h3>
+                <span>Read-only daemon data</span>
+              </div>
+              <div id="resume-attachments" class="stack"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" data-section="conversations" aria-labelledby="conversations-title">
+          <div class="stack">
+            <div class="card">
+              <div class="section-title">
+                <h3 id="conversations-title">Conversations</h3>
+                <span id="conversations-status">Loading project memory…</span>
+              </div>
+              <div class="split-pane">
+                <div class="stack">
+                  <div id="conversations-empty" class="empty">Loading conversations…</div>
+                  <div id="conversations-list" class="memory-list" aria-live="polite"></div>
+                </div>
+                <div class="card memory-detail">
+                  <div class="section-title">
+                    <h3>Selected conversation</h3>
+                    <span id="conversation-detail-status">Waiting for selection…</span>
+                  </div>
+                  <div id="conversation-detail-empty" class="empty">Select a conversation to inspect its messages and attachments.</div>
+                  <div id="conversation-detail" class="detail-stack"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="example-card" aria-label="Example conversation card">
+              <div class="example-head">
+                <strong>Example conversation card</strong>
+                <em>example only</em>
+              </div>
+              <div class="field-list">
+                <div class="field">
+                  <div class="k">Conversation</div>
+                  <div class="v">conversation-placeholder</div>
+                </div>
+                <div class="field">
+                  <div class="k">Title / summary</div>
+                  <div class="v">A short memory summary of the thread.</div>
+                </div>
+                <div class="field">
+                  <div class="k">Created / updated</div>
+                  <div class="v">2026-06-24 09:00 / 2026-06-24 09:12</div>
+                </div>
+                <div class="field">
+                  <div class="k">Message count</div>
+                  <div class="v">4</div>
+                </div>
+                <div class="field">
+                  <div class="k">Attachment count</div>
+                  <div class="v">2</div>
+                </div>
+                <div class="field">
+                  <div class="k">Related checkpoint / artifact</div>
+                  <div class="v">checkpoint-placeholder · artifact-placeholder</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" data-section="attachments" aria-labelledby="attachments-title">
+          <div class="stack">
+            <div class="card">
+              <div class="section-title">
+                <h3 id="attachments-title">Attachments</h3>
+                <span id="attachments-status">Loading project artifacts…</span>
+              </div>
+              <div class="split-pane">
+                <div class="stack">
+                  <div id="attachments-empty" class="empty">Loading attachments…</div>
+                  <div id="attachments-list" class="memory-list" aria-live="polite"></div>
+                </div>
+                <div class="card memory-detail">
+                  <div class="section-title">
+                    <h3>Selected attachment</h3>
+                    <span id="attachment-detail-status">Waiting for selection…</span>
+                  </div>
+                  <div id="attachment-detail-empty" class="empty">Select an attachment to inspect metadata, related messages, and audit trail.</div>
+                  <div id="attachment-detail" class="detail-stack"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="example-card" aria-label="Example attachment card">
+              <div class="example-head">
+                <strong>Example attachment card</strong>
+                <em>example only</em>
+              </div>
+              <div class="field-list">
+                <div class="field">
+                  <div class="k">Attachment</div>
+                  <div class="v">attachment-placeholder.txt</div>
+                </div>
+                <div class="field">
+                  <div class="k">MIME / size</div>
+                  <div class="v">text/plain · 24 KB</div>
+                </div>
+                <div class="field">
+                  <div class="k">Tags</div>
+                  <div class="v">reference, review, memory</div>
+                </div>
+                <div class="field">
+                  <div class="k">Related conversation</div>
+                  <div class="v">conversation-placeholder</div>
+                </div>
+                <div class="field">
+                  <div class="k">Metadata status</div>
+                  <div class="v">typed · sized · fingerprinted</div>
+                </div>
+                <div class="field">
+                  <div class="k">Related checkpoint / artifact</div>
+                  <div class="v">checkpoint-placeholder · attachment:placeholder</div>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -887,6 +1127,19 @@
     const resumeNextSafeAction = document.getElementById("resume-next-safe-action");
     const resumeCheckpoints = document.getElementById("resume-checkpoints");
     const resumeConversations = document.getElementById("resume-conversations");
+    const resumeAttachments = document.getElementById("resume-attachments");
+    const conversationsStatus = document.getElementById("conversations-status");
+    const conversationsEmpty = document.getElementById("conversations-empty");
+    const conversationsList = document.getElementById("conversations-list");
+    const conversationDetailStatus = document.getElementById("conversation-detail-status");
+    const conversationDetailEmpty = document.getElementById("conversation-detail-empty");
+    const conversationDetail = document.getElementById("conversation-detail");
+    const attachmentsStatus = document.getElementById("attachments-status");
+    const attachmentsEmpty = document.getElementById("attachments-empty");
+    const attachmentsList = document.getElementById("attachments-list");
+    const attachmentDetailStatus = document.getElementById("attachment-detail-status");
+    const attachmentDetailEmpty = document.getElementById("attachment-detail-empty");
+    const attachmentDetail = document.getElementById("attachment-detail");
     const approvalsStatus = document.getElementById("approvals-status");
     const approvalsEmpty = document.getElementById("approvals-empty");
     const approvalsList = document.getElementById("approvals-list");
@@ -911,10 +1164,29 @@
       },
     };
 
+    const memoryState = {
+      conversations: {
+        items: [],
+        selectedId: null,
+      },
+      attachments: {
+        items: [],
+        selectedId: null,
+      },
+    };
+
     const viewMeta = {
       resume: {
         title: "Resume",
         subtitle: "Where you are, what is safe, and the next smallest action."
+      },
+      conversations: {
+        title: "Conversations",
+        subtitle: "Project memory threads, messages, and attached context in one calm place."
+      },
+      attachments: {
+        title: "Attachments",
+        subtitle: "Project artifacts, metadata, related conversations, and audit trail summaries."
       },
       approvals: {
         title: "Approvals",
@@ -983,10 +1255,397 @@
       `;
     }
 
+    function renderFieldList(fields) {
+      return `
+        <div class="field-list">
+          ${fields.map(([label, value]) => `
+            <div class="field">
+              <div class="k">${escapeHtml(label)}</div>
+              <div class="v">${value}</div>
+            </div>
+          `).join("")}
+        </div>
+      `;
+    }
+
+    function renderChipRow(values, emptyLabel = "none") {
+      if (!values || values.length === 0) {
+        return `<span class="detail-chip">${escapeHtml(emptyLabel)}</span>`;
+      }
+      return values.map((value) => `<span class="detail-chip">${escapeHtml(value)}</span>`).join("");
+    }
+
+    function conversationCardHtml(conversation, selected) {
+      const title = conversation.title || conversation.summary || "Untitled conversation";
+      return `
+        <button type="button" class="memory-card${selected ? " selected" : ""}" data-conversation-id="${conversation.id}" aria-pressed="${selected ? "true" : "false"}">
+          <div class="label">${escapeHtml(conversation.label || `Conversation ${conversation.id}`)}</div>
+          <strong>${escapeHtml(title)}</strong>
+          <div class="meta">
+            <span>${conversation.messageCount} message${conversation.messageCount === 1 ? "" : "s"}</span>
+            <span>${conversation.attachmentCount} attachment${conversation.attachmentCount === 1 ? "" : "s"}</span>
+            <span>updated ${escapeHtml(conversation.updatedAt || conversation.createdAt || "unknown")}</span>
+          </div>
+          <div class="placeholder-line" style="margin-top: 8px;">
+            <span>${escapeHtml(conversation.summary || "No summary available")}</span>
+          </div>
+          <div class="placeholder-line" style="margin-top: 6px;">
+            <span>checkpoint ${escapeHtml(conversation.relatedCheckpointId == null ? "none" : String(conversation.relatedCheckpointId))}</span>
+            <span>artifact ${escapeHtml(conversation.relatedArtifactId || "none")}</span>
+          </div>
+        </button>
+      `;
+    }
+
+    function attachmentCardHtml(attachment, selected) {
+      const details = [
+        attachment.contentType || "unknown type",
+        attachment.size == null ? "size unknown" : `${attachment.size} bytes`,
+        attachment.metadataStatus || "basic",
+      ];
+      return `
+        <button type="button" class="memory-card${selected ? " selected" : ""}" data-attachment-id="${attachment.id}" aria-pressed="${selected ? "true" : "false"}">
+          <div class="label">${escapeHtml(attachment.label || `Attachment ${attachment.id}`)}</div>
+          <strong>${escapeHtml(attachment.filename || "attachment")}</strong>
+          <div class="meta">
+            ${details.map((value) => `<span>${escapeHtml(value)}</span>`).join("")}
+          </div>
+          <div class="placeholder-line" style="margin-top: 8px;">
+            ${renderChipRow(attachment.tags || [], "untagged")}
+          </div>
+          <div class="placeholder-line" style="margin-top: 6px;">
+            <span>conversation ${escapeHtml(attachment.conversationTitle || (attachment.conversationId == null ? "none" : String(attachment.conversationId)))}</span>
+            <span>artifact ${escapeHtml(attachment.relatedArtifactId || "none")}</span>
+          </div>
+        </button>
+      `;
+    }
+
+    function renderConversationDetailPanel(detail) {
+      if (!detail) {
+        conversationDetailStatus.textContent = "No conversation selected.";
+        conversationDetail.innerHTML = "";
+        renderEmptyCard(conversationDetailEmpty, "Select a conversation to inspect its messages and attachments.");
+        return;
+      }
+
+      conversationDetailStatus.textContent = `${detail.messageCount} message${detail.messageCount === 1 ? "" : "s"} · ${detail.attachmentCount} attachment${detail.attachmentCount === 1 ? "" : "s"}`;
+      conversationDetailEmpty.innerHTML = "";
+
+      const metadataEntries = detail.metadata
+        ? Object.entries(detail.metadata).map(([key, value]) => [
+          key,
+          escapeHtml(typeof value === "string" ? value : JSON.stringify(value)),
+        ])
+        : [];
+
+      conversationDetail.innerHTML = `
+        <div class="detail-stack">
+          <div class="detail-block">
+            <div class="section-title">
+              <h4>Overview</h4>
+              <span>${escapeHtml(detail.label)}</span>
+            </div>
+            ${renderFieldList([
+              ["Title / summary", escapeHtml(detail.title || detail.summary || "No title")],
+              ["Created / updated", `${escapeHtml(detail.createdAt)} / ${escapeHtml(detail.updatedAt)}`],
+              ["Message count", escapeHtml(String(detail.messageCount))],
+              ["Attachment count", escapeHtml(String(detail.attachmentCount))],
+              ["Related checkpoint", escapeHtml(detail.relatedCheckpointId == null ? "none" : String(detail.relatedCheckpointId))],
+              ["Related artifact", escapeHtml(detail.relatedArtifactId || "none")],
+            ])}
+          </div>
+
+          <div class="detail-block">
+            <div class="section-title">
+              <h4>Messages</h4>
+              <span>${escapeHtml(String(detail.messages.length))}</span>
+            </div>
+            ${detail.messages.length === 0 ? `<div class="empty">No messages recorded for this conversation yet.</div>` : `
+              <div class="mini-list">
+                ${detail.messages.map((message) => `
+                  <article class="timeline-card">
+                    <div class="timeline-topline">
+                      <strong>${escapeHtml(message.role)}</strong>
+                      <span>${escapeHtml(message.createdAt)}</span>
+                    </div>
+                    <div class="field-list">
+                      <div class="field">
+                        <div class="k">Provider / model</div>
+                        <div class="v">${escapeHtml([message.provider, message.model].filter(Boolean).join(" / ") || "none")}</div>
+                      </div>
+                      <div class="field">
+                        <div class="k">Prompt</div>
+                        <div class="v">${escapeHtml(message.prompt || "none")}</div>
+                      </div>
+                      <div class="field">
+                        <div class="k">Response</div>
+                        <div class="v">${escapeHtml(message.response || "none")}</div>
+                      </div>
+                      <div class="field">
+                        <div class="k">Attachments</div>
+                        <div class="v">${renderChipRow(message.attachments || [], "none")}</div>
+                      </div>
+                    </div>
+                  </article>
+                `).join("")}
+              </div>
+            `}
+          </div>
+
+          <div class="detail-block">
+            <div class="section-title">
+              <h4>Attachments</h4>
+              <span>${escapeHtml(String(detail.attachments.length))}</span>
+            </div>
+            ${detail.attachments.length === 0 ? `<div class="empty">No attachments are linked to this conversation yet.</div>` : `
+              <div class="detail-chip-row">
+                ${detail.attachments.map((attachment) => `<span class="detail-chip">${escapeHtml(attachment.filename)}</span>`).join("")}
+              </div>
+            `}
+          </div>
+
+          <div class="detail-block">
+            <div class="section-title">
+              <h4>Metadata</h4>
+              <span>${escapeHtml(detail.metadata ? "available" : "none")}</span>
+            </div>
+            ${metadataEntries.length === 0 ? `<div class="empty">No metadata recorded for this conversation.</div>` : renderFieldList(metadataEntries)}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderAttachmentDetailPanel(detail) {
+      if (!detail) {
+        attachmentDetailStatus.textContent = "No attachment selected.";
+        attachmentDetail.innerHTML = "";
+        renderEmptyCard(attachmentDetailEmpty, "Select an attachment to inspect metadata, related conversations, and audit trail.");
+        return;
+      }
+
+      attachmentDetailStatus.textContent = `${detail.metadataStatus || "basic"} · ${detail.repairAvailable ? "repair available" : "repair unavailable"} · ${detail.compareAvailable ? "compare available" : "compare unavailable"}`;
+      attachmentDetailEmpty.innerHTML = "";
+
+      attachmentDetail.innerHTML = `
+        <div class="detail-stack">
+          <div class="detail-block">
+            <div class="section-title">
+              <h4>Overview</h4>
+              <span>${escapeHtml(detail.label)}</span>
+            </div>
+            ${renderFieldList([
+              ["Filename / path", `${escapeHtml(detail.filename)}<br /><span style="color: var(--muted); font-family: var(--mono);">${escapeHtml(detail.path || "unknown path")}</span>`],
+              ["MIME / size", `${escapeHtml(detail.contentType || "unknown")} · ${detail.size == null ? "size unknown" : `${escapeHtml(String(detail.size))} bytes`}`],
+              ["Created / updated", `${escapeHtml(detail.createdAt)} / ${escapeHtml(detail.updatedAt)}`],
+              ["Conversation", escapeHtml(detail.conversationTitle || (detail.conversationId == null ? "none" : `${String(detail.conversationId)}${detail.conversationTitle ? ` · ${detail.conversationTitle}` : ""}`))],
+              ["Metadata status", escapeHtml(detail.metadataStatus || "basic")],
+              ["Related artifact", escapeHtml(detail.relatedArtifactId || "none")],
+            ])}
+          </div>
+
+          <div class="detail-block">
+            <div class="section-title">
+              <h4>Tags</h4>
+              <span>${escapeHtml(String((detail.tags || []).length))}</span>
+            </div>
+            <div class="detail-chip-row">${renderChipRow(detail.tags || [], "untagged")}</div>
+          </div>
+
+          <div class="detail-block">
+            <div class="section-title">
+              <h4>Related conversations</h4>
+              <span>${escapeHtml(String(detail.relatedConversations.length))}</span>
+            </div>
+            ${detail.relatedConversations.length === 0 ? `<div class="empty">No related conversation is recorded for this attachment.</div>` : `
+              <div class="mini-list">
+                ${detail.relatedConversations.map((conversation) => `
+                  <div class="timeline-card">
+                    <div class="timeline-topline">
+                      <strong>${escapeHtml(conversation.title || "Untitled conversation")}</strong>
+                      <span>conversation ${escapeHtml(String(conversation.id))}</span>
+                    </div>
+                  </div>
+                `).join("")}
+              </div>
+            `}
+          </div>
+
+          <div class="detail-block">
+            <div class="section-title">
+              <h4>Related messages</h4>
+              <span>${escapeHtml(String(detail.relatedMessages.length))}</span>
+            </div>
+            ${detail.relatedMessages.length === 0 ? `<div class="empty">No related messages were found.</div>` : `
+              <div class="mini-list">
+                ${detail.relatedMessages.map((message) => `
+                  <article class="timeline-card">
+                    <div class="timeline-topline">
+                      <strong>${escapeHtml(message.role)}</strong>
+                      <span>${escapeHtml(message.createdAt)}</span>
+                    </div>
+                    <div class="field-list">
+                      <div class="field">
+                        <div class="k">Conversation</div>
+                        <div class="v">${escapeHtml(String(message.conversationId))}</div>
+                      </div>
+                      <div class="field">
+                        <div class="k">Prompt</div>
+                        <div class="v">${escapeHtml(message.prompt || "none")}</div>
+                      </div>
+                      <div class="field">
+                        <div class="k">Response</div>
+                        <div class="v">${escapeHtml(message.response || "none")}</div>
+                      </div>
+                      <div class="field">
+                        <div class="k">Attachments</div>
+                        <div class="v">${renderChipRow(message.attachments || [], "none")}</div>
+                      </div>
+                    </div>
+                  </article>
+                `).join("")}
+              </div>
+            `}
+          </div>
+
+          <div class="detail-block">
+            <div class="section-title">
+              <h4>Audit trail</h4>
+              <span>${escapeHtml(String(detail.auditTrail.length))}</span>
+            </div>
+            ${detail.auditTrail.length === 0 ? `<div class="empty">No audit trail entries were found.</div>` : `
+              <div class="mini-list">
+                ${detail.auditTrail.map((entry) => `
+                  <article class="timeline-card">
+                    <div class="timeline-topline">
+                      <strong>${escapeHtml(entry.action)}</strong>
+                      <span>${escapeHtml(entry.createdAt)}</span>
+                    </div>
+                    <div class="field-list">
+                      <div class="field">
+                        <div class="k">Actor</div>
+                        <div class="v">${escapeHtml(entry.actor || "daemon")}</div>
+                      </div>
+                      <div class="field">
+                        <div class="k">Details</div>
+                        <div class="v">${escapeHtml(entry.details || "none")}</div>
+                      </div>
+                    </div>
+                  </article>
+                `).join("")}
+              </div>
+            `}
+          </div>
+        </div>
+      `;
+    }
+
+    async function loadConversationDetail(conversationId) {
+      if (conversationId == null) {
+        renderConversationDetailPanel(null);
+        return;
+      }
+      conversationDetailStatus.textContent = "Loading conversation details…";
+      conversationDetail.innerHTML = "";
+      try {
+        const response = await fetch(`/api/v1/workbench/conversations/${conversationId}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        renderConversationDetailPanel(payload.conversation ?? null);
+      } catch (error) {
+        renderConversationDetailPanel(null);
+        conversationDetailStatus.textContent = "Unable to load conversation details.";
+      }
+    }
+
+    async function loadAttachmentDetail(attachmentId) {
+      if (attachmentId == null) {
+        renderAttachmentDetailPanel(null);
+        return;
+      }
+      attachmentDetailStatus.textContent = "Loading attachment details…";
+      attachmentDetail.innerHTML = "";
+      try {
+        const response = await fetch(`/api/v1/workbench/attachments/${attachmentId}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        renderAttachmentDetailPanel(payload.attachment ?? null);
+      } catch (error) {
+        renderAttachmentDetailPanel(null);
+        attachmentDetailStatus.textContent = "Unable to load attachment details.";
+      }
+    }
+
+    function renderConversationCollection(collection) {
+      const items = Array.isArray(collection?.items) ? collection.items : [];
+      memoryState.conversations.items = items;
+      conversationsStatus.textContent = collection
+        ? `${collection.count} visible · ${collection.totalCount} total`
+        : "Empty placeholder";
+
+      if (items.length === 0) {
+        renderEmptyCard(conversationsEmpty, collection?.emptyStateMessage || "No conversations are available yet.");
+        conversationsList.innerHTML = "";
+        renderConversationDetailPanel(null);
+        memoryState.conversations.selectedId = null;
+        return null;
+      }
+
+      const selectedId = memoryState.conversations.selectedId && items.some((item) => item.id === memoryState.conversations.selectedId)
+        ? memoryState.conversations.selectedId
+        : items[0].id;
+      memoryState.conversations.selectedId = selectedId;
+      conversationsEmpty.innerHTML = "";
+      conversationsList.innerHTML = items.map((conversation) => conversationCardHtml(conversation, conversation.id === selectedId)).join("");
+      conversationsList.querySelectorAll("button[data-conversation-id]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const nextId = Number(button.getAttribute("data-conversation-id"));
+          if (!Number.isFinite(nextId)) return;
+          memoryState.conversations.selectedId = nextId;
+          renderConversationCollection({ ...collection, items });
+        });
+      });
+      loadConversationDetail(selectedId);
+      return selectedId;
+    }
+
+    function renderAttachmentCollection(collection) {
+      const items = Array.isArray(collection?.items) ? collection.items : [];
+      memoryState.attachments.items = items;
+      attachmentsStatus.textContent = collection
+        ? `${collection.count} visible · ${collection.totalCount} total`
+        : "Empty placeholder";
+
+      if (items.length === 0) {
+        renderEmptyCard(attachmentsEmpty, collection?.emptyStateMessage || "No attachments are available yet.");
+        attachmentsList.innerHTML = "";
+        renderAttachmentDetailPanel(null);
+        memoryState.attachments.selectedId = null;
+        return null;
+      }
+
+      const selectedId = memoryState.attachments.selectedId && items.some((item) => item.id === memoryState.attachments.selectedId)
+        ? memoryState.attachments.selectedId
+        : items[0].id;
+      memoryState.attachments.selectedId = selectedId;
+      attachmentsEmpty.innerHTML = "";
+      attachmentsList.innerHTML = items.map((attachment) => attachmentCardHtml(attachment, attachment.id === selectedId)).join("");
+      attachmentsList.querySelectorAll("button[data-attachment-id]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const nextId = Number(button.getAttribute("data-attachment-id"));
+          if (!Number.isFinite(nextId)) return;
+          memoryState.attachments.selectedId = nextId;
+          renderAttachmentCollection({ ...collection, items });
+        });
+      });
+      loadAttachmentDetail(selectedId);
+      return selectedId;
+    }
+
     function renderResume(data) {
       const resume = data?.resume ?? null;
       const statusText = resume
-        ? `${resume.daemonStatus} · ${resume.mode} · ${resume.pendingApprovalsCount} approval${resume.pendingApprovalsCount === 1 ? "" : "s"} pending · ${resume.recentEventCount} event${resume.recentEventCount === 1 ? "" : "s"}`
+        ? `${resume.daemonStatus} · ${resume.mode} · ${resume.pendingApprovalsCount} approval${resume.pendingApprovalsCount === 1 ? "" : "s"} pending · ${resume.recentConversationCount} conversation${resume.recentConversationCount === 1 ? "" : "s"} · ${resume.recentAttachmentCount} attachment${resume.recentAttachmentCount === 1 ? "" : "s"}`
         : "Read-only fallback state";
       resumeStatus.textContent = statusText;
 
@@ -996,10 +1655,13 @@
           renderKeyValueCard("Last event", "Awaiting daemon state projection"),
           renderKeyValueCard("Pending approvals", "None yet, approval queue will appear here"),
           renderKeyValueCard("Recent events", "No event ledger connected yet"),
+          renderKeyValueCard("Recent conversations", "No project memory threads connected yet"),
+          renderKeyValueCard("Recent attachments", "No project artifacts connected yet"),
         ].join("");
         resumeNextSafeAction.innerHTML = "<span>Review the manifest list or wait for a real resume snapshot.</span>";
         renderEmptyCard(resumeCheckpoints, "No checkpoints available yet.");
         renderEmptyCard(resumeConversations, "No conversations available yet.");
+        renderEmptyCard(resumeAttachments, "No attachments available yet.");
         return;
       }
 
@@ -1009,6 +1671,10 @@
         renderKeyValueCard("Last event", resume.lastEventSummary || resume.lastActivitySummary || "No event ledger entries yet."),
         renderKeyValueCard("Recent events", String(resume.recentEventCount)),
         renderKeyValueCard("Pending approvals", String(resume.pendingApprovalsCount)),
+        renderKeyValueCard("Recent conversations", String(resume.recentConversationCount ?? 0)),
+        renderKeyValueCard("Recent attachments", String(resume.recentAttachmentCount ?? 0)),
+        renderKeyValueCard("Latest conversation", resume.latestConversationSummary || "No conversations available yet."),
+        renderKeyValueCard("Latest attachment", resume.latestAttachmentSummary || "No attachments available yet."),
         renderKeyValueCard("Changed items", String(resume.changedItemsCount)),
       ].join("");
 
@@ -1040,11 +1706,38 @@
           <div class="meta">
             <div class="k">${escapeHtml(conversation.createdAt)}</div>
             <div class="v">
-              <strong>${escapeHtml(conversation.title || "Untitled conversation")}</strong>
+              <strong>${escapeHtml(conversation.title || conversation.summary || "Untitled conversation")}</strong>
               <div class="placeholder-line" style="margin-top: 6px;">
                 <span>${conversation.messageCount} message${conversation.messageCount === 1 ? "" : "s"}</span>
-                <span>latest ${escapeHtml(conversation.latestMessageAt || "unknown")}</span>
-                <span>conversation ${conversation.id}</span>
+                <span>${conversation.attachmentCount} attachment${conversation.attachmentCount === 1 ? "" : "s"}</span>
+                <span>updated ${escapeHtml(conversation.updatedAt || "unknown")}</span>
+                <span>${escapeHtml(conversation.label || `Conversation ${conversation.id}`)}</span>
+              </div>
+              <div class="placeholder-line" style="margin-top: 6px;">
+                <span>checkpoint ${escapeHtml(conversation.relatedCheckpointId == null ? "none" : String(conversation.relatedCheckpointId))}</span>
+                <span>artifact ${escapeHtml(conversation.relatedArtifactId || "none")}</span>
+              </div>
+            </div>
+          </div>
+        `).join("");
+      }
+
+      if (resume.recentAttachments.length === 0) {
+        renderEmptyCard(resumeAttachments, "No attachments have been recorded yet.");
+      } else {
+        resumeAttachments.innerHTML = resume.recentAttachments.map((attachment) => `
+          <div class="meta">
+            <div class="k">${escapeHtml(attachment.createdAt)}</div>
+            <div class="v">
+              <strong>${escapeHtml(attachment.label || attachment.filename || "Untitled attachment")}</strong>
+              <div class="placeholder-line" style="margin-top: 6px;">
+                <span>${escapeHtml(attachment.contentType || "unknown type")}</span>
+                <span>${attachment.size == null ? "size unknown" : `${attachment.size} bytes`}</span>
+                <span>${escapeHtml(attachment.metadataStatus || "basic")}</span>
+              </div>
+              <div class="placeholder-line" style="margin-top: 6px;">
+                <span>${escapeHtml(attachment.conversationTitle || (attachment.conversationId == null ? "no conversation" : `conversation ${attachment.conversationId}`))}</span>
+                <span>artifact ${escapeHtml(attachment.relatedArtifactId || "none")}</span>
               </div>
             </div>
           </div>
@@ -1186,7 +1879,15 @@
 
     document.addEventListener("keydown", (event) => {
       const key = event.key.toLowerCase();
-      const viewByKey = { "1": "resume", "2": "approvals", "3": "changes", "4": "capabilities", "5": "settings" };
+      const viewByKey = {
+        "1": "resume",
+        "2": "conversations",
+        "3": "attachments",
+        "4": "approvals",
+        "5": "changes",
+        "6": "capabilities",
+        "7": "settings",
+      };
       if (viewByKey[key]) {
         event.preventDefault();
         setView(viewByKey[key]);
@@ -1314,6 +2015,28 @@
       }
     }
 
+    async function loadConversations() {
+      try {
+        const response = await fetch("/api/v1/workbench/conversations");
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        renderConversationCollection(payload.conversations ?? null);
+      } catch (error) {
+        renderConversationCollection(null);
+      }
+    }
+
+    async function loadAttachments() {
+      try {
+        const response = await fetch("/api/v1/workbench/attachments");
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        renderAttachmentCollection(payload.attachments ?? null);
+      } catch (error) {
+        renderAttachmentCollection(null);
+      }
+    }
+
     async function loadManifests() {
       try {
         const response = await fetch("/api/v1/capabilities/manifests");
@@ -1338,6 +2061,8 @@
     const validView = viewMeta[initialView] ? initialView : "resume";
     setView(validView);
     loadResume();
+    loadConversations();
+    loadAttachments();
     loadApprovals();
     loadChanges();
     loadManifests();

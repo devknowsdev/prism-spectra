@@ -15,8 +15,12 @@ import {
   ExecutionEngine,
   InMemoryApprovalQueue,
   InMemoryPrismEventLedger,
+  getWorkbenchAttachment,
+  getWorkbenchConversation,
   buildWorkbenchApprovals,
   buildWorkbenchChanges,
+  listWorkbenchAttachments,
+  listWorkbenchConversations,
   buildWorkbenchResume,
   seedCapabilityManifests,
 } from "../src/index.js";
@@ -153,6 +157,32 @@ async function start() {
 
       if (req.method === "GET" && url.pathname === "/api/v1/workbench/changes") {
         return jsonResponse(res, 200, { changes: buildWorkbenchChanges(engine.memory, getWorkbenchOptions(eventLedger, approvalQueue)) });
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/v1/workbench/conversations") {
+        const limit = Number(url.searchParams.get("limit") || 25);
+        return jsonResponse(res, 200, { conversations: listWorkbenchConversations(engine.memory, limit) });
+      }
+
+      const workbenchConversationMatch = url.pathname.match(/^\/api\/v1\/workbench\/conversations\/(\d+)$/);
+      if (workbenchConversationMatch && req.method === "GET") {
+        const conversationId = Number(workbenchConversationMatch[1]);
+        const conversation = getWorkbenchConversation(engine.memory, conversationId);
+        if (!conversation) return jsonResponse(res, 404, { error: "conversation not found" });
+        return jsonResponse(res, 200, { conversation });
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/v1/workbench/attachments") {
+        const limit = Number(url.searchParams.get("limit") || 25);
+        return jsonResponse(res, 200, { attachments: listWorkbenchAttachments(engine.memory, limit) });
+      }
+
+      const workbenchAttachmentMatch = url.pathname.match(/^\/api\/v1\/workbench\/attachments\/(\d+)$/);
+      if (workbenchAttachmentMatch && req.method === "GET") {
+        const attachmentId = Number(workbenchAttachmentMatch[1]);
+        const attachment = getWorkbenchAttachment(engine.memory, attachmentId);
+        if (!attachment) return jsonResponse(res, 404, { error: "attachment not found" });
+        return jsonResponse(res, 200, { attachment });
       }
 
       if (!url.pathname.startsWith("/api/v1/")) return jsonResponse(res, 404, { error: "not found" });
