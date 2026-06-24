@@ -18,6 +18,17 @@ type CdpEventHandler = (params: any) => void;
 
 class SmokeSkip extends Error {}
 
+function normalizeStatusReason(value: unknown): string {
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function printFinalStatus(status: "ran and passed" | "skipped" | "failed", reason?: string): void {
+  const suffix = reason ? `: ${normalizeStatusReason(reason)}` : "";
+  console.log(`browser smoke: ${status}${suffix}`);
+}
+
 class CdpClient {
   private readonly ws: WebSocket;
   private readonly pending = new Map<number, { resolve: (value: any) => void; reject: (reason: unknown) => void }>();
@@ -108,7 +119,7 @@ function findChromeExecutable(): string {
     return CHROME_PATH;
   }
 
-  throw new Error(`Unable to find Google Chrome at ${CHROME_PATH}.`);
+  throw new SmokeSkip(`Google Chrome is required at ${CHROME_PATH}`);
 }
 
 async function waitForJson(url: string, predicate: (value: any) => boolean, timeoutMs = 10_000): Promise<any> {
@@ -222,7 +233,8 @@ async function startDaemon(cwd: string, port: number): Promise<{ stop: () => Pro
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
     if (bindBlocked) {
-      throw new SmokeSkip("browser smoke skipped: socket bind is not permitted in this environment");
+      daemon.kill();
+      throw new SmokeSkip("socket bind is not permitted in this environment");
     }
     try {
       const response = await fetch(`http://127.0.0.1:${port}/workbench`);
@@ -272,7 +284,12 @@ async function startChrome(debugPort: number, userDataDir: string): Promise<{ st
     output += String(chunk);
   });
 
-  await waitForJson(`http://127.0.0.1:${debugPort}/json/version`, (value) => typeof value?.webSocketDebuggerUrl === "string");
+  try {
+    await waitForJson(`http://127.0.0.1:${debugPort}/json/version`, (value) => typeof value?.webSocketDebuggerUrl === "string");
+  } catch (error) {
+    chrome.kill();
+    throw new Error(`Chrome did not start:\n${output.slice(0, 4000)}`);
+  }
 
   return {
     stop: async () => {
@@ -305,64 +322,78 @@ async function main() {
   const chromePort = 35800 + Math.floor(Math.random() * 1000);
 
   buildAttachmentSeed(browserTempRoot);
-  const daemon = await startDaemon(browserTempRoot, daemonPort);
-  const chrome = await startChrome(chromePort, path.join(browserTempRoot, "chrome-profile"));
-
+  let daemon: Awaited<ReturnType<typeof startDaemon>> | null = null;
+  let chrome: Awaited<ReturnType<typeof startChrome>> | null = null;
   try {
+    daemon = await startDaemon(browserTempRoot, daemonPort);
+    chrome = await startChrome(chromePort, path.join(browserTempRoot, "chrome-profile"));
+
     const client = await connectToChromePage(chromePort);
-    const previewRequests: string[] = [];
-    client.on("Network.requestWillBeSent", (params) => {
-      const url = String(params?.request?.url || "");
-      if (url.includes("/api/v1/workbench/attachments/") && url.includes("/preview")) {
-        previewRequests.push(url);
-      }
-    });
+    try {
+      const previewRequests: string[] = [];
+      client.on("Network.requestWillBeSent", (params) => {
+        const url = String(params?.request?.url || "");
+        if (url.includes("/api/v1/workbench/attachments/") && url.includes("/preview")) {
+          previewRequests.push(url);
+        }
+      });
 
-    await client.send("Network.enable");
-    await client.send("Page.enable");
-    await client.send("Runtime.enable");
-    const loadEvent = client.once("Page.loadEventFired");
-    await client.send("Page.navigate", { url: `http://127.0.0.1:${daemonPort}/workbench` });
-    await loadEvent;
-    await waitForExpr(client, `document.title.includes("Spectra Workbench")`);
-    await waitForExpr(client, `Array.from(document.querySelectorAll('button[data-view="attachments"]')).some((button) => (button.textContent || '').includes("Attachments"))`);
+      await client.send("Network.enable");
+      await client.send("Page.enable");
+      await client.send("Runtime.enable");
+      const loadEvent = client.once("Page.loadEventFired");
+      await client.send("Page.navigate", { url: `http://127.0.0.1:${daemonPort}/workbench` });
+      await loadEvent;
+      await waitForExpr(client, `document.title.includes("Spectra Workbench")`);
+      await waitForExpr(client, `Array.from(document.querySelectorAll('button[data-view="attachments"]')).some((button) => (button.textContent || '').includes("Attachments"))`);
 
-    await client.send("Runtime.evaluate", { expression: findButtonClickScript("Attachments") });
-    await waitForExpr(client, `document.querySelector('[data-section="attachments"]')?.classList.contains("active")`);
-    await waitForExpr(client, `Array.from(document.querySelectorAll('button[data-attachment-id]')).some((button) => (button.textContent || '').includes("browser-smoke.txt"))`);
-    await client.send("Runtime.evaluate", { expression: findButtonClickScript("browser-smoke.txt") });
+      await client.send("Runtime.evaluate", { expression: findButtonClickScript("Attachments") });
+      await waitForExpr(client, `document.querySelector('[data-section="attachments"]')?.classList.contains("active")`);
+      await waitForExpr(client, `Array.from(document.querySelectorAll('button[data-attachment-id]')).some((button) => (button.textContent || '').includes("browser-smoke.txt"))`);
+      await client.send("Runtime.evaluate", { expression: findButtonClickScript("browser-smoke.txt") });
 
-    await waitForExpr(client, `document.getElementById("attachment-detail")?.innerText.includes("Text preview pending")`);
-    await waitForExpr(client, `document.getElementById("attachment-detail")?.innerText.includes("browser-smoke.txt")`);
+      await waitForExpr(client, `document.getElementById("attachment-detail")?.innerText.includes("Text preview pending")`);
+      await waitForExpr(client, `document.getElementById("attachment-detail")?.innerText.includes("browser-smoke.txt")`);
 
-    const previewButtonCount = await evalByValue<number>(client, `document.querySelectorAll('button[data-attachment-action="audio-preview-load"]').length`);
-    const autoplayMediaCount = await evalByValue<number>(client, `document.querySelectorAll('audio[autoplay], video[autoplay]').length`);
-    const boundaryReminderVisible = await evalByValue<boolean>(client, `
-      (() => {
-        const items = Array.from(document.querySelectorAll(".placeholder-line"));
-        return items.some((item) => (item.textContent || "").includes("Local-only boundary reminder:"));
-      })()
-    `);
+      const previewButtonCount = await evalByValue<number>(client, `document.querySelectorAll('button[data-attachment-action="audio-preview-load"]').length`);
+      const autoplayMediaCount = await evalByValue<boolean>(client, `document.querySelectorAll('audio[autoplay], video[autoplay]').length`);
+      const boundaryReminderVisible = await evalByValue<boolean>(client, `
+        (() => {
+          const items = Array.from(document.querySelectorAll(".placeholder-line"));
+          return items.some((item) => (item.textContent || "").includes("Local-only boundary reminder:"));
+        })()
+      `);
 
-    assert.equal(previewRequests.length, 0, "attachment selection should not eagerly request preview bytes");
-    assert.equal(previewButtonCount, 0, "text attachments should not show a waveform button");
-    assert.equal(autoplayMediaCount, 0, "no autoplay media should be present");
-    assert.equal(boundaryReminderVisible, true, "the local-only reminder should stay visible");
-    assert.ok(await evalByValue<boolean>(client, `document.body.innerText.includes("Attachments")`));
-    assert.ok(await evalByValue<boolean>(client, `document.body.innerText.includes("browser-smoke.txt")`));
-    await client.close();
+      assert.equal(previewRequests.length, 0, "attachment selection should not eagerly request preview bytes");
+      assert.equal(previewButtonCount, 0, "text attachments should not show a waveform button");
+      assert.equal(autoplayMediaCount, 0, "no autoplay media should be present");
+      assert.equal(boundaryReminderVisible, true, "the local-only reminder should stay visible");
+      assert.ok(await evalByValue<boolean>(client, `document.body.innerText.includes("Attachments")`));
+      assert.ok(await evalByValue<boolean>(client, `document.body.innerText.includes("browser-smoke.txt")`));
+    } finally {
+      await client.close().catch(() => {});
+    }
   } finally {
-    await chrome.stop().catch(() => {});
-    await daemon.stop().catch(() => {});
+    await chrome?.stop().catch(() => {});
+    await daemon?.stop().catch(() => {});
   }
 }
 
-main().catch((error) => {
-  if (error instanceof SmokeSkip) {
-    console.log(`skip - ${error.message}`);
-    process.exitCode = 0;
-    return;
-  }
-  console.error(error);
-  process.exitCode = 1;
-});
+main()
+  .then(() => {
+    printFinalStatus("ran and passed");
+  })
+  .catch((error) => {
+    if (error instanceof SmokeSkip) {
+      printFinalStatus("skipped", error.message);
+      process.exitCode = 0;
+      return;
+    }
+    if (error instanceof Error && error.stack) {
+      console.error(error.stack);
+    } else {
+      console.error(error);
+    }
+    printFinalStatus("failed", error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });

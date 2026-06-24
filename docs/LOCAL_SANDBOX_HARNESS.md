@@ -23,6 +23,14 @@ Sprint 032 adds a disposable sandbox for fuller end-to-end testing of Prism Spec
 
 Both scripts refuse to operate outside the repository sandbox paths they are responsible for.
 
+`npm run test:browser` prints one final status line:
+
+- `browser smoke: ran and passed`
+- `browser smoke: skipped: <reason>`
+- `browser smoke: failed: <reason>`
+
+The smoke only talks to `127.0.0.1`, so it stays local-first and does not contact external services.
+
 ## What the sandbox can test now
 
 - Local filesystem adapter reads against seeded files.
@@ -30,6 +38,7 @@ Both scripts refuse to operate outside the repository sandbox paths they are res
 - Deterministic file seeding and reset behavior.
 - Attachment and metadata fixture handling without touching real user folders.
 - A minimal browser smoke path that proves the workbench loads and does not eagerly request preview bytes for a selected sandbox attachment.
+- The browser smoke status line makes it obvious whether the run passed, skipped, or failed.
 
 ## Safety guarantees
 
@@ -38,12 +47,20 @@ Both scripts refuse to operate outside the repository sandbox paths they are res
 - No Docker or remote services are involved.
 - No destructive file operations are exposed to the harness.
 - No media analysis, transcription, FFmpeg, Whisper, or watchers are added.
+- The browser smoke only uses localhost ports and a local Chrome session.
 
 ## What remains manual
 
 - Rich browser e2e coverage still needs a broader test strategy.
 - This smoke test does not verify waveform playback, visual regressions, or full attachment workflows.
 - It uses the local Google Chrome app plus a tiny CDP runner, so the maintenance cost stays low without adding a browser dependency.
+
+## Common Failure Causes
+
+- Google Chrome is missing at the expected local path.
+- The daemon cannot bind a local port in the current sandbox.
+- The workbench stops rendering the seeded attachment row or preview boundary reminder.
+- The smoke assertions fail because the UI behavior changed.
 
 ## Recommended next step
 
