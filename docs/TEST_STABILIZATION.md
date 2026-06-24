@@ -55,6 +55,23 @@ npm run build
 
 This validates the setup/developer build path without running the long daemon e2e harness.
 
+## Manual daemon e2e workflow
+
+A separate manually triggered workflow exists for the full daemon e2e harness:
+
+```text
+.github/workflows/daemon-e2e.yml
+```
+
+It runs:
+
+```bash
+npm ci
+npm run test:full
+```
+
+The workflow is `workflow_dispatch` only and has a 10-minute job timeout. This keeps the full daemon e2e path available in GitHub Actions without making every pull request depend on it.
+
 ## Full validation policy
 
 Use the full harness deliberately when working on daemon, workbench, checkpoint, attachment, preview, execute-graph, rollback, or event-ledger behavior:
@@ -76,7 +93,7 @@ If the full test hangs, inspect the daemon e2e test first.
 Recommended next code-level stabilization:
 
 ```text
-Spectra-Stabilization-002 — split daemon e2e into its own file with an abortable execute-graph stream
+Spectra-Stabilization-003 — split daemon e2e into its own file with an abortable execute-graph stream
 ```
 
 Likely scope:
