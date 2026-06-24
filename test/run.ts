@@ -3544,8 +3544,9 @@ async function main() {
     const workbenchConversationsResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/conversations`);
     assert.equal(workbenchConversationsResponse.ok, true);
     const workbenchConversationsPayload = await workbenchConversationsResponse.json();
-    assert.ok(Array.isArray(workbenchConversationsPayload.conversations));
-    assert.ok(workbenchConversationsPayload.conversations.some((row: any) => Number(row.id) === conversationId));
+    assert.ok(workbenchConversationsPayload.conversations);
+    assert.ok(Array.isArray(workbenchConversationsPayload.conversations.items));
+    assert.ok(workbenchConversationsPayload.conversations.items.some((row: any) => Number(row.id) === conversationId));
 
     const workbenchConversationDetailResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/conversations/${conversationId}`);
     assert.equal(workbenchConversationDetailResponse.ok, true);
