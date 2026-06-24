@@ -1,5 +1,5 @@
 ---
-Last-Updated: 2026-06-23
+Last-Updated: 2026-06-24
 
 # prism-spectra
 
@@ -34,6 +34,9 @@ For the implementation handover packet, see
 For the current build boundary and stabilization rationale, see
 [docs/BUILD_STABILIZATION_NOTES.md](docs/BUILD_STABILIZATION_NOTES.md).
 
+For first-run setup, doctor checks, provider status, and workbench launch guidance,
+see [docs/SPECTRA_SETUP.md](docs/SPECTRA_SETUP.md).
+
 ## What this repo is for
 
 - Deterministic graph building and routing
@@ -45,8 +48,40 @@ For the current build boundary and stabilization rationale, see
 
 - Read [docs/PROJECT_PORTAL.md](docs/PROJECT_PORTAL.md)
 - Read [PROJECT_BRIEF.md](PROJECT_BRIEF.md)
+- Run `npm install`
+- Run `npm run doctor`
+- Run `npm run setup` for the read-only first-run checklist
 - Inspect [src/index.ts](src/index.ts)
 - Inspect [tools/daemon.ts](tools/daemon.ts)
+
+## First-run setup
+
+Run the read-only doctor from the repo root:
+
+```bash
+npm install
+npm run doctor
+```
+
+Then validate the developer path:
+
+```bash
+npm run typecheck
+npm test
+npm run build
+```
+
+Provider status, without executing a workflow:
+
+```bash
+npm run forge -- --status
+```
+
+Workbench launch, only when ready for a long-running local daemon:
+
+```bash
+npm run workbench
+```
 
 ## Tests
 
