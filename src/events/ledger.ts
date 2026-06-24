@@ -8,6 +8,10 @@ export const prismEventTypes = [
   "artifact.observed",
   "artifact.previewed",
   "artifact.written",
+  "attachment.ingest.opened",
+  "attachment.ingest.previewed",
+  "attachment.ingest.cancelled",
+  "attachment.ingest.completed",
   "job.scheduled",
   "job.started",
   "job.progress",
@@ -166,4 +170,3 @@ export class InMemoryPrismEventLedger implements PrismEventLedger {
     this.seq = 0;
   }
 }
-

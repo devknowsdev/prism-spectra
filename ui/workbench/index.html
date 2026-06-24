@@ -4,6 +4,27 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Spectra Workbench</title>
+  <link rel="stylesheet" href="/vendor/@uppy/core/dist/style.min.css" />
+  <link rel="stylesheet" href="/vendor/@uppy/drag-drop/dist/style.min.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "@uppy/core": "/vendor/@uppy/core/lib/index.js",
+        "@uppy/drag-drop": "/vendor/@uppy/drag-drop/lib/index.js",
+        "@uppy/store-default": "/vendor/@uppy/store-default/lib/index.js",
+        "@uppy/utils": "/vendor/@uppy/utils/lib/index.js",
+        "@transloadit/prettier-bytes": "/vendor/@transloadit/prettier-bytes/dist/prettierBytes.js",
+        "lodash/throttle.js": "/workbench-shims/lodash-throttle.js",
+        "mime-match": "/workbench-shims/mime-match.js",
+        "namespace-emitter": "/workbench-shims/namespace-emitter.js",
+        "nanoid/non-secure": "/vendor/nanoid/non-secure/index.js",
+        "preact": "/vendor/preact/dist/preact.module.js",
+        "preact/hooks": "/vendor/preact/hooks/dist/hooks.module.js",
+        "preact/jsx-runtime": "/vendor/preact/jsx-runtime/dist/jsxRuntime.module.js",
+        "wildcard": "/workbench-shims/wildcard.js"
+      }
+    }
+  </script>
   <style>
     :root {
       color-scheme: dark;
@@ -591,6 +612,59 @@
       background: var(--panel-3);
     }
 
+    .ingest-panel {
+      border: 1px solid var(--line);
+      background: rgba(17, 22, 29, 0.95);
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
+    }
+
+    .ingest-panel .ingest-status {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .ingest-panel .ingest-preview-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .ingest-panel .ingest-preview-card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel-2);
+      padding: 12px;
+    }
+
+    .ingest-panel .ingest-preview-card strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 14px;
+      letter-spacing: -0.01em;
+    }
+
+    .ingest-panel .ingest-preview-card .meta-line {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .ingest-panel .ingest-preview-card .meta-line code {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: #d8b4fe;
+      background: rgba(139, 92, 246, 0.08);
+      border: 1px solid rgba(139, 92, 246, 0.22);
+      border-radius: 8px;
+      padding: 2px 6px;
+    }
+
     .filter-bar {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -865,7 +939,26 @@
                 <h3 id="attachments-title">Attachments</h3>
                 <span id="attachments-status">Loading project artifacts…</span>
               </div>
-              <div class="split-pane">
+              <div class="ingest-panel" style="margin-top: 14px;">
+                <div class="section-title">
+                  <h3>Local attachment ingest</h3>
+                  <span>Explicit preview then import</span>
+                </div>
+                <div class="placeholder-line">
+                  <span>Add one local file, review the queued preview, then click <code>Import</code>.</span>
+                </div>
+                <div class="toolbar ingest-actions" style="margin-top: 14px;">
+                  <button type="button" id="local-attachment-open">Add local attachment</button>
+                  <button type="button" id="local-attachment-import" disabled>Import</button>
+                  <button type="button" id="local-attachment-clear" disabled>Clear</button>
+                </div>
+                <div id="local-attachment-panel" hidden style="margin-top: 14px;">
+                  <div id="local-attachment-dropzone"></div>
+                  <div id="local-attachment-selection" class="ingest-preview-list" aria-live="polite"></div>
+                  <div id="local-attachment-status" class="ingest-status empty" style="margin-top: 12px;">No local attachment is queued yet.</div>
+                </div>
+              </div>
+              <div class="split-pane" style="margin-top: 14px;">
                 <div class="stack">
                   <div id="attachments-empty" class="empty">Loading attachments…</div>
                   <div id="attachments-list" class="memory-list" aria-live="polite"></div>
@@ -1140,6 +1233,13 @@
     const attachmentDetailStatus = document.getElementById("attachment-detail-status");
     const attachmentDetailEmpty = document.getElementById("attachment-detail-empty");
     const attachmentDetail = document.getElementById("attachment-detail");
+    const localAttachmentOpen = document.getElementById("local-attachment-open");
+    const localAttachmentImport = document.getElementById("local-attachment-import");
+    const localAttachmentClear = document.getElementById("local-attachment-clear");
+    const localAttachmentPanel = document.getElementById("local-attachment-panel");
+    const localAttachmentDropzone = document.getElementById("local-attachment-dropzone");
+    const localAttachmentSelection = document.getElementById("local-attachment-selection");
+    const localAttachmentStatus = document.getElementById("local-attachment-status");
     const approvalsStatus = document.getElementById("approvals-status");
     const approvalsEmpty = document.getElementById("approvals-empty");
     const approvalsList = document.getElementById("approvals-list");
@@ -1173,6 +1273,12 @@
         items: [],
         selectedId: null,
       },
+    };
+
+    const localAttachmentState = {
+      initialized: false,
+      initializing: null,
+      uppy: null,
     };
 
     const viewMeta = {
@@ -1903,6 +2009,206 @@
         .replaceAll("'", "&#39;");
     }
 
+    function formatBytes(bytes) {
+      const value = Number(bytes);
+      if (!Number.isFinite(value) || value < 0) return "size unknown";
+      if (value === 0) return "0 B";
+      const units = ["B", "KB", "MB", "GB", "TB"];
+      let size = value;
+      let unit = 0;
+      while (size >= 1024 && unit < units.length - 1) {
+        size /= 1024;
+        unit += 1;
+      }
+      return unit === 0 ? `${Math.round(size)} ${units[unit]}` : `${size.toFixed(size >= 10 ? 1 : 2)} ${units[unit]}`;
+    }
+
+    function bytesToBase64(bytes) {
+      let binary = "";
+      const chunkSize = 0x8000;
+      for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+        const chunk = bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length));
+        binary += String.fromCharCode(...chunk);
+      }
+      return btoa(binary);
+    }
+
+    function selectedConversationIdForImport() {
+      return Number.isFinite(memoryState.conversations.selectedId) ? memoryState.conversations.selectedId : null;
+    }
+
+    function updateLocalAttachmentControls() {
+      const files = localAttachmentState.uppy ? localAttachmentState.uppy.getFiles() : [];
+      const hasFiles = files.length > 0;
+      if (localAttachmentImport) localAttachmentImport.disabled = !hasFiles;
+      if (localAttachmentClear) localAttachmentClear.disabled = !hasFiles;
+      if (!localAttachmentPanel) return;
+
+      if (!hasFiles) {
+        localAttachmentSelection.innerHTML = "";
+        localAttachmentStatus.textContent = localAttachmentState.initialized
+          ? "No local attachment is queued yet. Add a file to preview it before import."
+          : "Load the local attachment controls to preview a file before import.";
+        return;
+      }
+
+      const targetConversationId = selectedConversationIdForImport();
+      localAttachmentStatus.textContent = `${files.length} local file${files.length === 1 ? "" : "s"} ready for import${targetConversationId == null ? "" : ` into conversation ${targetConversationId}`}.`;
+      localAttachmentSelection.innerHTML = files.map((file) => {
+        const fileSize = typeof file.size === "number" && Number.isFinite(file.size)
+          ? file.size
+          : (file.data && typeof file.data.size === "number" ? file.data.size : null);
+        const typeLabel = file.type || "unknown type";
+        return `
+          <div class="ingest-preview-card">
+            <strong>${escapeHtml(file.name || "untitled file")}</strong>
+            <div class="meta-line">
+              <span>${escapeHtml(typeLabel)}</span>
+              <span>${escapeHtml(formatBytes(fileSize))}</span>
+              <span>${targetConversationId == null ? "no conversation target" : `conversation ${escapeHtml(String(targetConversationId))}`}</span>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    async function ensureLocalAttachmentIngest() {
+      if (localAttachmentState.initialized) {
+        return localAttachmentState.uppy;
+      }
+      if (localAttachmentState.initializing) {
+        return localAttachmentState.initializing;
+      }
+
+      localAttachmentState.initializing = (async () => {
+        const [{ default: Uppy }, { default: DragDrop }] = await Promise.all([
+          import("@uppy/core"),
+          import("@uppy/drag-drop"),
+        ]);
+
+        const uppy = new Uppy({
+          autoProceed: false,
+          restrictions: {
+            maxNumberOfFiles: 1,
+          },
+        });
+
+        uppy.use(DragDrop, {
+          target: localAttachmentDropzone,
+          width: "100%",
+        });
+
+        uppy.on("file-added", updateLocalAttachmentControls);
+        uppy.on("file-removed", updateLocalAttachmentControls);
+        uppy.on("files-added", updateLocalAttachmentControls);
+        uppy.on("cancel-all", updateLocalAttachmentControls);
+
+        localAttachmentState.uppy = uppy;
+        localAttachmentState.initialized = true;
+        updateLocalAttachmentControls();
+        return uppy;
+      })().catch((error) => {
+        localAttachmentStatus.textContent = "Unable to load local attachment controls.";
+        throw error;
+      }).finally(() => {
+        localAttachmentState.initializing = null;
+      });
+
+      return localAttachmentState.initializing;
+    }
+
+    async function openLocalAttachmentPanel() {
+      if (!localAttachmentPanel) return;
+      localAttachmentPanel.hidden = false;
+      try {
+        await ensureLocalAttachmentIngest();
+      } catch (error) {
+        localAttachmentStatus.textContent = "Unable to load local attachment controls.";
+        return;
+      }
+      updateLocalAttachmentControls();
+      localAttachmentOpen?.blur();
+    }
+
+    function clearLocalAttachmentSelection() {
+      if (localAttachmentState.uppy) {
+        localAttachmentState.uppy.cancelAll();
+      }
+      updateLocalAttachmentControls();
+    }
+
+    async function importLocalAttachmentSelection() {
+      const uppy = localAttachmentState.uppy;
+      if (!uppy) {
+        localAttachmentStatus.textContent = "Load the local attachment controls first.";
+        return;
+      }
+
+      const files = uppy.getFiles();
+      if (files.length === 0) {
+        updateLocalAttachmentControls();
+        return;
+      }
+
+      const file = files[0];
+      const fileData = file.data;
+      if (!fileData || typeof fileData.arrayBuffer !== "function") {
+        localAttachmentStatus.textContent = "The selected item cannot be imported as a local file.";
+        return;
+      }
+
+      const importButton = localAttachmentImport;
+      const clearButton = localAttachmentClear;
+      const openButton = localAttachmentOpen;
+      if (importButton) importButton.disabled = true;
+      if (clearButton) clearButton.disabled = true;
+      if (openButton) openButton.disabled = true;
+      localAttachmentStatus.textContent = `Importing ${file.name || "selected file"}…`;
+
+      try {
+        const bytes = new Uint8Array(await fileData.arrayBuffer());
+        const response = await fetch("/api/v1/workbench/attachments/import-local", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            filename: file.name || "attachment",
+            contentType: file.type || null,
+            contentBase64: bytesToBase64(bytes),
+            conversationId: selectedConversationIdForImport(),
+          }),
+        });
+
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload?.error || `HTTP ${response.status}`);
+        }
+
+        const attachmentId = Number(payload?.attachment?.id ?? NaN);
+        if (Number.isFinite(attachmentId)) {
+          memoryState.attachments.selectedId = attachmentId;
+        }
+
+        uppy.cancelAll();
+        localAttachmentStatus.textContent = `Imported ${payload?.attachment?.filename || file.name || "local attachment"}. Refreshing project memory…`;
+        await Promise.all([
+          loadAttachments(),
+          loadConversations(),
+          loadResume(),
+          loadChanges(),
+        ]);
+        localAttachmentStatus.textContent = `Imported ${payload?.attachment?.filename || file.name || "local attachment"}.`;
+      } catch (error) {
+        localAttachmentStatus.textContent = `Import failed: ${error instanceof Error ? error.message : String(error)}`;
+      } finally {
+        const hasFiles = localAttachmentState.uppy ? localAttachmentState.uppy.getFiles().length > 0 : false;
+        if (importButton) importButton.disabled = !hasFiles;
+        if (clearButton) clearButton.disabled = !hasFiles;
+        if (openButton) openButton.disabled = false;
+      }
+    }
+
     function renderCapabilities(manifests) {
       const visible = manifests.filter(capabilityMatchesFilters);
       capabilityStatus.textContent = `${visible.length} of ${manifests.length} manifest${manifests.length === 1 ? "" : "s"} visible. Read-only data only.`;
@@ -1982,6 +2288,16 @@
       capFilterBoundary.value = "";
       capFilterHeavyExpensive.checked = false;
       syncCapabilityFilters();
+    });
+
+    localAttachmentOpen?.addEventListener("click", () => {
+      void openLocalAttachmentPanel();
+    });
+    localAttachmentClear?.addEventListener("click", () => {
+      clearLocalAttachmentSelection();
+    });
+    localAttachmentImport?.addEventListener("click", () => {
+      void importLocalAttachmentSelection();
     });
 
     async function loadResume() {

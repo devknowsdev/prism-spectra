@@ -15,6 +15,7 @@ import {
   ExecutionEngine,
   InMemoryApprovalQueue,
   InMemoryPrismEventLedger,
+  type PrismEventType,
   getWorkbenchAttachment,
   getWorkbenchConversation,
   buildWorkbenchApprovals,
@@ -32,6 +33,8 @@ const ENV_TOKEN = process.env.AI_FORGE_DAEMON_TOKEN ?? process.env.LOCAL_AI_TOKE
 const TOKEN = ENV_TOKEN || randomBytes(18).toString("hex");
 const DAEMON_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WORKBENCH_HTML_PATH = path.resolve(DAEMON_DIR, "../ui/workbench/index.html");
+const WORKBENCH_SHIM_DIR = path.resolve(DAEMON_DIR, "../ui/workbench/vendor-shims");
+const NODE_MODULES_DIR = path.resolve(DAEMON_DIR, "../node_modules");
 
 async function initEngine() {
   const engine = new ExecutionEngine({ dbPath: ".demo/daemon.db", workDir: ".demo/work", mockExecutors: true, fallbackOnFailure: false });
@@ -83,6 +86,288 @@ async function readWorkbenchHtml(): Promise<string> {
   return fs.promises.readFile(WORKBENCH_HTML_PATH, "utf-8");
 }
 
+function contentTypeForPath(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".html") return "text/html; charset=utf-8";
+  if (ext === ".js" || ext === ".mjs" || ext === ".cjs") return "application/javascript; charset=utf-8";
+  if (ext === ".css") return "text/css; charset=utf-8";
+  if (ext === ".json") return "application/json; charset=utf-8";
+  if (ext === ".map") return "application/json; charset=utf-8";
+  if (ext === ".svg") return "image/svg+xml";
+  if (ext === ".wasm") return "application/wasm";
+  if (ext === ".txt" || ext === ".md" || ext === ".yml" || ext === ".yaml") return "text/plain; charset=utf-8";
+  return "application/octet-stream";
+}
+
+function sanitizeAttachmentFilename(filename: string): string {
+  const raw = filename.trim();
+  const safe = raw.replace(/[^a-zA-Z0-9._-]/g, "_").replace(/_+/g, "_");
+  return safe.length > 0 ? safe : "";
+}
+
+function decodeBase64Strict(contentBase64: string): Buffer | null {
+  const normalized = contentBase64.replace(/\s+/g, "");
+  if (normalized.length === 0) return Buffer.alloc(0);
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalized) || normalized.length % 4 !== 0) return null;
+  const buffer = Buffer.from(normalized, "base64");
+  const reencoded = buffer.toString("base64").replace(/=+$/, "");
+  const input = normalized.replace(/=+$/, "");
+  return reencoded === input ? buffer : null;
+}
+
+async function sendVendorFile(res: http.ServerResponse, requestPath: string) {
+  const relative = decodeURIComponent(requestPath.replace(/^\/vendor\//, ""));
+  const resolved = path.resolve(NODE_MODULES_DIR, relative);
+  const boundary = NODE_MODULES_DIR.endsWith(path.sep) ? NODE_MODULES_DIR : `${NODE_MODULES_DIR}${path.sep}`;
+  if (resolved !== NODE_MODULES_DIR && !resolved.startsWith(boundary)) {
+    return jsonResponse(res, 403, { error: "not allowed" });
+  }
+
+  try {
+    const stat = await fs.promises.stat(resolved);
+    if (!stat.isFile()) {
+      return jsonResponse(res, 404, { error: "not found" });
+    }
+    const content = await fs.promises.readFile(resolved);
+    res.writeHead(200, {
+      "Content-Type": contentTypeForPath(resolved),
+      "Content-Length": String(content.length),
+      "Cache-Control": "no-store",
+      "Access-Control-Allow-Origin": "*",
+    });
+    return res.end(content);
+  } catch (error) {
+    return jsonResponse(res, 404, { error: "not found" });
+  }
+}
+
+async function sendWorkbenchShimFile(res: http.ServerResponse, requestPath: string) {
+  const relative = decodeURIComponent(requestPath.replace(/^\/workbench-shims\//, ""));
+  const resolved = path.resolve(WORKBENCH_SHIM_DIR, relative);
+  const boundary = WORKBENCH_SHIM_DIR.endsWith(path.sep) ? WORKBENCH_SHIM_DIR : `${WORKBENCH_SHIM_DIR}${path.sep}`;
+  if (resolved !== WORKBENCH_SHIM_DIR && !resolved.startsWith(boundary)) {
+    return jsonResponse(res, 403, { error: "not allowed" });
+  }
+
+  try {
+    const stat = await fs.promises.stat(resolved);
+    if (!stat.isFile()) {
+      return jsonResponse(res, 404, { error: "not found" });
+    }
+    const content = await fs.promises.readFile(resolved);
+    res.writeHead(200, {
+      "Content-Type": contentTypeForPath(resolved),
+      "Content-Length": String(content.length),
+      "Cache-Control": "no-store",
+      "Access-Control-Allow-Origin": "*",
+    });
+    return res.end(content);
+  } catch (error) {
+    return jsonResponse(res, 404, { error: "not found" });
+  }
+}
+
+function attachmentUploadsDir(): string {
+  return process.env.AI_FORGE_UPLOADS_DIR || path.join(process.cwd(), "uploads");
+}
+
+function safeRequestedFilename(filename: unknown): string {
+  if (typeof filename !== "string") return "";
+  return sanitizeAttachmentFilename(filename);
+}
+
+function optionalConversationId(value: unknown): number | null {
+  if (value == null) return null;
+  if (typeof value === "string" && value.trim().length === 0) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseBase64Attachment(contentBase64: unknown): Buffer | null {
+  if (typeof contentBase64 !== "string") return null;
+  return decodeBase64Strict(contentBase64);
+}
+
+function appendAttachmentIngestEvent(
+  eventLedger: InMemoryPrismEventLedger,
+  type: PrismEventType,
+  summary: string,
+  attachmentId: number | null,
+  filename: string,
+  contentType: string | null,
+  size: number,
+  conversationId: number | null,
+  sha256: string | null,
+  extraMetadata: Record<string, unknown> = {},
+) {
+  eventLedger.append({
+    type,
+    summary,
+    severity: type === "attachment.ingest.cancelled" ? "low" : "info",
+    source: type.startsWith("artifact.") ? "artifact" : "workbench",
+    relatedArtifactId: attachmentId == null ? undefined : `attachment:${attachmentId}`,
+    relatedConversationId: conversationId == null ? undefined : String(conversationId),
+    metadata: {
+      attachmentId,
+      filename,
+      contentType,
+      size,
+      sha256,
+      ...extraMetadata,
+    },
+  });
+}
+
+async function importLocalAttachmentFromBody(
+  engine: ExecutionEngine,
+  eventLedger: InMemoryPrismEventLedger,
+  body: any,
+  actor: string,
+  routeLabel: string,
+) {
+  const filename = safeRequestedFilename(body?.filename);
+  const contentBuffer = parseBase64Attachment(body?.contentBase64);
+  const contentType = typeof body?.contentType === "string" && body.contentType.trim().length > 0 ? body.contentType.trim() : null;
+  const conversationId = optionalConversationId(body?.conversationId);
+
+  if (!filename) {
+    return { code: 400, body: { error: "expected {filename, contentBase64, contentType?, conversationId?}" } };
+  }
+
+  if (!contentBuffer) {
+    return { code: 400, body: { error: "contentBase64 must be valid base64" } };
+  }
+
+  const maxBytes = Number(process.env.AI_FORGE_MAX_UPLOAD_BYTES || 20 * 1024 * 1024);
+  if (contentBuffer.length > maxBytes) {
+    return { code: 413, body: { error: "file too large" } };
+  }
+
+  if (body?.conversationId != null && conversationId == null) {
+    return { code: 400, body: { error: "conversationId must be numeric when provided" } };
+  }
+
+  if (conversationId != null) {
+    const conversation = engine.memory.db.prepare("SELECT id FROM conversations WHERE id = ? LIMIT 1").get(conversationId) as Record<string, unknown> | undefined;
+    if (!conversation) {
+      return { code: 404, body: { error: "conversation not found" } };
+    }
+  }
+
+  const uploadBase = attachmentUploadsDir();
+  await fs.promises.mkdir(uploadBase, { recursive: true });
+
+  const size = contentBuffer.length;
+  const sha256 = createHash("sha256").update(contentBuffer).digest("hex");
+  const savedName = `${Date.now()}-${randomBytes(6).toString("hex")}-${filename}`;
+  const filePath = path.join(uploadBase, savedName);
+  const actorLabel = actor.trim().length > 0 ? actor.trim() : "daemon";
+
+  appendAttachmentIngestEvent(
+    eventLedger,
+    "attachment.ingest.opened",
+    `Local attachment ingest opened for ${filename}`,
+    null,
+    filename,
+    contentType,
+    size,
+    conversationId,
+    sha256,
+    { routeLabel, actor: actorLabel },
+  );
+  appendAttachmentIngestEvent(
+    eventLedger,
+    "attachment.ingest.previewed",
+    `Local attachment preview ready for ${filename}`,
+    null,
+    filename,
+    contentType,
+    size,
+    conversationId,
+    sha256,
+    { routeLabel, actor: actorLabel, previewMode: "explicit-import" },
+  );
+
+  await fs.promises.writeFile(filePath, contentBuffer);
+
+  const stmt = engine.memory.db.prepare(
+    "INSERT INTO attachments (conversation_id, filename, path, content_type, size, sha256) VALUES (?, ?, ?, ?, ?, ?)"
+  );
+  const info = stmt.run(conversationId, filename, filePath, contentType, size, sha256);
+  const id = Number(info?.lastInsertRowid ?? 0);
+  if (!Number.isFinite(id) || id <= 0) {
+    throw new Error("failed to insert attachment record");
+  }
+
+  try {
+    engine.memory.db.prepare(
+      "INSERT INTO attachment_audit (attachment_id, action, details, actor) VALUES (?, ?, ?, ?)"
+    ).run(
+      id,
+      "upload",
+      JSON.stringify({ filename, size, sha256, conversationId, routeLabel }),
+      actorLabel,
+    );
+  } catch (error) {}
+
+  appendAttachmentIngestEvent(
+    eventLedger,
+    "artifact.observed",
+    `Observed local attachment ${filename}`,
+    id,
+    filename,
+    contentType,
+    size,
+    conversationId,
+    sha256,
+    { routeLabel, actor: actorLabel },
+  );
+  appendAttachmentIngestEvent(
+    eventLedger,
+    "artifact.written",
+    `Stored local attachment ${filename}`,
+    id,
+    filename,
+    contentType,
+    size,
+    conversationId,
+    sha256,
+    { routeLabel, actor: actorLabel, path: filePath },
+  );
+  appendAttachmentIngestEvent(
+    eventLedger,
+    "attachment.ingest.completed",
+    `Completed local attachment ingest for ${filename}`,
+    id,
+    filename,
+    contentType,
+    size,
+    conversationId,
+    sha256,
+    { routeLabel, actor: actorLabel, path: filePath },
+  );
+
+  const row = engine.memory.db.prepare(
+    "SELECT id, conversation_id, filename, path, content_type, size, sha256, created_at FROM attachments WHERE id = ?"
+  ).get(id) as Record<string, unknown> | undefined;
+
+  return {
+    code: 200,
+    body: {
+      attachment: row ?? {
+        id,
+        conversation_id: conversationId,
+        filename,
+        path: filePath,
+        content_type: contentType,
+        size,
+        sha256,
+        created_at: new Date().toISOString(),
+      },
+    },
+  };
+}
+
 function getWorkbenchContext() {
   const cwd = process.cwd();
   return {
@@ -114,6 +399,14 @@ async function start() {
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? "", `http://${req.headers.host}`);
+
+      if (req.method === "GET" && url.pathname.startsWith("/vendor/")) {
+        return sendVendorFile(res, url.pathname);
+      }
+
+      if (req.method === "GET" && url.pathname.startsWith("/workbench-shims/")) {
+        return sendWorkbenchShimFile(res, url.pathname);
+      }
 
       if (req.method === "GET" && (url.pathname === "/workbench" || url.pathname === "/workbench/" || url.pathname === "/workbench/index.html")) {
         return sendHtml(res, await readWorkbenchHtml());
@@ -183,6 +476,12 @@ async function start() {
         const attachment = getWorkbenchAttachment(engine.memory, attachmentId);
         if (!attachment) return jsonResponse(res, 404, { error: "attachment not found" });
         return jsonResponse(res, 200, { attachment });
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/v1/workbench/attachments/import-local") {
+        const body = await readBody(req);
+        const result = await importLocalAttachmentFromBody(engine, eventLedger, body, "workbench", "workbench-import-local");
+        return jsonResponse(res, result.code, result.body);
       }
 
       if (!url.pathname.startsWith("/api/v1/")) return jsonResponse(res, 404, { error: "not found" });
@@ -366,36 +665,8 @@ async function start() {
       // Upload attachment (base64 in JSON). Returns attachment id and metadata.
       if (req.method === 'POST' && url.pathname === '/api/v1/upload') {
         const body = await readBody(req);
-        if (!body || !body.filename || !body.contentBase64) return jsonResponse(res, 400, { error: 'expected {filename, contentBase64, contentType?, conversationId?}' });
-        const uploadBase = process.env.AI_FORGE_UPLOADS_DIR || path.join(process.cwd(), 'uploads');
-        await fs.promises.mkdir(uploadBase, { recursive: true });
-        const buffer = Buffer.from(body.contentBase64, 'base64');
-        const maxBytes = Number(process.env.AI_FORGE_MAX_UPLOAD_BYTES || 20 * 1024 * 1024);
-        if (buffer.length > maxBytes) return jsonResponse(res, 413, { error: 'file too large' });
-        const safeName = String(body.filename).replace(/[^a-zA-Z0-9._-]/g, '_');
-        const savedName = `${Date.now()}-${randomBytes(6).toString('hex')}-${safeName}`;
-        const filePath = path.join(uploadBase, savedName);
-
-        // Sanitize filename for storage (prevent header injection)
-        const MAX_FILENAME = 255;
-        const originalFilename = String(body.filename || '').slice(0, MAX_FILENAME);
-        const sanitizedFilename = originalFilename.replace(/\r/g, '').replace(/\n/g, '').replace(/"/g, '\\"');
-
-        // compute sha256 fingerprint
-        const sha = createHash('sha256').update(buffer).digest('hex');
-
-        await fs.promises.writeFile(filePath, buffer);
-        const convId = body.conversationId || null;
-        const stmt = engine.memory.db.prepare(`INSERT INTO attachments (conversation_id, filename, path, content_type, size, sha256) VALUES (?, ?, ?, ?, ?, ?)`);
-        const info = stmt.run(convId, sanitizedFilename, filePath, body.contentType || null, buffer.length, sha);
-        const id = info?.lastInsertRowid ?? null;
-
-        // audit
-        try {
-          engine.memory.db.prepare('INSERT INTO attachment_audit (attachment_id, action, details, actor) VALUES (?, ?, ?, ?)').run(id, 'upload', JSON.stringify({ filename: sanitizedFilename, size: buffer.length, sha }), req.headers['x-local-token'] || 'daemon');
-        } catch (e) {}
-
-        return jsonResponse(res, 200, { id, filename: sanitizedFilename, size: buffer.length, contentType: body.contentType || null, sha256: sha });
+        const result = await importLocalAttachmentFromBody(engine, eventLedger, body, String(req.headers["x-local-token"] || "daemon"), "legacy-upload");
+        return jsonResponse(res, result.code, result.body);
       }
 
       // Download attachment bytes: /api/v1/download/:id
