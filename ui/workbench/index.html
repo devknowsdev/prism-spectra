@@ -21,6 +21,7 @@
         "preact": "/vendor/preact/dist/preact.module.js",
         "preact/hooks": "/vendor/preact/hooks/dist/hooks.module.js",
         "preact/jsx-runtime": "/vendor/preact/jsx-runtime/dist/jsxRuntime.module.js",
+        "wavesurfer.js": "/vendor/wavesurfer.js/dist/wavesurfer.esm.js",
         "wildcard": "/workbench-shims/wildcard.js"
       }
     }
@@ -699,6 +700,44 @@
       min-height: 320px;
     }
 
+    .audio-preview-shell {
+      display: grid;
+      gap: 12px;
+    }
+
+    .audio-preview-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .audio-preview-toolbar button {
+      min-width: 0;
+    }
+
+    .audio-preview-state {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .audio-preview-note {
+      color: var(--dim);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .audio-preview-waveform {
+      min-height: 120px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background:
+        linear-gradient(180deg, rgba(139, 92, 246, 0.06), rgba(10, 14, 20, 0.95)),
+        #0b0f14;
+      overflow: hidden;
+    }
+
     .filter-bar {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1358,6 +1397,17 @@
       uppy: null,
     };
 
+    const audioPreviewState = {
+      attachmentId: null,
+      loading: false,
+      ready: false,
+      status: "idle",
+      error: "",
+      loadToken: 0,
+      modulePromise: null,
+      wavesurfer: null,
+    };
+
     const viewMeta = {
       resume: {
         title: "Resume",
@@ -1455,9 +1505,228 @@
       return `/api/v1/workbench/attachments/${attachmentId}/preview`;
     }
 
+    function formatWaveformDuration(seconds) {
+      const totalSeconds = Math.max(0, Math.round(Number(seconds) || 0));
+      const hours = Math.floor(totalSeconds / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const remainingSeconds = totalSeconds % 60;
+      const minuteLabel = String(minutes).padStart(2, "0");
+      const secondLabel = String(remainingSeconds).padStart(2, "0");
+      return hours > 0
+        ? `${hours}:${minuteLabel}:${secondLabel}`
+        : `${minutes}:${secondLabel}`;
+    }
+
+    function audioPreviewElements(attachmentId) {
+      const shell = attachmentDetail.querySelector(`[data-audio-preview-shell][data-attachment-id="${attachmentId}"]`);
+      if (!(shell instanceof HTMLElement)) return null;
+
+      const waveform = shell.querySelector("[data-audio-preview-waveform]");
+      const status = shell.querySelector("[data-audio-preview-state]");
+      const loadButton = shell.querySelector('[data-attachment-action="audio-preview-load"]');
+      const playButton = shell.querySelector('[data-attachment-action="audio-preview-play-pause"]');
+      const stopButton = shell.querySelector('[data-attachment-action="audio-preview-stop"]');
+      const closeButton = shell.querySelector('[data-attachment-action="audio-preview-close"]');
+
+      if (!(waveform instanceof HTMLElement)) return null;
+      if (!(status instanceof HTMLElement)) return null;
+      if (!(loadButton instanceof HTMLButtonElement)) return null;
+      if (!(playButton instanceof HTMLButtonElement)) return null;
+      if (!(stopButton instanceof HTMLButtonElement)) return null;
+      if (!(closeButton instanceof HTMLButtonElement)) return null;
+
+      return {
+        shell,
+        waveform,
+        status,
+        loadButton,
+        playButton,
+        stopButton,
+        closeButton,
+      };
+    }
+
+    function updateAudioPreviewUi(attachmentId, state, message, { playing = false } = {}) {
+      const elements = audioPreviewElements(attachmentId);
+      if (!elements) return;
+
+      elements.status.textContent = message;
+      audioPreviewState.status = state;
+      audioPreviewState.loading = state === "loading";
+      audioPreviewState.ready = state === "ready" || state === "playing";
+
+      elements.loadButton.disabled = state === "loading";
+      elements.playButton.disabled = !(state === "ready" || state === "playing");
+      elements.stopButton.disabled = !(state === "ready" || state === "playing");
+      elements.closeButton.disabled = state === "idle" || state === "failed" || state === "closed";
+
+      elements.playButton.textContent = playing ? "Pause" : "Play";
+      if (state === "loading") {
+        elements.loadButton.textContent = "Loading waveform…";
+      } else {
+        elements.loadButton.textContent = "Load waveform preview";
+      }
+    }
+
+    function releaseAudioPreview({ keepStatusMessage = false } = {}) {
+      audioPreviewState.loadToken += 1;
+      const instance = audioPreviewState.wavesurfer;
+      audioPreviewState.wavesurfer = null;
+      audioPreviewState.loading = false;
+      audioPreviewState.ready = false;
+      audioPreviewState.error = "";
+      if (instance) {
+        try {
+          instance.destroy();
+        } catch (error) {}
+      }
+      if (!keepStatusMessage) {
+        audioPreviewState.status = "idle";
+      }
+    }
+
+    async function ensureWaveSurferModule() {
+      if (!audioPreviewState.modulePromise) {
+        audioPreviewState.modulePromise = import("wavesurfer.js").catch((error) => {
+          audioPreviewState.modulePromise = null;
+          throw error;
+        });
+      }
+      return audioPreviewState.modulePromise;
+    }
+
+    async function loadAudioWaveformPreview(attachmentId) {
+      const elements = audioPreviewElements(attachmentId);
+      if (!elements) return;
+
+      const previewUrl = elements.shell.dataset.previewUrl || attachmentPreviewUrl(attachmentId);
+      if (!previewUrl) {
+        updateAudioPreviewUi(attachmentId, "failed", "Waveform preview failed: no safe preview URL was available.");
+        return;
+      }
+
+      releaseAudioPreview({ keepStatusMessage: true });
+      audioPreviewState.status = "loading";
+      audioPreviewState.attachmentId = attachmentId;
+      const loadToken = audioPreviewState.loadToken + 1;
+      audioPreviewState.loadToken = loadToken;
+      updateAudioPreviewUi(attachmentId, "loading", "Loading waveform preview from the safe local route…");
+
+      try {
+        const module = await ensureWaveSurferModule();
+        if (audioPreviewState.loadToken !== loadToken) {
+          return;
+        }
+
+        const WaveSurfer = module.default || module.WaveSurfer || module;
+        const instance = WaveSurfer.create({
+          container: elements.waveform,
+          waveColor: "#8b5cf6",
+          progressColor: "#38bdf8",
+          cursorColor: "#fbbf24",
+          height: 120,
+          barWidth: 2,
+          barGap: 1,
+          barRadius: 2,
+          normalize: true,
+          fillParent: true,
+          interact: true,
+          dragToSeek: true,
+          autoScroll: false,
+          autoCenter: false,
+          mediaControls: false,
+        });
+
+        audioPreviewState.wavesurfer = instance;
+        instance.on("ready", (duration) => {
+          if (audioPreviewState.loadToken !== loadToken) return;
+          audioPreviewState.ready = true;
+          audioPreviewState.loading = false;
+          audioPreviewState.error = "";
+          updateAudioPreviewUi(
+            attachmentId,
+            "ready",
+            `Waveform ready · ${formatWaveformDuration(duration)} · playback stays manual.`,
+          );
+        });
+        instance.on("play", () => {
+          if (audioPreviewState.loadToken !== loadToken) return;
+          updateAudioPreviewUi(attachmentId, "playing", "Playing locally. Click Pause to stop playback.", { playing: true });
+        });
+        instance.on("pause", () => {
+          if (audioPreviewState.loadToken !== loadToken) return;
+          updateAudioPreviewUi(attachmentId, "ready", "Paused. Click Play to resume playback.");
+        });
+        instance.on("finish", () => {
+          if (audioPreviewState.loadToken !== loadToken) return;
+          updateAudioPreviewUi(attachmentId, "ready", "Playback finished. Click Play to hear it again.");
+        });
+        instance.on("error", (error) => {
+          if (audioPreviewState.loadToken !== loadToken) return;
+          audioPreviewState.error = error instanceof Error ? error.message : String(error);
+          audioPreviewState.ready = false;
+          audioPreviewState.loading = false;
+          updateAudioPreviewUi(attachmentId, "failed", `Waveform preview failed: ${audioPreviewState.error}`);
+          try {
+            instance.destroy();
+          } catch (destroyError) {}
+          if (audioPreviewState.wavesurfer === instance) {
+            audioPreviewState.wavesurfer = null;
+          }
+        });
+
+        await instance.load(previewUrl);
+      } catch (error) {
+        if (audioPreviewState.loadToken !== loadToken) return;
+        audioPreviewState.error = error instanceof Error ? error.message : String(error);
+        audioPreviewState.ready = false;
+        audioPreviewState.loading = false;
+        updateAudioPreviewUi(attachmentId, "failed", `Waveform preview failed: ${audioPreviewState.error}`);
+        if (audioPreviewState.wavesurfer) {
+          try {
+            audioPreviewState.wavesurfer.destroy();
+          } catch (destroyError) {}
+          audioPreviewState.wavesurfer = null;
+        }
+      }
+    }
+
+    async function toggleAudioWaveformPlayback(attachmentId) {
+      const instance = audioPreviewState.wavesurfer;
+      if (!instance || audioPreviewState.attachmentId !== attachmentId) return;
+      if (instance.isPlaying()) {
+        instance.pause();
+        updateAudioPreviewUi(attachmentId, "ready", "Paused. Click Play to resume playback.");
+        return;
+      }
+      await instance.playPause();
+    }
+
+    function stopAudioWaveformPreview(attachmentId) {
+      const instance = audioPreviewState.wavesurfer;
+      if (!instance || audioPreviewState.attachmentId !== attachmentId) return;
+      instance.stop();
+      updateAudioPreviewUi(attachmentId, "ready", "Stopped. Click Play to start again.");
+    }
+
+    function closeAudioWaveformPreview(attachmentId) {
+      releaseAudioPreview({ keepStatusMessage: true });
+      audioPreviewState.loading = false;
+      audioPreviewState.ready = false;
+      audioPreviewState.error = "";
+      audioPreviewState.status = "closed";
+      audioPreviewState.attachmentId = attachmentId;
+      updateAudioPreviewUi(
+        attachmentId,
+        "closed",
+        "Waveform preview closed. Click Load waveform preview to reopen it.",
+      );
+    }
+
     function renderAttachmentPreviewPanel(detail) {
       const preview = detail?.preview ?? null;
       const previewUrl = detail ? attachmentPreviewUrl(detail.id) : "";
+      releaseAudioPreview();
       if (!preview) {
         return `
           <div class="detail-block">
@@ -1480,7 +1749,21 @@
         ? preview.kind === "image"
           ? `<img class="attachment-preview-media" src="${previewUrl}" alt="Preview of ${escapeHtml(detail.displayName || detail.originalName || detail.filename || "attachment")}" loading="lazy" />`
           : preview.kind === "audio"
-            ? `<audio class="attachment-preview-media" controls preload="none" src="${previewUrl}"></audio>`
+            ? `
+              <div class="audio-preview-shell" data-audio-preview-shell data-attachment-id="${detail.id}" data-preview-url="${escapeHtml(previewUrl)}">
+                <div class="audio-preview-state" data-audio-preview-state>
+                  Waveform preview is idle. Click Load waveform preview to fetch the local audio file through the safe preview route.
+                </div>
+                <div class="audio-preview-toolbar">
+                  <button type="button" data-attachment-action="audio-preview-load" data-attachment-id="${detail.id}">Load waveform preview</button>
+                  <button type="button" data-attachment-action="audio-preview-play-pause" data-attachment-id="${detail.id}" disabled>Play</button>
+                  <button type="button" data-attachment-action="audio-preview-stop" data-attachment-id="${detail.id}" disabled>Stop</button>
+                  <button type="button" data-attachment-action="audio-preview-close" data-attachment-id="${detail.id}" disabled>Close preview</button>
+                </div>
+                <div class="audio-preview-waveform" data-audio-preview-waveform aria-label="Waveform for ${escapeHtml(detail.displayName || detail.originalName || detail.filename || "attachment")}"></div>
+                <div class="audio-preview-note">Local-only preview. Playback stays manual. Waveform loading only happens after you click the button above.</div>
+              </div>
+            `
             : preview.kind === "video"
               ? `<video class="attachment-preview-media" controls preload="none" src="${previewUrl}"></video>`
               : preview.kind === "pdf"
@@ -2636,6 +2919,26 @@
           await removeAttachmentTagRequest(attachmentId, tag);
           attachmentDetailStatus.textContent = "Tag updated.";
           await refreshProjectMemoryAfterAttachmentMutation();
+          return;
+        }
+
+        if (action === "audio-preview-load") {
+          await loadAudioWaveformPreview(attachmentId);
+          return;
+        }
+
+        if (action === "audio-preview-play-pause") {
+          await toggleAudioWaveformPlayback(attachmentId);
+          return;
+        }
+
+        if (action === "audio-preview-stop") {
+          stopAudioWaveformPreview(attachmentId);
+          return;
+        }
+
+        if (action === "audio-preview-close") {
+          closeAudioWaveformPreview(attachmentId);
           return;
         }
       } catch (error) {

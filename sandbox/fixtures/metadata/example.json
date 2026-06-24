@@ -1,0 +1,6 @@
+{
+  "kind": "sandbox-metadata",
+  "name": "example",
+  "version": 1,
+  "tags": ["local", "fixture", "deterministic"]
+}

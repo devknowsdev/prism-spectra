@@ -311,9 +311,26 @@ function isSafeAttachmentPreviewPath(candidatePath: string, baseDir: string): bo
   return resolved === baseDir || resolved.startsWith(boundary);
 }
 
+async function resolveSafeAttachmentPreviewPath(storedPath: string): Promise<{ resolvedPath: string; uploadsBase: string } | null> {
+  const uploadsBase = await fs.promises.realpath(attachmentUploadsDir());
+  const resolvedPath = await fs.promises.realpath(storedPath);
+  if (!isSafeAttachmentPreviewPath(resolvedPath, uploadsBase)) {
+    return null;
+  }
+  return { resolvedPath, uploadsBase };
+}
+
 function appendAttachmentPreviewEvent(
   eventLedger: InMemoryPrismEventLedger,
-  type: "attachment.preview.requested" | "attachment.preview.available" | "attachment.preview.blocked" | "attachment.preview.failed",
+  type:
+    | "attachment.preview.requested"
+    | "attachment.preview.available"
+    | "attachment.preview.blocked"
+    | "attachment.preview.failed"
+    | "attachment.audio.preview.opened"
+    | "attachment.audio.preview.ready"
+    | "attachment.audio.preview.closed"
+    | "attachment.audio.preview.failed",
   summary: string,
   attachmentId: number,
   filename: string | null,
@@ -393,8 +410,39 @@ async function sendWorkbenchAttachmentPreview(
   }
 
   const storedPath = String(row.path || "");
-  const uploadsBase = path.resolve(attachmentUploadsDir());
-  if (!storedPath || !isSafeAttachmentPreviewPath(storedPath, uploadsBase)) {
+  if (!storedPath) {
+    appendAttachmentPreviewEvent(
+      eventLedger,
+      "attachment.preview.blocked",
+      `Preview blocked for ${attachment.displayName || attachment.filename || `attachment ${attachmentId}`}`,
+      attachmentId,
+      attachment.displayName || attachment.filename || null,
+      attachment.preview.kind,
+      attachment.preview.status,
+      { reason: "unsafe attachment path" },
+    );
+    return jsonResponse(res, 403, { error: "preview path is not allowed", preview: attachment.preview });
+  }
+
+  let resolvedPath: string | null = null;
+  try {
+    const safePath = await resolveSafeAttachmentPreviewPath(storedPath);
+    resolvedPath = safePath?.resolvedPath ?? null;
+  } catch (error) {
+    appendAttachmentPreviewEvent(
+      eventLedger,
+      "attachment.preview.blocked",
+      `Preview blocked for ${attachment.displayName || attachment.filename || `attachment ${attachmentId}`}`,
+      attachmentId,
+      attachment.displayName || attachment.filename || null,
+      attachment.preview.kind,
+      attachment.preview.status,
+      { reason: "unsafe attachment path" },
+    );
+    return jsonResponse(res, 403, { error: "preview path is not allowed", preview: attachment.preview });
+  }
+
+  if (!resolvedPath) {
     appendAttachmentPreviewEvent(
       eventLedger,
       "attachment.preview.blocked",
@@ -409,7 +457,7 @@ async function sendWorkbenchAttachmentPreview(
   }
 
   try {
-    const stat = await fs.promises.stat(storedPath);
+    const stat = await fs.promises.stat(resolvedPath);
     if (!stat.isFile()) {
       throw new Error("attachment path is not a file");
     }
@@ -430,7 +478,8 @@ async function sendWorkbenchAttachmentPreview(
       attachment.preview.status,
       {
         contentType: mimeType,
-        path: storedPath,
+        resolved: true,
+        sizeBytes: stat.size,
       },
     );
 
@@ -440,9 +489,8 @@ async function sendWorkbenchAttachmentPreview(
       "Content-Disposition": `inline; filename="${fallback}"; filename*=UTF-8''${encoded}`,
       "X-Content-Type-Options": "nosniff",
       "Cache-Control": "no-store",
-      "Access-Control-Allow-Origin": "*",
     });
-    const stream = fs.createReadStream(storedPath);
+    const stream = fs.createReadStream(resolvedPath);
     stream.on("error", () => {
       try {
         if (!res.headersSent) {
