@@ -3112,10 +3112,12 @@ async function main() {
     assert.match(workbenchHtml, /Settings/);
     assert.match(workbenchHtml, /Conversations/);
     assert.match(workbenchHtml, /Attachments/);
+    assert.match(workbenchHtml, /Add local attachment/);
     assert.match(workbenchHtml, /Load mode/);
     assert.match(workbenchHtml, /Reset filters/);
     assert.match(workbenchHtml, /Recent events/);
     assert.match(workbenchHtml, /Related conversation/);
+    assert.ok(!/Google Drive|Dropbox|Box|Companion|Webcam/i.test(workbenchHtml));
 
     const resumeResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/resume`);
     assert.equal(resumeResponse.ok, true);
@@ -3222,6 +3224,22 @@ async function main() {
     const attachmentMetaPayload = await attachmentMetaResponse.json();
     assert.equal(Number(attachmentMetaPayload.attachment.id), attachmentId);
 
+    const workbenchImportResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments/import-local`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filename: "workbench-import.txt",
+        contentType: "text/plain",
+        contentBase64: Buffer.from("workbench local import").toString("base64"),
+        conversationId,
+      }),
+    });
+    assert.equal(workbenchImportResponse.ok, true);
+    const workbenchImportPayload = await workbenchImportResponse.json();
+    const workbenchImportId = Number(workbenchImportPayload.attachment.id);
+    assert.ok(Number.isFinite(workbenchImportId));
+    assert.equal(workbenchImportPayload.attachment.filename, "workbench-import.txt");
+
     const workbenchConversationsResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/conversations`);
     assert.equal(workbenchConversationsResponse.ok, true);
     const workbenchConversationsPayload = await workbenchConversationsResponse.json();
@@ -3240,6 +3258,7 @@ async function main() {
     const workbenchAttachmentsPayload = await workbenchAttachmentsResponse.json();
     assert.ok(Array.isArray(workbenchAttachmentsPayload.attachments));
     assert.ok(workbenchAttachmentsPayload.attachments.some((row: any) => Number(row.id) === attachmentId));
+    assert.ok(workbenchAttachmentsPayload.attachments.some((row: any) => Number(row.id) === workbenchImportId));
 
     const workbenchAttachmentDetailResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments/${attachmentId}`);
     assert.equal(workbenchAttachmentDetailResponse.ok, true);
@@ -3265,8 +3284,9 @@ async function main() {
     assert.equal(resumeAfterMemoryResponse.ok, true);
     const resumeAfterMemoryPayload = await resumeAfterMemoryResponse.json();
     assert.equal(resumeAfterMemoryPayload.resume.recentConversationCount >= 1, true);
-    assert.equal(resumeAfterMemoryPayload.resume.recentAttachmentCount >= 1, true);
+    assert.equal(resumeAfterMemoryPayload.resume.recentAttachmentCount >= 2, true);
     assert.equal(resumeAfterMemoryPayload.resume.nextSafeAction, "Review recent project memory");
+    assert.match(resumeAfterMemoryPayload.resume.lastEventSummary, /local attachment/i);
 
     const approvalsResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/approvals`);
     assert.equal(approvalsResponse.ok, true);
@@ -3290,6 +3310,7 @@ async function main() {
     assert.ok(changesPayload.changes.items.some((item: any) => item.type === "conversation.created"));
     assert.ok(changesPayload.changes.items.some((item: any) => item.type === "message.summary"));
     assert.ok(changesPayload.changes.items.some((item: any) => item.type === "attachment.summary"));
+    assert.ok(changesPayload.changes.items.some((item: any) => item.type === "attachment.ingest.completed"));
     assert.ok(String(changesPayload.changes.emptyStateMessage).length > 0);
 
     const eventsResponse = await fetch(`http://127.0.0.1:${port}/api/v1/events`);
@@ -3297,7 +3318,8 @@ async function main() {
     const eventsPayload = await eventsResponse.json();
     assert.ok(Array.isArray(eventsPayload.events));
     assert.equal(eventsPayload.count, eventsPayload.events.length);
-    assert.equal(eventsPayload.totalCount, 0);
+    assert.ok(eventsPayload.totalCount >= 4);
+    assert.ok(eventsPayload.events.some((event: any) => event.type === "attachment.ingest.completed"));
 
     const approvalsRouteResponse = await fetch(`http://127.0.0.1:${port}/api/v1/approvals`);
     assert.equal(approvalsRouteResponse.ok, true);
