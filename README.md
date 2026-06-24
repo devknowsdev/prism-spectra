@@ -1,5 +1,5 @@
 ---
-Last-Updated: 2026-06-24
+Last-Updated: 2026-06-25
 
 # prism-spectra
 
@@ -39,6 +39,9 @@ see [docs/SPECTRA_SETUP.md](docs/SPECTRA_SETUP.md).
 
 For the current test-surface split and daemon e2e stabilization notes, see
 [docs/TEST_STABILIZATION.md](docs/TEST_STABILIZATION.md).
+
+For the read-only suite AI request gateway, see
+[docs/AI_REQUEST_GATEWAY.md](docs/AI_REQUEST_GATEWAY.md).
 
 ## What this repo is for
 
@@ -84,12 +87,24 @@ Workbench launch, only when ready for a long-running local daemon:
 npm run workbench
 ```
 
+Read-only AI gateway launch, only when intentionally testing suite AI request routing:
+
+```bash
+npm run ai:gateway
+```
+
 ## Tests
 
 Run CI-safe setup validation with:
 
 ```bash
 npm run test:setup
+```
+
+Run the AI request contract test with:
+
+```bash
+npm run test:ai-request
 ```
 
 Run the existing full harness deliberately when working on daemon, workbench,
