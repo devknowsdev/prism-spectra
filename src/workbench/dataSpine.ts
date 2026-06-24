@@ -409,7 +409,7 @@ export function buildWorkbenchApprovals(options: BuildWorkbenchDataSpineOptions,
 export function buildWorkbenchResume(db: MemoryDB, options: BuildWorkbenchDataSpineOptions): WorkbenchResumeData {
   const recentCheckpoints = listRecentCheckpoints(db, 5);
   const recentConversationCollection = listWorkbenchConversations(db, 5);
-  const recentAttachmentCollection = listWorkbenchAttachments(db, 5);
+  const recentAttachmentCollection = listWorkbenchAttachments(db, 5, options.eventLedger);
   const approvals = buildWorkbenchApprovals(options);
   const changes = buildWorkbenchChanges(db, options, 12);
   const allLedgerEvents = options.eventLedger?.list() ?? [];
@@ -418,7 +418,7 @@ export function buildWorkbenchResume(db: MemoryDB, options: BuildWorkbenchDataSp
   const recentEventCount = allLedgerEvents.length;
   const lastEventSummary = lastLedgerEvent?.summary ?? "No events recorded yet.";
   const latestConversationSummary = recentConversationCollection.items[0]?.summary ?? "No conversations recorded yet.";
-  const latestAttachmentSummary = recentAttachmentCollection.items[0]?.filename ?? "No attachments recorded yet.";
+  const latestAttachmentSummary = recentAttachmentCollection.items[0]?.displayName ?? recentAttachmentCollection.items[0]?.filename ?? "No attachments recorded yet.";
 
   const resume: WorkbenchResumeData = {
     daemonStatus: options.daemonStatus ?? "healthy",

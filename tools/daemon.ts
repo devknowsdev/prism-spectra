@@ -15,6 +15,7 @@ import {
   ExecutionEngine,
   InMemoryApprovalQueue,
   InMemoryPrismEventLedger,
+  type MemoryDB,
   type PrismEventType,
   getWorkbenchAttachment,
   getWorkbenchConversation,
@@ -49,7 +50,7 @@ function jsonResponse(res: http.ServerResponse, code: number, body: unknown) {
     "Content-Type": "application/json",
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "x-local-token,content-type",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
   });
   res.end(s);
 }
@@ -113,6 +114,186 @@ function decodeBase64Strict(contentBase64: string): Buffer | null {
   const reencoded = buffer.toString("base64").replace(/=+$/, "");
   const input = normalized.replace(/=+$/, "");
   return reencoded === input ? buffer : null;
+}
+
+function normalizeAttachmentDisplayName(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const cleaned = value.replace(/[\r\n\0]+/g, " ").trim().replace(/\s+/g, " ");
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+function normalizeAttachmentTag(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const cleaned = value.replace(/\s+/g, " ").trim();
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+function attachmentRowById(db: MemoryDB["db"], attachmentId: number) {
+  return db.prepare(
+    "SELECT id, conversation_id, filename, path, content_type, size, sha256, created_at FROM attachments WHERE id = ? LIMIT 1"
+  ).get(attachmentId) as Record<string, unknown> | undefined;
+}
+
+function attachmentTagsById(db: MemoryDB["db"], attachmentId: number): string[] {
+  return (db.prepare("SELECT tag FROM attachment_tags WHERE attachment_id = ? ORDER BY created_at ASC, id ASC").all(attachmentId) as Record<string, unknown>[])
+    .map((row) => normalizeAttachmentTag(row.tag) || "")
+    .filter((tag) => tag.length > 0);
+}
+
+function appendAttachmentLedgerEvent(
+  eventLedger: InMemoryPrismEventLedger,
+  type: PrismEventType,
+  summary: string,
+  attachmentId: number,
+  filename: string | null,
+  extraMetadata: Record<string, unknown> = {},
+  severity: "info" | "low" | "medium" | "high" = "info",
+) {
+  eventLedger.append({
+    type,
+    summary,
+    severity,
+    source: type.startsWith("artifact.") ? "artifact" : "attachment",
+    relatedArtifactId: `attachment:${attachmentId}`,
+    metadata: {
+      attachmentId,
+      filename,
+      ...extraMetadata,
+    },
+  });
+}
+
+function recordAttachmentAudit(
+  engine: ExecutionEngine,
+  attachmentId: number,
+  action: string,
+  details: Record<string, unknown>,
+  actor: string,
+) {
+  try {
+    engine.memory.db.prepare("INSERT INTO attachment_audit (attachment_id, action, details, actor) VALUES (?, ?, ?, ?)")
+      .run(attachmentId, action, JSON.stringify(details), actor);
+  } catch (error) {}
+}
+
+function updateAttachmentDisplayName(
+  engine: ExecutionEngine,
+  eventLedger: InMemoryPrismEventLedger,
+  attachmentId: number,
+  displayName: unknown,
+  actor: string,
+) {
+  const current = attachmentRowById(engine.memory.db, attachmentId);
+  if (!current) {
+    return { code: 404, body: { error: "attachment not found" } };
+  }
+
+  const nextDisplayName = normalizeAttachmentDisplayName(displayName);
+  if (!nextDisplayName) {
+    return { code: 400, body: { error: "expected non-empty displayName" } };
+  }
+  if (nextDisplayName.length > 255) {
+    return { code: 400, body: { error: "displayName too long (max 255 chars)" } };
+  }
+
+  const currentDisplayName = String(current.filename || "").trim();
+  if (currentDisplayName === nextDisplayName) {
+    return { code: 200, body: { attachment: getWorkbenchAttachment(engine.memory, attachmentId, eventLedger) } };
+  }
+
+  engine.memory.db.prepare("UPDATE attachments SET filename = ? WHERE id = ?").run(nextDisplayName, attachmentId);
+  recordAttachmentAudit(engine, attachmentId, "metadata_update", { from: currentDisplayName || null, to: nextDisplayName, fields: ["displayName"] }, actor);
+  appendAttachmentLedgerEvent(
+    eventLedger,
+    "attachment.metadata.updated",
+    `Attachment display name updated to ${nextDisplayName}`,
+    attachmentId,
+    nextDisplayName,
+    { from: currentDisplayName || null, to: nextDisplayName, fields: ["displayName"], actor },
+  );
+
+  return { code: 200, body: { attachment: getWorkbenchAttachment(engine.memory, attachmentId, eventLedger) } };
+}
+
+function addAttachmentTag(
+  engine: ExecutionEngine,
+  eventLedger: InMemoryPrismEventLedger,
+  attachmentId: number,
+  tagInput: unknown,
+  actor: string,
+) {
+  const current = attachmentRowById(engine.memory.db, attachmentId);
+  if (!current) {
+    return { code: 404, body: { error: "attachment not found" } };
+  }
+
+  const tag = normalizeAttachmentTag(tagInput);
+  if (!tag) {
+    return { code: 400, body: { error: "expected non-empty tag" } };
+  }
+
+  const exists = engine.memory.db.prepare("SELECT 1 FROM attachment_tags WHERE attachment_id = ? AND tag = ? LIMIT 1").get(attachmentId, tag);
+  if (!exists) {
+    engine.memory.db.prepare("INSERT INTO attachment_tags (attachment_id, tag) VALUES (?, ?)").run(attachmentId, tag);
+    recordAttachmentAudit(engine, attachmentId, "tag_add", { tag }, actor);
+    appendAttachmentLedgerEvent(
+      eventLedger,
+      "attachment.tag.added",
+      `Attachment tag added: ${tag}`,
+      attachmentId,
+      String(current.filename || attachmentId),
+      { tag, actor },
+    );
+  }
+
+  return {
+    code: 200,
+    body: {
+      id: attachmentId,
+      tags: attachmentTagsById(engine.memory.db, attachmentId),
+      attachment: getWorkbenchAttachment(engine.memory, attachmentId, eventLedger),
+    },
+  };
+}
+
+function removeAttachmentTag(
+  engine: ExecutionEngine,
+  eventLedger: InMemoryPrismEventLedger,
+  attachmentId: number,
+  tagInput: unknown,
+  actor: string,
+) {
+  const current = attachmentRowById(engine.memory.db, attachmentId);
+  if (!current) {
+    return { code: 404, body: { error: "attachment not found" } };
+  }
+
+  const tag = normalizeAttachmentTag(tagInput);
+  if (!tag) {
+    return { code: 400, body: { error: "expected non-empty tag" } };
+  }
+
+  const result = engine.memory.db.prepare("DELETE FROM attachment_tags WHERE attachment_id = ? AND tag = ?").run(attachmentId, tag);
+  if (Number(result?.changes ?? 0) > 0) {
+    recordAttachmentAudit(engine, attachmentId, "tag_remove", { tag }, actor);
+    appendAttachmentLedgerEvent(
+      eventLedger,
+      "attachment.tag.removed",
+      `Attachment tag removed: ${tag}`,
+      attachmentId,
+      String(current.filename || attachmentId),
+      { tag, actor },
+    );
+  }
+
+  return {
+    code: 200,
+    body: {
+      id: attachmentId,
+      tags: attachmentTagsById(engine.memory.db, attachmentId),
+      attachment: getWorkbenchAttachment(engine.memory, attachmentId, eventLedger),
+    },
+  };
 }
 
 async function sendVendorFile(res: http.ServerResponse, requestPath: string) {
@@ -204,7 +385,7 @@ function appendAttachmentIngestEvent(
     type,
     summary,
     severity: type === "attachment.ingest.cancelled" ? "low" : "info",
-    source: type.startsWith("artifact.") ? "artifact" : "workbench",
+    source: type.startsWith("artifact.") ? "artifact" : "attachment",
     relatedArtifactId: attachmentId == null ? undefined : `attachment:${attachmentId}`,
     relatedConversationId: conversationId == null ? undefined : String(conversationId),
     metadata: {
@@ -467,15 +648,45 @@ async function start() {
 
       if (req.method === "GET" && url.pathname === "/api/v1/workbench/attachments") {
         const limit = Number(url.searchParams.get("limit") || 25);
-        return jsonResponse(res, 200, { attachments: listWorkbenchAttachments(engine.memory, limit) });
+        return jsonResponse(res, 200, { attachments: listWorkbenchAttachments(engine.memory, limit, eventLedger) });
       }
 
       const workbenchAttachmentMatch = url.pathname.match(/^\/api\/v1\/workbench\/attachments\/(\d+)$/);
       if (workbenchAttachmentMatch && req.method === "GET") {
         const attachmentId = Number(workbenchAttachmentMatch[1]);
-        const attachment = getWorkbenchAttachment(engine.memory, attachmentId);
+        const attachment = getWorkbenchAttachment(engine.memory, attachmentId, eventLedger);
         if (!attachment) return jsonResponse(res, 404, { error: "attachment not found" });
         return jsonResponse(res, 200, { attachment });
+      }
+
+      const workbenchAttachmentUpdateMatch = url.pathname.match(/^\/api\/v1\/workbench\/attachments\/(\d+)$/);
+      if (workbenchAttachmentUpdateMatch && req.method === "PATCH") {
+        const attachmentId = Number(workbenchAttachmentUpdateMatch[1]);
+        const body = await readBody(req);
+        const actor = String(req.headers["x-local-token"] || "workbench").trim() || "workbench";
+        if (body?.displayName == null) {
+          return jsonResponse(res, 400, { error: "expected { displayName }" });
+        }
+        const result = updateAttachmentDisplayName(engine, eventLedger, attachmentId, body.displayName, actor);
+        return jsonResponse(res, result.code, result.body);
+      }
+
+      const workbenchAttachmentTagAddMatch = url.pathname.match(/^\/api\/v1\/workbench\/attachments\/(\d+)\/tags$/);
+      if (workbenchAttachmentTagAddMatch && req.method === "POST") {
+        const attachmentId = Number(workbenchAttachmentTagAddMatch[1]);
+        const body = await readBody(req);
+        const actor = String(req.headers["x-local-token"] || "workbench").trim() || "workbench";
+        const result = addAttachmentTag(engine, eventLedger, attachmentId, body?.tag, actor);
+        return jsonResponse(res, result.code, result.body);
+      }
+
+      const workbenchAttachmentTagRemoveMatch = url.pathname.match(/^\/api\/v1\/workbench\/attachments\/(\d+)\/tags\/(.+)$/);
+      if (workbenchAttachmentTagRemoveMatch && req.method === "DELETE") {
+        const attachmentId = Number(workbenchAttachmentTagRemoveMatch[1]);
+        const actor = String(req.headers["x-local-token"] || "workbench").trim() || "workbench";
+        const tag = decodeURIComponent(workbenchAttachmentTagRemoveMatch[2] || "");
+        const result = removeAttachmentTag(engine, eventLedger, attachmentId, tag, actor);
+        return jsonResponse(res, result.code, result.body);
       }
 
       if (req.method === "POST" && url.pathname === "/api/v1/workbench/attachments/import-local") {
@@ -491,7 +702,7 @@ async function start() {
         res.writeHead(204, {
           "Access-Control-Allow-Origin": "*",
           "Access-Control-Allow-Headers": "x-local-token,content-type",
-          "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+          "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
         });
         return res.end();
       }
@@ -729,16 +940,8 @@ async function start() {
       if (addTagMatch && req.method === 'POST') {
         const attId = Number(addTagMatch[1]);
         const body = await readBody(req);
-        const tag = body?.tag ? String(body.tag).trim() : null;
-        if (!tag) return jsonResponse(res, 400, { error: 'expected { tag }' });
-        // avoid duplicates
-        const exists = engine.memory.db.prepare('SELECT 1 FROM attachment_tags WHERE attachment_id = ? AND tag = ?').get(attId, tag);
-        if (!exists) {
-          engine.memory.db.prepare('INSERT INTO attachment_tags (attachment_id, tag) VALUES (?, ?)').run(attId, tag);
-          try { engine.memory.db.prepare('INSERT INTO attachment_audit (attachment_id, action, details, actor) VALUES (?, ?, ?, ?)').run(attId, 'tag_add', JSON.stringify({ tag }), req.headers['x-local-token'] || 'daemon'); } catch (e) {}
-        }
-        const tags = (engine.memory.db.prepare('SELECT tag FROM attachment_tags WHERE attachment_id = ? ORDER BY created_at ASC').all(attId) || []).map((t:any)=>t.tag);
-        return jsonResponse(res, 200, { id: attId, tags });
+        const result = addAttachmentTag(engine, eventLedger, attId, body?.tag, String(req.headers['x-local-token'] || 'daemon'));
+        return jsonResponse(res, result.code, result.body);
       }
 
       // Remove a tag: DELETE /api/v1/attachments/:id/tags/:tag
@@ -747,10 +950,8 @@ async function start() {
         const attId = Number(delTagMatch[1]);
         const tagRaw = delTagMatch[2] || '';
         const tag = decodeURIComponent(tagRaw);
-        engine.memory.db.prepare('DELETE FROM attachment_tags WHERE attachment_id = ? AND tag = ?').run(attId, tag);
-        try { engine.memory.db.prepare('INSERT INTO attachment_audit (attachment_id, action, details, actor) VALUES (?, ?, ?, ?)').run(attId, 'tag_remove', JSON.stringify({ tag }), req.headers['x-local-token'] || 'daemon'); } catch (e) {}
-        const tags = (engine.memory.db.prepare('SELECT tag FROM attachment_tags WHERE attachment_id = ? ORDER BY created_at ASC').all(attId) || []).map((t:any)=>t.tag);
-        return jsonResponse(res, 200, { id: attId, tags });
+        const result = removeAttachmentTag(engine, eventLedger, attId, tag, String(req.headers['x-local-token'] || 'daemon'));
+        return jsonResponse(res, result.code, result.body);
       }
 
       // Rename attachment (metadata only): POST /api/v1/attachments/:id/rename
@@ -758,22 +959,8 @@ async function start() {
       if (renameMatch && req.method === 'POST') {
         const attId = Number(renameMatch[1]);
         const body = await readBody(req);
-        const filename = body?.filename ? String(body.filename).trim() : null;
-        if (!filename) return jsonResponse(res, 400, { error: 'expected { filename }' });
-        // Validate filename size and characters to prevent header injection
-        const MAX_FILENAME = 255;
-        if (filename.length > MAX_FILENAME) {
-          return jsonResponse(res, 400, { error: 'filename too long (max 255 chars)' });
-        }
-        const sanitizedFilename = filename.replace(/"/g, '\\"').replace(/\r/g, '').replace(/\n/g, '');
-        const prev = engine.memory.db.prepare('SELECT filename FROM attachments WHERE id = ?').get(attId);
-        engine.memory.db.prepare('UPDATE attachments SET filename = ? WHERE id = ?').run(sanitizedFilename, attId);
-        const row = engine.memory.db.prepare('SELECT id, conversation_id, filename, content_type, size, created_at FROM attachments WHERE id = ?').get(attId);
-        const tags = (engine.memory.db.prepare('SELECT tag FROM attachment_tags WHERE attachment_id = ? ORDER BY created_at ASC').all(attId) || []).map((t:any)=>t.tag);
-        try {
-          engine.memory.db.prepare('INSERT INTO attachment_audit (attachment_id, action, details, actor) VALUES (?, ?, ?, ?)').run(attId, 'rename', JSON.stringify({ from: prev?.filename || null, to: sanitizedFilename }), req.headers['x-local-token'] || 'daemon');
-        } catch (e) {}
-        return jsonResponse(res, 200, { attachment: { ...row, tags } });
+        const result = updateAttachmentDisplayName(engine, eventLedger, attId, body?.filename, String(req.headers['x-local-token'] || 'daemon'));
+        return jsonResponse(res, result.code, result.body);
       }
 
       // Delete attachment (removes file and DB row)

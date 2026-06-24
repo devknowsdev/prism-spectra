@@ -3003,6 +3003,15 @@ async function main() {
       .run(81, "reference", "2026-06-24T09:11:00.000Z");
     db.db.prepare("INSERT INTO attachment_audit (attachment_id, action, details, actor, created_at) VALUES (?, ?, ?, ?, ?)")
       .run(81, "upload", JSON.stringify({ filename: "notes.md", size: 42 }), "daemon", "2026-06-24T09:12:00.000Z");
+    const attachmentLedger = new InMemoryPrismEventLedger();
+    const attachmentLedgerEvent = attachmentLedger.append({
+      type: "attachment.metadata.updated",
+      summary: "Attachment display name updated to project-notes.md",
+      severity: "info",
+      source: "attachment",
+      relatedArtifactId: "attachment:81",
+      metadata: { attachmentId: 81, displayName: "project-notes.md" },
+    });
 
     const conversations = listWorkbenchConversations(db, 10);
     assert.equal(conversations.totalCount, 1);
@@ -3018,13 +3027,22 @@ async function main() {
     assert.equal(conversation?.attachments.length, 1);
     assert.equal(conversation?.metadata?.relatedArtifactId, "artifact-thread-7");
 
-    const attachments = listWorkbenchAttachments(db, 10);
+    const attachments = listWorkbenchAttachments(db, 10, attachmentLedger);
     assert.equal(attachments.totalCount, 1);
     assert.equal(attachments.items[0].id, 81);
+    assert.equal(attachments.items[0].displayName, "notes.md");
+    assert.equal(attachments.items[0].originalName, "notes.md");
+    assert.equal(attachments.items[0].sourceKind, "local");
+    assert.equal(attachments.items[0].relatedConversationIds[0], 7);
+    assert.equal(attachments.items[0].relatedCheckpointIds[0], 17);
+    assert.equal(attachments.items[0].relatedEventIds[0], attachmentLedgerEvent.id);
     assert.equal(attachments.items[0].tags[0], "reference");
+    assert.equal(attachments.items[0].metadataStatus.includes("local"), true);
     assert.equal(attachments.items[0].metadataStatus.includes("typed"), true);
+    assert.equal(attachments.items[0].metadataStatus.includes("tagged"), true);
+    assert.equal(attachments.items[0].metadata.sourceKind, "local");
 
-    const attachment = getWorkbenchAttachment(db, 81);
+    const attachment = getWorkbenchAttachment(db, 81, attachmentLedger);
     assert.ok(attachment);
     assert.equal(attachment?.relatedConversations[0].id, 7);
     assert.equal(attachment?.relatedMessages.length, 1);
@@ -3113,11 +3131,15 @@ async function main() {
     assert.match(workbenchHtml, /Conversations/);
     assert.match(workbenchHtml, /Attachments/);
     assert.match(workbenchHtml, /Add local attachment/);
+    assert.match(workbenchHtml, /Local-only boundary reminder/);
+    assert.match(workbenchHtml, /Display name/);
+    assert.match(workbenchHtml, /Add tag/);
+    assert.match(workbenchHtml, /Search/);
     assert.match(workbenchHtml, /Load mode/);
     assert.match(workbenchHtml, /Reset filters/);
     assert.match(workbenchHtml, /Recent events/);
     assert.match(workbenchHtml, /Related conversation/);
-    assert.ok(!/Google Drive|Dropbox|Box|Companion|Webcam/i.test(workbenchHtml));
+    assert.ok(!/Google Drive|Dropbox|Box|Companion|Webcam|Delete attachment|Move attachment/i.test(workbenchHtml));
 
     const resumeResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/resume`);
     assert.equal(resumeResponse.ok, true);
@@ -3186,6 +3208,54 @@ async function main() {
       body: JSON.stringify({ tag: "reference" }),
     });
     assert.equal(tagResponse.ok, true);
+
+    const workbenchTagResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments/${attachmentId}/tags`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tag: "  project   memory  " }),
+    });
+    assert.equal(workbenchTagResponse.ok, true);
+    const workbenchTagPayload = await workbenchTagResponse.json();
+    assert.ok(Array.isArray(workbenchTagPayload.tags));
+    assert.ok(workbenchTagPayload.tags.includes("project memory"));
+
+    const duplicateTagResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments/${attachmentId}/tags`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tag: "project memory" }),
+    });
+    assert.equal(duplicateTagResponse.ok, true);
+    const duplicateTagPayload = await duplicateTagResponse.json();
+    assert.equal(duplicateTagPayload.tags.filter((tag: string) => tag === "project memory").length, 1);
+
+    const emptyTagResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments/${attachmentId}/tags`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tag: "   " }),
+    });
+    assert.equal(emptyTagResponse.status, 400);
+
+    const metadataUpdateResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments/${attachmentId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ displayName: "project-notes.md" }),
+    });
+    assert.equal(metadataUpdateResponse.ok, true);
+    const metadataUpdatePayload = await metadataUpdateResponse.json();
+    assert.equal(metadataUpdatePayload.attachment.displayName, "project-notes.md");
+    assert.equal(metadataUpdatePayload.attachment.originalName, "notes.md");
+
+    const emptyMetadataResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments/${attachmentId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ displayName: "   " }),
+    });
+    assert.equal(emptyMetadataResponse.status, 400);
+
+    const removeTagResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments/${attachmentId}/tags/project%20memory`, {
+      method: "DELETE",
+    });
+    assert.equal(removeTagResponse.ok, true);
 
     const conversationsRouteResponse = await fetch(`http://127.0.0.1:${port}/api/v1/conversations`, {
       headers: { "x-local-token": token },
@@ -3265,6 +3335,12 @@ async function main() {
     const workbenchAttachmentDetailPayload = await workbenchAttachmentDetailResponse.json();
     assert.equal(Number(workbenchAttachmentDetailPayload.attachment.id), attachmentId);
     assert.equal(workbenchAttachmentDetailPayload.attachment.relatedConversations[0].id, conversationId);
+    assert.equal(workbenchAttachmentDetailPayload.attachment.displayName, "project-notes.md");
+    assert.equal(workbenchAttachmentDetailPayload.attachment.originalName, "notes.md");
+    assert.ok(Array.isArray(workbenchAttachmentDetailPayload.attachment.relatedEventIds));
+    assert.ok(workbenchAttachmentDetailPayload.attachment.relatedEventIds.length >= 1);
+    assert.ok(workbenchAttachmentDetailPayload.attachment.tags.includes("reference"));
+    assert.equal(workbenchAttachmentDetailPayload.attachment.tags.includes("project memory"), false);
 
     const postWorkbenchConversationResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/conversations`, {
       method: "POST",
@@ -3285,6 +3361,7 @@ async function main() {
     const resumeAfterMemoryPayload = await resumeAfterMemoryResponse.json();
     assert.equal(resumeAfterMemoryPayload.resume.recentConversationCount >= 1, true);
     assert.equal(resumeAfterMemoryPayload.resume.recentAttachmentCount >= 2, true);
+    assert.equal(resumeAfterMemoryPayload.resume.latestAttachmentSummary, "project-notes.md");
     assert.equal(resumeAfterMemoryPayload.resume.nextSafeAction, "Review recent project memory");
     assert.match(resumeAfterMemoryPayload.resume.lastEventSummary, /local attachment/i);
 
@@ -3311,6 +3388,9 @@ async function main() {
     assert.ok(changesPayload.changes.items.some((item: any) => item.type === "message.summary"));
     assert.ok(changesPayload.changes.items.some((item: any) => item.type === "attachment.summary"));
     assert.ok(changesPayload.changes.items.some((item: any) => item.type === "attachment.ingest.completed"));
+    assert.ok(changesPayload.changes.items.some((item: any) => item.type === "attachment.tag.added"));
+    assert.ok(changesPayload.changes.items.some((item: any) => item.type === "attachment.tag.removed"));
+    assert.ok(changesPayload.changes.items.some((item: any) => item.type === "attachment.metadata.updated"));
     assert.ok(String(changesPayload.changes.emptyStateMessage).length > 0);
 
     const eventsResponse = await fetch(`http://127.0.0.1:${port}/api/v1/events`);
@@ -3320,6 +3400,9 @@ async function main() {
     assert.equal(eventsPayload.count, eventsPayload.events.length);
     assert.ok(eventsPayload.totalCount >= 4);
     assert.ok(eventsPayload.events.some((event: any) => event.type === "attachment.ingest.completed"));
+    assert.ok(eventsPayload.events.some((event: any) => event.type === "attachment.tag.added"));
+    assert.ok(eventsPayload.events.some((event: any) => event.type === "attachment.tag.removed"));
+    assert.ok(eventsPayload.events.some((event: any) => event.type === "attachment.metadata.updated"));
 
     const approvalsRouteResponse = await fetch(`http://127.0.0.1:${port}/api/v1/approvals`);
     assert.equal(approvalsRouteResponse.ok, true);

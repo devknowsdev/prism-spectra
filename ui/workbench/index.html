@@ -588,6 +588,20 @@
       white-space: nowrap;
     }
 
+    .detail-chip-button {
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .detail-chip-button:hover,
+    .detail-chip-button:focus-visible {
+      outline: none;
+      border-color: rgba(248, 113, 113, 0.45);
+      background: rgba(248, 113, 113, 0.08);
+    }
+
     .toolbar {
       display: flex;
       align-items: center;
@@ -699,6 +713,17 @@
       border-radius: 10px;
       padding: 10px 12px;
       min-height: 40px;
+    }
+
+    .filter-control input,
+    .toolbar input {
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 10px 12px;
+      min-height: 40px;
+      min-width: 0;
     }
 
     .filter-toggle {
@@ -939,6 +964,28 @@
                 <h3 id="attachments-title">Attachments</h3>
                 <span id="attachments-status">Loading project artifacts…</span>
               </div>
+              <div class="placeholder-line" style="margin-top: -2px;">
+                <span>Local-only boundary reminder:</span>
+                <code>no delete</code>
+                <code>no move</code>
+                <code>no remote providers</code>
+                <code>no media processing</code>
+              </div>
+              <div class="filter-bar" aria-label="Attachment filters" style="margin-top: 14px;">
+                <label class="filter-control">
+                  <span>Search</span>
+                  <input id="attachment-filter-search" type="search" placeholder="Filename or display name" />
+                </label>
+                <label class="filter-control">
+                  <span>Tag</span>
+                  <input id="attachment-filter-tag" type="text" placeholder="reference" />
+                </label>
+                <label class="filter-control">
+                  <span>MIME type</span>
+                  <input id="attachment-filter-mime" type="text" placeholder="text/markdown" />
+                </label>
+                <button type="button" id="attachment-filter-reset">Reset filters</button>
+              </div>
               <div class="ingest-panel" style="margin-top: 14px;">
                 <div class="section-title">
                   <h3>Local attachment ingest</h3>
@@ -982,7 +1029,7 @@
               <div class="field-list">
                 <div class="field">
                   <div class="k">Attachment</div>
-                  <div class="v">attachment-placeholder.txt</div>
+                  <div class="v">display-name.txt <span style="color: var(--muted); font-family: var(--mono);">/ original-name.txt</span></div>
                 </div>
                 <div class="field">
                   <div class="k">MIME / size</div>
@@ -998,7 +1045,7 @@
                 </div>
                 <div class="field">
                   <div class="k">Metadata status</div>
-                  <div class="v">typed · sized · fingerprinted</div>
+                  <div class="v">local · typed · sized · fingerprinted · tagged</div>
                 </div>
                 <div class="field">
                   <div class="k">Related checkpoint / artifact</div>
@@ -1233,6 +1280,10 @@
     const attachmentDetailStatus = document.getElementById("attachment-detail-status");
     const attachmentDetailEmpty = document.getElementById("attachment-detail-empty");
     const attachmentDetail = document.getElementById("attachment-detail");
+    const attachmentFilterSearch = document.getElementById("attachment-filter-search");
+    const attachmentFilterTag = document.getElementById("attachment-filter-tag");
+    const attachmentFilterMime = document.getElementById("attachment-filter-mime");
+    const attachmentFilterReset = document.getElementById("attachment-filter-reset");
     const localAttachmentOpen = document.getElementById("local-attachment-open");
     const localAttachmentImport = document.getElementById("local-attachment-import");
     const localAttachmentClear = document.getElementById("local-attachment-clear");
@@ -1270,8 +1321,14 @@
         selectedId: null,
       },
       attachments: {
+        collection: null,
         items: [],
         selectedId: null,
+        filters: {
+          search: "",
+          tag: "",
+          mime: "",
+        },
       },
     };
 
@@ -1404,15 +1461,18 @@
     }
 
     function attachmentCardHtml(attachment, selected) {
+      const displayName = attachment.displayName || attachment.filename || `Attachment ${attachment.id}`;
+      const originalName = attachment.originalName || attachment.filename || displayName;
       const details = [
-        attachment.contentType || "unknown type",
-        attachment.size == null ? "size unknown" : `${attachment.size} bytes`,
+        attachment.mimeType || attachment.contentType || "unknown type",
+        attachment.sizeBytes == null ? (attachment.size == null ? "size unknown" : `${attachment.size} bytes`) : `${attachment.sizeBytes} bytes`,
         attachment.metadataStatus || "basic",
+        attachment.sourceKind || "local",
       ];
       return `
         <button type="button" class="memory-card${selected ? " selected" : ""}" data-attachment-id="${attachment.id}" aria-pressed="${selected ? "true" : "false"}">
-          <div class="label">${escapeHtml(attachment.label || `Attachment ${attachment.id}`)}</div>
-          <strong>${escapeHtml(attachment.filename || "attachment")}</strong>
+          <div class="label">${escapeHtml(displayName)}</div>
+          <strong>${escapeHtml(originalName)}</strong>
           <div class="meta">
             ${details.map((value) => `<span>${escapeHtml(value)}</span>`).join("")}
           </div>
@@ -1526,27 +1586,50 @@
       if (!detail) {
         attachmentDetailStatus.textContent = "No attachment selected.";
         attachmentDetail.innerHTML = "";
-        renderEmptyCard(attachmentDetailEmpty, "Select an attachment to inspect metadata, related conversations, and audit trail.");
+        renderEmptyCard(attachmentDetailEmpty, "Select an attachment to inspect metadata, related conversations, tags, and audit trail.");
         return;
       }
 
-      attachmentDetailStatus.textContent = `${detail.metadataStatus || "basic"} · ${detail.repairAvailable ? "repair available" : "repair unavailable"} · ${detail.compareAvailable ? "compare available" : "compare unavailable"}`;
+      attachmentDetailStatus.textContent = `${detail.metadataStatus || "basic"} · ${detail.repairAvailable ? "repair available" : "repair unavailable"} · ${detail.compareAvailable ? "compare available" : "compare unavailable"} · local-only`;
       attachmentDetailEmpty.innerHTML = "";
+
+      const metadataEntries = detail.metadata
+        ? Object.entries(detail.metadata).map(([key, value]) => [
+          key,
+          escapeHtml(typeof value === "string" ? value : JSON.stringify(value)),
+        ])
+        : [];
+      const relatedConversationIds = (detail.relatedConversationIds || []).join(", ") || "none";
+      const relatedCheckpointIds = (detail.relatedCheckpointIds || []).map((value) => String(value)).join(", ") || "none";
+      const relatedEventIds = (detail.relatedEventIds || []).join(", ") || "none";
+      const displayNameInputId = `attachment-display-name-${detail.id}`;
+      const tagInputId = `attachment-tag-input-${detail.id}`;
 
       attachmentDetail.innerHTML = `
         <div class="detail-stack">
           <div class="detail-block">
             <div class="section-title">
               <h4>Overview</h4>
-              <span>${escapeHtml(detail.label)}</span>
+              <span>${escapeHtml(detail.displayName || detail.label || "attachment")}</span>
             </div>
             ${renderFieldList([
-              ["Filename / path", `${escapeHtml(detail.filename)}<br /><span style="color: var(--muted); font-family: var(--mono);">${escapeHtml(detail.path || "unknown path")}</span>`],
-              ["MIME / size", `${escapeHtml(detail.contentType || "unknown")} · ${detail.size == null ? "size unknown" : `${escapeHtml(String(detail.size))} bytes`}`],
-              ["Created / updated", `${escapeHtml(detail.createdAt)} / ${escapeHtml(detail.updatedAt)}`],
+              ["Display name", `
+                <div class="toolbar" style="margin-top: 0;">
+                  <input id="${displayNameInputId}" type="text" value="${escapeHtml(detail.displayName || detail.filename || "")}" style="min-width: 240px; flex: 1 1 240px;" />
+                  <button type="button" data-attachment-action="save-display-name" data-attachment-id="${detail.id}">Save</button>
+                </div>
+              `],
+              ["Original name", `${escapeHtml(detail.originalName || detail.filename || "unknown")}`],
+              ["MIME / size", `${escapeHtml(detail.mimeType || detail.contentType || "unknown")} · ${detail.sizeBytes == null ? (detail.size == null ? "size unknown" : `${escapeHtml(String(detail.size))} bytes`) : `${escapeHtml(String(detail.sizeBytes))} bytes`}`],
+              ["Created / updated", `${escapeHtml(detail.importedAt || detail.createdAt)} / ${escapeHtml(detail.updatedAt)}`],
               ["Conversation", escapeHtml(detail.conversationTitle || (detail.conversationId == null ? "none" : `${String(detail.conversationId)}${detail.conversationTitle ? ` · ${detail.conversationTitle}` : ""}`))],
+              ["Source", escapeHtml(detail.sourceKind || "local")],
+              ["Source path", `${escapeHtml(detail.sourcePath || detail.path || "unknown path")}`],
               ["Metadata status", escapeHtml(detail.metadataStatus || "basic")],
               ["Related artifact", escapeHtml(detail.relatedArtifactId || "none")],
+              ["Related conversations", escapeHtml(relatedConversationIds)],
+              ["Related checkpoints", escapeHtml(relatedCheckpointIds)],
+              ["Related events", escapeHtml(relatedEventIds)],
             ])}
           </div>
 
@@ -1555,7 +1638,17 @@
               <h4>Tags</h4>
               <span>${escapeHtml(String((detail.tags || []).length))}</span>
             </div>
-            <div class="detail-chip-row">${renderChipRow(detail.tags || [], "untagged")}</div>
+            <div class="detail-chip-row">
+              ${(detail.tags || []).length === 0 ? `<span class="detail-chip">untagged</span>` : (detail.tags || []).map((tag) => `
+                <button type="button" class="detail-chip detail-chip-button" data-attachment-action="remove-tag" data-attachment-tag="${escapeHtml(tag)}" data-attachment-id="${detail.id}">
+                  ${escapeHtml(tag)} <span aria-hidden="true">×</span>
+                </button>
+              `).join("")}
+            </div>
+            <div class="toolbar" style="margin-top: 12px;">
+              <input id="${tagInputId}" type="text" placeholder="Add tag" style="min-width: 220px; flex: 1 1 220px;" />
+              <button type="button" data-attachment-action="add-tag" data-attachment-id="${detail.id}">Add tag</button>
+            </div>
           </div>
 
           <div class="detail-block">
@@ -1616,6 +1709,14 @@
 
           <div class="detail-block">
             <div class="section-title">
+              <h4>Metadata</h4>
+              <span>${escapeHtml(detail.metadata ? "available" : "none")}</span>
+            </div>
+            ${metadataEntries.length === 0 ? `<div class="empty">No metadata recorded for this attachment.</div>` : renderFieldList(metadataEntries)}
+          </div>
+
+          <div class="detail-block">
+            <div class="section-title">
               <h4>Audit trail</h4>
               <span>${escapeHtml(String(detail.auditTrail.length))}</span>
             </div>
@@ -1644,6 +1745,94 @@
           </div>
         </div>
       `;
+    }
+
+    function normalizeAttachmentFilterText(value) {
+      return String(value || "").trim().toLowerCase();
+    }
+
+    function attachmentMatchesFilters(attachment) {
+      const search = normalizeAttachmentFilterText(memoryState.attachments.filters.search);
+      const tag = normalizeAttachmentFilterText(memoryState.attachments.filters.tag);
+      const mime = normalizeAttachmentFilterText(memoryState.attachments.filters.mime);
+      const haystack = [
+        attachment.displayName,
+        attachment.originalName,
+        attachment.filename,
+        attachment.path,
+        attachment.sourcePath,
+        attachment.mimeType,
+        attachment.contentType,
+      ].map(normalizeAttachmentFilterText).join(" ");
+      const tagMatch = tag.length === 0 || (attachment.tags || []).some((item) => normalizeAttachmentFilterText(item).includes(tag));
+      const mimeMatch = mime.length === 0 || normalizeAttachmentFilterText(attachment.mimeType || attachment.contentType || "").includes(mime);
+      const searchMatch = search.length === 0 || haystack.includes(search);
+      return tagMatch && mimeMatch && searchMatch;
+    }
+
+    function filteredAttachmentsFromCollection(collection) {
+      const items = Array.isArray(collection?.items) ? collection.items : [];
+      return items.filter(attachmentMatchesFilters);
+    }
+
+    function rerenderAttachmentsWithCurrentFilters() {
+      if (!memoryState.attachments.collection) {
+        return;
+      }
+      renderAttachmentCollection(memoryState.attachments.collection);
+    }
+
+    function syncAttachmentFiltersFromControls() {
+      memoryState.attachments.filters.search = attachmentFilterSearch?.value || "";
+      memoryState.attachments.filters.tag = attachmentFilterTag?.value || "";
+      memoryState.attachments.filters.mime = attachmentFilterMime?.value || "";
+      rerenderAttachmentsWithCurrentFilters();
+    }
+
+    async function refreshProjectMemoryAfterAttachmentMutation() {
+      await Promise.all([
+        loadAttachments(),
+        loadConversations(),
+        loadResume(),
+        loadChanges(),
+      ]);
+    }
+
+    async function updateAttachmentDisplayNameRequest(attachmentId, displayName) {
+      const response = await fetch(`/api/v1/workbench/attachments/${attachmentId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ displayName }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || `HTTP ${response.status}`);
+      }
+      return payload;
+    }
+
+    async function addAttachmentTagRequest(attachmentId, tag) {
+      const response = await fetch(`/api/v1/workbench/attachments/${attachmentId}/tags`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tag }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || `HTTP ${response.status}`);
+      }
+      return payload;
+    }
+
+    async function removeAttachmentTagRequest(attachmentId, tag) {
+      const response = await fetch(`/api/v1/workbench/attachments/${attachmentId}/tags/${encodeURIComponent(tag)}`, {
+        method: "DELETE",
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || `HTTP ${response.status}`);
+      }
+      return payload;
     }
 
     async function loadConversationDetail(conversationId) {
@@ -1716,14 +1905,24 @@
     }
 
     function renderAttachmentCollection(collection) {
-      const items = Array.isArray(collection?.items) ? collection.items : [];
-      memoryState.attachments.items = items;
+      const items = filteredAttachmentsFromCollection(collection);
+      const allItems = Array.isArray(collection?.items) ? collection.items : [];
+      memoryState.attachments.collection = collection || null;
+      memoryState.attachments.items = allItems;
       attachmentsStatus.textContent = collection
-        ? `${collection.count} visible · ${collection.totalCount} total`
+        ? `${items.length} visible · ${collection.totalCount} total`
         : "Empty placeholder";
 
-      if (items.length === 0) {
+      if (allItems.length === 0) {
         renderEmptyCard(attachmentsEmpty, collection?.emptyStateMessage || "No attachments are available yet.");
+        attachmentsList.innerHTML = "";
+        renderAttachmentDetailPanel(null);
+        memoryState.attachments.selectedId = null;
+        return null;
+      }
+
+      if (items.length === 0) {
+        renderEmptyCard(attachmentsEmpty, "No attachments match the current filters.");
         attachmentsList.innerHTML = "";
         renderAttachmentDetailPanel(null);
         memoryState.attachments.selectedId = null;
@@ -2288,6 +2487,59 @@
       capFilterBoundary.value = "";
       capFilterHeavyExpensive.checked = false;
       syncCapabilityFilters();
+    });
+
+    attachmentFilterSearch?.addEventListener("input", syncAttachmentFiltersFromControls);
+    attachmentFilterTag?.addEventListener("input", syncAttachmentFiltersFromControls);
+    attachmentFilterMime?.addEventListener("input", syncAttachmentFiltersFromControls);
+    attachmentFilterReset?.addEventListener("click", () => {
+      if (attachmentFilterSearch) attachmentFilterSearch.value = "";
+      if (attachmentFilterTag) attachmentFilterTag.value = "";
+      if (attachmentFilterMime) attachmentFilterMime.value = "";
+      syncAttachmentFiltersFromControls();
+    });
+
+    attachmentDetail?.addEventListener("click", async (event) => {
+      const target = event.target instanceof Element ? event.target.closest("button[data-attachment-action]") : null;
+      if (!target) return;
+      const action = target.getAttribute("data-attachment-action");
+      const attachmentId = Number(target.getAttribute("data-attachment-id"));
+      if (!Number.isFinite(attachmentId)) return;
+
+      try {
+        if (action === "save-display-name") {
+          const input = attachmentDetail.querySelector(`#attachment-display-name-${attachmentId}`);
+          const nextName = input instanceof HTMLInputElement ? input.value : "";
+          attachmentDetailStatus.textContent = "Saving display name…";
+          await updateAttachmentDisplayNameRequest(attachmentId, nextName);
+          attachmentDetailStatus.textContent = "Display name updated.";
+          await refreshProjectMemoryAfterAttachmentMutation();
+          return;
+        }
+
+        if (action === "add-tag") {
+          const input = attachmentDetail.querySelector(`#attachment-tag-input-${attachmentId}`);
+          const nextTag = input instanceof HTMLInputElement ? input.value : "";
+          attachmentDetailStatus.textContent = "Adding tag…";
+          await addAttachmentTagRequest(attachmentId, nextTag);
+          if (input instanceof HTMLInputElement) input.value = "";
+          attachmentDetailStatus.textContent = "Tag updated.";
+          await refreshProjectMemoryAfterAttachmentMutation();
+          return;
+        }
+
+        if (action === "remove-tag") {
+          const tag = target.getAttribute("data-attachment-tag") || "";
+          if (!tag) return;
+          attachmentDetailStatus.textContent = "Removing tag…";
+          await removeAttachmentTagRequest(attachmentId, tag);
+          attachmentDetailStatus.textContent = "Tag updated.";
+          await refreshProjectMemoryAfterAttachmentMutation();
+          return;
+        }
+      } catch (error) {
+        attachmentDetailStatus.textContent = `Attachment update failed: ${error instanceof Error ? error.message : String(error)}`;
+      }
     });
 
     localAttachmentOpen?.addEventListener("click", () => {

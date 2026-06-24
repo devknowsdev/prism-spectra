@@ -360,7 +360,7 @@ export const seedCapabilityManifests: readonly CapabilityManifest[] = [
   {
     id: "uppy.attachment.ingest",
     title: "Uppy Attachment Ingest",
-    description: "Local-only attachment ingest capability for explicit preview-and-import flows in the Spectra workbench.",
+    description: "Local-only attachment ingest capability for explicit preview-and-import flows, plus safe local metadata and tag edits in the Spectra workbench.",
     category: "attachment",
     source: {
       package: "@uppy/core + @uppy/drag-drop",
@@ -397,8 +397,8 @@ export const seedCapabilityManifests: readonly CapabilityManifest[] = [
     },
     io: {
       inputTypes: ["file", "attachment"],
-      outputTypes: ["attachment-record", "preview-card", "import-event"],
-      sideEffects: ["reads_local_files", "writes_attachment_records", "emits_ingest_events"],
+      outputTypes: ["attachment-record", "preview-card", "import-event", "attachment-metadata", "attachment-tags"],
+      sideEffects: ["reads_local_files", "writes_attachment_records", "updates_attachment_metadata", "updates_attachment_tags", "emits_ingest_events"],
     },
     ui: {
       surfaces: ["attachments", "command_palette", "resume", "approvals"],
@@ -410,6 +410,9 @@ export const seedCapabilityManifests: readonly CapabilityManifest[] = [
         "attachment.ingest.previewed",
         "attachment.ingest.cancelled",
         "attachment.ingest.completed",
+        "attachment.tag.added",
+        "attachment.tag.removed",
+        "attachment.metadata.updated",
         "artifact.observed",
         "artifact.written",
       ],
@@ -419,10 +422,15 @@ export const seedCapabilityManifests: readonly CapabilityManifest[] = [
     },
     commands: {
       cli: ["prism workbench attachments import-local"],
-      api: ["POST /api/v1/workbench/attachments/import-local"],
+      api: [
+        "POST /api/v1/workbench/attachments/import-local",
+        "PATCH /api/v1/workbench/attachments/:id",
+        "POST /api/v1/workbench/attachments/:id/tags",
+        "DELETE /api/v1/workbench/attachments/:id/tags/:tag",
+      ],
     },
     tests: {
-      required: ["manifest-validation", "registry-rejection", "local-ingest-route-contract"],
+      required: ["manifest-validation", "registry-rejection", "local-ingest-route-contract", "attachment-metadata-contract", "attachment-tag-contract"],
       fixtureTypes: ["attachment-file", "preview-card"],
     },
   },
