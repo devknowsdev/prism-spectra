@@ -31,6 +31,23 @@ The `uppy.attachment.ingest` manifest remains the guardrail for this capability.
 - `remoteRequired`: `false`
 - `sendsUserDataOffMachine`: `false`
 
+The same manifest now covers the safe local metadata/tag update routes that support the workbench surface:
+
+- `PATCH /api/v1/workbench/attachments/:id`
+- `POST /api/v1/workbench/attachments/:id/tags`
+- `DELETE /api/v1/workbench/attachments/:id/tags/:tag`
+
+## Vendor Shim Audit
+
+The workbench ships a small set of local shim files under `ui/workbench/vendor-shims/` so the browser shell can resolve the import shapes Uppy expects without adding more dependencies.
+
+- `lodash-throttle.js` - original Prism glue that reproduces the throttle behavior Uppy needs
+- `mime-match.js` - original Prism glue for MIME pattern matching
+- `namespace-emitter.js` - original Prism glue for the namespaced event emitter interface
+- `wildcard.js` - original Prism glue for wildcard key matching
+
+These files are project-authored compatibility shims, not copied vendor source. They do not currently carry separate attribution text because they were written locally for this workbench bundle. If bundling or package exports change later, remove them and replace the import-map entries with direct package resolutions or a bundler-generated equivalent.
+
 ## Daemon Behavior
 
 The new local ingest route:
