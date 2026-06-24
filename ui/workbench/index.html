@@ -679,6 +679,26 @@
       padding: 2px 6px;
     }
 
+    .preview-panel-surface {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(10, 14, 20, 0.8);
+      padding: 12px;
+      overflow: hidden;
+    }
+
+    .attachment-preview-media {
+      display: block;
+      width: 100%;
+      max-height: 420px;
+      border-radius: 12px;
+      background: #0b0f14;
+    }
+
+    .attachment-preview-object {
+      min-height: 320px;
+    }
+
     .filter-bar {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1431,6 +1451,77 @@
       `;
     }
 
+    function attachmentPreviewUrl(attachmentId) {
+      return `/api/v1/workbench/attachments/${attachmentId}/preview`;
+    }
+
+    function renderAttachmentPreviewPanel(detail) {
+      const preview = detail?.preview ?? null;
+      const previewUrl = detail ? attachmentPreviewUrl(detail.id) : "";
+      if (!preview) {
+        return `
+          <div class="detail-block">
+            <div class="section-title">
+              <h4>Preview</h4>
+              <span>Preview unavailable</span>
+            </div>
+            <div class="empty">Preview metadata is unavailable for this attachment.</div>
+          </div>
+        `;
+      }
+
+      const riskNotes = Array.isArray(preview.riskNotes) && preview.riskNotes.length > 0
+        ? preview.riskNotes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")
+        : "<li>No extra preview risk notes.</li>";
+      const unavailableMessage = preview.kind === "text"
+        ? "Text preview will be enabled when a safe text preview route exists."
+        : "Preview will be enabled when artifact storage is available.";
+      const previewFrame = preview.status === "available"
+        ? preview.kind === "image"
+          ? `<img class="attachment-preview-media" src="${previewUrl}" alt="Preview of ${escapeHtml(detail.displayName || detail.originalName || detail.filename || "attachment")}" loading="lazy" />`
+          : preview.kind === "audio"
+            ? `<audio class="attachment-preview-media" controls preload="none" src="${previewUrl}"></audio>`
+            : preview.kind === "video"
+              ? `<video class="attachment-preview-media" controls preload="none" src="${previewUrl}"></video>`
+              : preview.kind === "pdf"
+                ? `<object class="attachment-preview-media attachment-preview-object" data="${previewUrl}" type="application/pdf">
+                    <div class="empty">PDF preview is available, but this browser does not render embedded PDFs.</div>
+                  </object>`
+                : `<div class="empty">Preview is available, but this attachment kind does not render inline yet.</div>`
+        : `<div class="empty">${escapeHtml(preview.reason || unavailableMessage)}</div>`;
+
+      return `
+        <div class="detail-block">
+          <div class="section-title">
+            <h4>Preview</h4>
+            <span>${escapeHtml(preview.label || "Preview")}</span>
+          </div>
+          ${(() => {
+            const previewSourceLabel = preview.status === "available"
+              ? "route"
+              : preview.source === "unknown"
+                ? "unknown"
+                : "metadata";
+            return renderFieldList([
+              ["Kind", escapeHtml(preview.kind)],
+              ["Status", escapeHtml(preview.status)],
+              ["Source", escapeHtml(previewSourceLabel)],
+              ["Safe inline", escapeHtml(preview.safeToRenderInline ? "yes" : "no")],
+              ["Requires tool", escapeHtml(preview.requiresExternalTool ? "yes" : "no")],
+              ["Requires user action", escapeHtml(preview.requiresUserAction ? "yes" : "no")],
+              ["Capability hook", escapeHtml(preview.capabilityId || "none")],
+              ["Reason", escapeHtml(preview.reason || "none")],
+            ]);
+          })()}
+          <div class="preview-panel-surface" style="margin-top: 12px;">${previewFrame}</div>
+          <div class="risk" style="margin-top: 12px;">
+            <strong style="color: var(--text);">Preview risk notes</strong>
+            <ul style="margin: 8px 0 0 18px; padding: 0; display: grid; gap: 4px;">${riskNotes}</ul>
+          </div>
+        </div>
+      `;
+    }
+
     function renderChipRow(values, emptyLabel = "none") {
       if (!values || values.length === 0) {
         return `<span class="detail-chip">${escapeHtml(emptyLabel)}</span>`;
@@ -1468,6 +1559,7 @@
         attachment.sizeBytes == null ? (attachment.size == null ? "size unknown" : `${attachment.size} bytes`) : `${attachment.sizeBytes} bytes`,
         attachment.metadataStatus || "basic",
         attachment.sourceKind || "local",
+        attachment.preview ? `${attachment.preview.kind} preview · ${attachment.preview.status}` : "preview unknown",
       ];
       return `
         <button type="button" class="memory-card${selected ? " selected" : ""}" data-attachment-id="${attachment.id}" aria-pressed="${selected ? "true" : "false"}">
@@ -1590,7 +1682,7 @@
         return;
       }
 
-      attachmentDetailStatus.textContent = `${detail.metadataStatus || "basic"} · ${detail.repairAvailable ? "repair available" : "repair unavailable"} · ${detail.compareAvailable ? "compare available" : "compare unavailable"} · local-only`;
+      attachmentDetailStatus.textContent = `${detail.metadataStatus || "basic"} · ${detail.preview?.status || "preview unavailable"} ${detail.preview?.kind ? `(${detail.preview.kind})` : ""} · ${detail.repairAvailable ? "repair available" : "repair unavailable"} · ${detail.compareAvailable ? "compare available" : "compare unavailable"} · local-only`;
       attachmentDetailEmpty.innerHTML = "";
 
       const metadataEntries = detail.metadata
@@ -1626,6 +1718,9 @@
               ["Source", escapeHtml(detail.sourceKind || "local")],
               ["Source path", `${escapeHtml(detail.sourcePath || detail.path || "unknown path")}`],
               ["Metadata status", escapeHtml(detail.metadataStatus || "basic")],
+              ["Preview status", escapeHtml(detail.preview?.status || "unknown")],
+              ["Preview kind", escapeHtml(detail.preview?.kind || "unknown")],
+              ["Preview source", escapeHtml(detail.preview?.status === "available" ? "route" : detail.preview?.source === "unknown" ? "unknown" : "metadata")],
               ["Related artifact", escapeHtml(detail.relatedArtifactId || "none")],
               ["Related conversations", escapeHtml(relatedConversationIds)],
               ["Related checkpoints", escapeHtml(relatedCheckpointIds)],
@@ -1706,6 +1801,8 @@
               </div>
             `}
           </div>
+
+          ${renderAttachmentPreviewPanel(detail)}
 
           <div class="detail-block">
             <div class="section-title">
@@ -2043,6 +2140,10 @@
               <div class="placeholder-line" style="margin-top: 6px;">
                 <span>${escapeHtml(attachment.conversationTitle || (attachment.conversationId == null ? "no conversation" : `conversation ${attachment.conversationId}`))}</span>
                 <span>artifact ${escapeHtml(attachment.relatedArtifactId || "none")}</span>
+              </div>
+              <div class="placeholder-line" style="margin-top: 6px;">
+                <span>preview ${escapeHtml(attachment.preview?.kind || "unknown")} · ${escapeHtml(attachment.preview?.status || "unknown")}</span>
+                <span>${escapeHtml(attachment.preview?.label || "Preview unavailable")}</span>
               </div>
             </div>
           </div>

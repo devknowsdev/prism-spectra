@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { ExecutionEngine } from "../src/engine/executionEngine.js";
 import { TaskGraph } from "../src/taskGraph/graph.js";
@@ -42,6 +43,7 @@ import {
   InMemoryPrismEventLedger,
   getWorkbenchAttachment,
   getWorkbenchConversation,
+  deriveAttachmentPreviewSummary,
   buildWorkbenchApprovals,
   buildWorkbenchChanges,
   buildWorkbenchResume,
@@ -3072,6 +3074,94 @@ async function main() {
     db.close();
   });
 
+  await test("attachment preview summaries stay conservative and metadata-driven", async () => {
+    const imagePreview = deriveAttachmentPreviewSummary({
+      displayName: "cover.png",
+      originalName: "cover.png",
+      mimeType: "image/png",
+      sizeBytes: 1024,
+      sourcePath: "uploads/cover.png",
+    });
+    assert.equal(imagePreview.kind, "image");
+    assert.equal(imagePreview.status, "available");
+    assert.equal(imagePreview.safeToRenderInline, true);
+    assert.equal(imagePreview.requiresExternalTool, false);
+    assert.equal(imagePreview.requiresUserAction, false);
+    assert.equal(imagePreview.capabilityId, "sharp.image.thumbnail");
+
+    const textPreview = deriveAttachmentPreviewSummary({
+      displayName: "notes.md",
+      originalName: "notes.md",
+      mimeType: "text/markdown",
+      sizeBytes: 2048,
+      sourcePath: "uploads/notes.md",
+    });
+    assert.equal(textPreview.kind, "text");
+    assert.equal(textPreview.status, "unavailable");
+    assert.equal(textPreview.safeToRenderInline, false);
+    assert.equal(textPreview.reason?.includes("safe text preview route"), true);
+
+    const audioPreview = deriveAttachmentPreviewSummary({
+      displayName: "clip.mp3",
+      originalName: "clip.mp3",
+      mimeType: "audio/mpeg",
+      sizeBytes: 4096,
+      sourcePath: "uploads/clip.mp3",
+    });
+    assert.equal(audioPreview.kind, "audio");
+    assert.equal(audioPreview.status, "available");
+    assert.equal(audioPreview.capabilityId, "wavesurfer.audio.preview");
+
+    const videoPreview = deriveAttachmentPreviewSummary({
+      displayName: "clip.mp4",
+      originalName: "clip.mp4",
+      mimeType: "video/mp4",
+      sizeBytes: 4096,
+      sourcePath: "uploads/clip.mp4",
+    });
+    assert.equal(videoPreview.kind, "video");
+    assert.equal(videoPreview.status, "available");
+    assert.equal(videoPreview.capabilityId, "ffmpeg.video.clip");
+
+    const pdfPreview = deriveAttachmentPreviewSummary({
+      displayName: "guide.pdf",
+      originalName: "guide.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 4096,
+      sourcePath: "uploads/guide.pdf",
+    });
+    assert.equal(pdfPreview.kind, "pdf");
+    assert.equal(pdfPreview.status, "available");
+
+    const unknownPreview = deriveAttachmentPreviewSummary({
+      displayName: "archive.bin",
+      originalName: "archive.bin",
+      mimeType: "application/octet-stream",
+      sizeBytes: 1024,
+      sourcePath: "uploads/archive.bin",
+    });
+    assert.ok(unknownPreview.kind === "binary" || unknownPreview.kind === "unknown");
+    assert.equal(unknownPreview.status === "unsupported" || unknownPreview.status === "unavailable", true);
+
+    const largePreview = deriveAttachmentPreviewSummary({
+      displayName: "bulk.pdf",
+      originalName: "bulk.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 8 * 1024 * 1024,
+      sourcePath: "uploads/bulk.pdf",
+    });
+    assert.ok(largePreview.riskNotes.some((note) => note.toLowerCase().includes("large")));
+
+    const missingMimePreview = deriveAttachmentPreviewSummary({
+      displayName: "untitled",
+      originalName: "untitled",
+      mimeType: null,
+      sizeBytes: null,
+      sourcePath: "uploads/untitled",
+    });
+    assert.ok(typeof missingMimePreview.kind === "string");
+  });
+
   await test("e2e: daemon execute-graph and rollback via API", async () => {
     // spawn the daemon in a temporary cwd so it uses an isolated .demo/work
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "aiforge-e2e-"));
@@ -3139,7 +3229,14 @@ async function main() {
     assert.match(workbenchHtml, /Reset filters/);
     assert.match(workbenchHtml, /Recent events/);
     assert.match(workbenchHtml, /Related conversation/);
-    assert.ok(!/Google Drive|Dropbox|Box|Companion|Webcam|Delete attachment|Move attachment/i.test(workbenchHtml));
+    assert.match(workbenchHtml, /Preview/);
+    const attachmentsSectionStart = workbenchHtml.indexOf('<section class="view" data-section="attachments"');
+    const attachmentsSectionEnd = workbenchHtml.indexOf('<section class="view" data-section="approvals"');
+    const attachmentsSection = attachmentsSectionStart >= 0 && attachmentsSectionEnd > attachmentsSectionStart
+      ? workbenchHtml.slice(attachmentsSectionStart, attachmentsSectionEnd)
+      : workbenchHtml;
+    assert.ok(!/Google Drive|Dropbox|Box|Companion|Webcam|Delete attachment|Move attachment|autoplay|file:\/\//i.test(attachmentsSection));
+    assert.ok(!/wavesurfer|sharp|ffmpeg/i.test(attachmentsSection));
 
     const resumeResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/resume`);
     assert.equal(resumeResponse.ok, true);
@@ -3337,10 +3434,56 @@ async function main() {
     assert.equal(workbenchAttachmentDetailPayload.attachment.relatedConversations[0].id, conversationId);
     assert.equal(workbenchAttachmentDetailPayload.attachment.displayName, "project-notes.md");
     assert.equal(workbenchAttachmentDetailPayload.attachment.originalName, "notes.md");
+    assert.ok(workbenchAttachmentDetailPayload.attachment.preview);
+    assert.equal(workbenchAttachmentDetailPayload.attachment.preview.kind, "text");
+    assert.equal(workbenchAttachmentDetailPayload.attachment.preview.status, "unavailable");
     assert.ok(Array.isArray(workbenchAttachmentDetailPayload.attachment.relatedEventIds));
     assert.ok(workbenchAttachmentDetailPayload.attachment.relatedEventIds.length >= 1);
     assert.ok(workbenchAttachmentDetailPayload.attachment.tags.includes("reference"));
     assert.equal(workbenchAttachmentDetailPayload.attachment.tags.includes("project memory"), false);
+
+    const imageUploadResponse = await fetch(`http://127.0.0.1:${port}/api/v1/upload`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-local-token": token },
+      body: JSON.stringify({
+        filename: "preview.png",
+        contentType: "image/png",
+        contentBase64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=",
+        conversationId,
+      }),
+    });
+    assert.equal(imageUploadResponse.ok, true);
+    const imageUploadPayload = await imageUploadResponse.json();
+    const imageAttachmentId = Number(imageUploadPayload.id);
+    assert.ok(Number.isFinite(imageAttachmentId));
+
+    const imagePreviewResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments/${imageAttachmentId}/preview`);
+    assert.equal(imagePreviewResponse.ok, true);
+    assert.ok((imagePreviewResponse.headers.get("content-type") || "").includes("image/png"));
+    assert.ok((imagePreviewResponse.headers.get("content-disposition") || "").includes("inline"));
+    assert.ok((await imagePreviewResponse.arrayBuffer()).byteLength > 0);
+
+    const imagePreviewPayloadResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments/${imageAttachmentId}`);
+    assert.equal(imagePreviewPayloadResponse.ok, true);
+    const imagePreviewPayload = await imagePreviewPayloadResponse.json();
+    assert.equal(imagePreviewPayload.attachment.preview.kind, "image");
+    assert.equal(imagePreviewPayload.attachment.preview.status, "available");
+
+    const previewDb = new DatabaseSync(path.join(tmp, ".demo", "daemon.db"));
+    const escapePath = path.join(tmp, "escape-preview.txt");
+    fs.writeFileSync(escapePath, "escape preview");
+    previewDb.prepare("UPDATE attachments SET path = ? WHERE id = ?").run(escapePath, imageAttachmentId);
+    previewDb.close();
+
+    const escapedPreviewResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments/${imageAttachmentId}/preview`);
+    assert.equal(escapedPreviewResponse.status, 403);
+    const escapedPreviewPayload = await escapedPreviewResponse.json();
+    assert.match(String(escapedPreviewPayload.error || ""), /preview path is not allowed/i);
+
+    const unsupportedPreviewResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments/${attachmentId}/preview`);
+    assert.equal(unsupportedPreviewResponse.status, 415);
+    const unsupportedPreviewPayload = await unsupportedPreviewResponse.json();
+    assert.match(String(unsupportedPreviewPayload.error || ""), /safe text preview route/i);
 
     const postWorkbenchConversationResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/conversations`, {
       method: "POST",
@@ -3391,6 +3534,9 @@ async function main() {
     assert.ok(changesPayload.changes.items.some((item: any) => item.type === "attachment.tag.added"));
     assert.ok(changesPayload.changes.items.some((item: any) => item.type === "attachment.tag.removed"));
     assert.ok(changesPayload.changes.items.some((item: any) => item.type === "attachment.metadata.updated"));
+    assert.ok(changesPayload.changes.items.some((item: any) => item.type === "attachment.preview.requested"));
+    assert.ok(changesPayload.changes.items.some((item: any) => item.type === "attachment.preview.available"));
+    assert.ok(changesPayload.changes.items.some((item: any) => item.type === "attachment.preview.blocked"));
     assert.ok(String(changesPayload.changes.emptyStateMessage).length > 0);
 
     const eventsResponse = await fetch(`http://127.0.0.1:${port}/api/v1/events`);
@@ -3403,6 +3549,9 @@ async function main() {
     assert.ok(eventsPayload.events.some((event: any) => event.type === "attachment.tag.added"));
     assert.ok(eventsPayload.events.some((event: any) => event.type === "attachment.tag.removed"));
     assert.ok(eventsPayload.events.some((event: any) => event.type === "attachment.metadata.updated"));
+    assert.ok(eventsPayload.events.some((event: any) => event.type === "attachment.preview.requested"));
+    assert.ok(eventsPayload.events.some((event: any) => event.type === "attachment.preview.available"));
+    assert.ok(eventsPayload.events.some((event: any) => event.type === "attachment.preview.blocked"));
 
     const approvalsRouteResponse = await fetch(`http://127.0.0.1:${port}/api/v1/approvals`);
     assert.equal(approvalsRouteResponse.ok, true);
