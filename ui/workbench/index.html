@@ -482,6 +482,95 @@
       background: var(--panel-3);
     }
 
+    .filter-bar {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin: 14px 0 12px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(22, 27, 34, 0.82);
+    }
+
+    .filter-control,
+    .filter-toggle {
+      display: grid;
+      gap: 6px;
+      align-content: start;
+    }
+
+    .filter-control span,
+    .filter-toggle span {
+      color: var(--dim);
+      font-size: 11px;
+      font-family: var(--mono);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .filter-control select {
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 10px 12px;
+      min-height: 40px;
+    }
+
+    .filter-toggle {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 10px;
+      padding-top: 22px;
+      color: var(--text);
+      font-size: 13px;
+    }
+
+    .filter-toggle input {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+    }
+
+    .timeline-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .timeline-card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel-2);
+      padding: 14px;
+    }
+
+    .timeline-topline {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .timeline-topline strong {
+      font-size: 14px;
+    }
+
+    .timeline-topline span {
+      color: var(--dim);
+      font-size: 11px;
+      font-family: var(--mono);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      white-space: nowrap;
+    }
+
+    .timeline-card .field {
+      grid-template-columns: 150px minmax(0, 1fr);
+    }
+
     .sr-only {
       position: absolute;
       width: 1px;
@@ -503,6 +592,9 @@
       .status-pills { justify-content: flex-start; }
       .content { padding: 16px; }
       .meta-grid, .field, .setting { grid-template-columns: 1fr; }
+      .filter-bar { grid-template-columns: 1fr; }
+      .filter-toggle { padding-top: 0; }
+      .timeline-card .field { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -557,32 +649,29 @@
             <div class="card">
               <div class="section-title">
                 <h3 id="resume-title">Resume</h3>
-                <span>Static placeholders for now</span>
+                <span id="resume-status">Loading read-only workspace snapshot…</span>
               </div>
-              <div class="meta-grid">
-                <div class="meta">
-                  <div class="k">Current project</div>
-                  <div class="v">Prism Spectra workspace placeholder</div>
-                </div>
-                <div class="meta">
-                  <div class="k">Last activity</div>
-                  <div class="v">Awaiting daemon state projection</div>
-                </div>
-                <div class="meta">
-                  <div class="k">Pending approvals</div>
-                  <div class="v">None yet, approval queue will appear here</div>
-                </div>
-                <div class="meta">
-                  <div class="k">Changed items</div>
-                  <div class="v">No change timeline connected yet</div>
-                </div>
-              </div>
+              <div class="meta-grid" id="resume-meta"></div>
               <div class="card" style="margin-top: 14px; background: rgba(139, 92, 246, 0.06);">
                 <h3 style="margin-bottom: 8px;">Next safe action</h3>
-                <div class="placeholder-line">
-                  <span>Review the manifest list or wait for a real resume snapshot.</span>
+                <div id="resume-next-safe-action" class="placeholder-line">
+                  <span>Loading workspace state…</span>
                 </div>
               </div>
+            </div>
+            <div class="card">
+              <div class="section-title">
+                <h3>Recent checkpoints</h3>
+                <span>Read-only daemon data</span>
+              </div>
+              <div id="resume-checkpoints" class="stack"></div>
+            </div>
+            <div class="card">
+              <div class="section-title">
+                <h3>Recent conversations</h3>
+                <span>Read-only daemon data</span>
+              </div>
+              <div id="resume-conversations" class="stack"></div>
             </div>
           </div>
         </section>
@@ -592,15 +681,16 @@
             <div class="card">
               <div class="section-title">
                 <h3 id="approvals-title">Approvals</h3>
-                <span>Prepared for later approval cards</span>
+                <span id="approvals-status">Loading approval snapshot…</span>
               </div>
-              <div class="empty">No active approvals yet. This screen is a placeholder for future approval cards and previews.</div>
+              <div id="approvals-empty" class="empty">Loading approval data…</div>
+              <div id="approvals-list" class="timeline-list" style="margin-top: 14px;"></div>
             </div>
 
             <div class="example-card" aria-label="Example approval card">
               <div class="example-head">
                 <strong>Example approval card</strong>
-                <em>shape preview</em>
+                <em>example only</em>
               </div>
               <div class="field-list">
                 <div class="field">
@@ -641,15 +731,16 @@
             <div class="card">
               <div class="section-title">
                 <h3 id="changes-title">Changes</h3>
-                <span>Event timeline placeholder</span>
+                <span id="changes-status">Loading change timeline…</span>
               </div>
-              <div class="empty">No timeline connected yet. Future events will stream in here from the daemon and provenance ledger.</div>
+              <div id="changes-empty" class="empty">Loading change timeline…</div>
+              <div id="changes-list" class="timeline-list" style="margin-top: 14px;"></div>
             </div>
 
             <div class="example-card" aria-label="Example change card">
               <div class="example-head">
                 <strong>Example change card</strong>
-                <em>shape preview</em>
+                <em>example only</em>
               </div>
               <div class="field-list">
                 <div class="field">
@@ -687,6 +778,47 @@
               <div class="section-title">
                 <h3 id="capabilities-title">Capabilities</h3>
                 <span>Rendered from manifest metadata</span>
+              </div>
+              <div class="filter-bar" aria-label="Capability filters">
+                <label class="filter-control">
+                  <span>Load mode</span>
+                  <select id="cap-filter-load-mode">
+                    <option value="">All load modes</option>
+                    <option value="always">always</option>
+                    <option value="lazy">lazy</option>
+                    <option value="web_worker">web_worker</option>
+                    <option value="daemon_worker">daemon_worker</option>
+                    <option value="external_binary">external_binary</option>
+                    <option value="optional_sidecar">optional_sidecar</option>
+                    <option value="reference_only">reference_only</option>
+                    <option value="avoid">avoid</option>
+                  </select>
+                </label>
+                <label class="filter-control">
+                  <span>Approval class</span>
+                  <select id="cap-filter-approval-class">
+                    <option value="">All approval classes</option>
+                    <option value="observe">observe</option>
+                    <option value="preview">preview</option>
+                    <option value="write">write</option>
+                    <option value="destructive">destructive</option>
+                    <option value="remote">remote</option>
+                    <option value="expensive">expensive</option>
+                  </select>
+                </label>
+                <label class="filter-control">
+                  <span>Boundary</span>
+                  <select id="cap-filter-boundary">
+                    <option value="">All boundaries</option>
+                    <option value="local-only">local-only</option>
+                    <option value="remote-capable">remote-capable</option>
+                  </select>
+                </label>
+                <label class="filter-toggle">
+                  <input id="cap-filter-heavy-expensive" type="checkbox" />
+                  <span>Heavy or expensive only</span>
+                </label>
+                <button type="button" id="cap-filter-reset">Reset filters</button>
               </div>
               <div class="empty" id="capability-status">Loading capability manifests…</div>
               <div class="caps" id="capability-list" aria-live="polite" style="margin-top: 14px;"></div>
@@ -750,8 +882,34 @@
     const navButtons = Array.from(document.querySelectorAll(".nav button"));
     const title = document.getElementById("title");
     const subtitle = document.getElementById("subtitle");
+    const resumeStatus = document.getElementById("resume-status");
+    const resumeMeta = document.getElementById("resume-meta");
+    const resumeNextSafeAction = document.getElementById("resume-next-safe-action");
+    const resumeCheckpoints = document.getElementById("resume-checkpoints");
+    const resumeConversations = document.getElementById("resume-conversations");
+    const approvalsStatus = document.getElementById("approvals-status");
+    const approvalsEmpty = document.getElementById("approvals-empty");
+    const approvalsList = document.getElementById("approvals-list");
+    const changesStatus = document.getElementById("changes-status");
+    const changesEmpty = document.getElementById("changes-empty");
+    const changesList = document.getElementById("changes-list");
     const capabilityStatus = document.getElementById("capability-status");
     const capabilityList = document.getElementById("capability-list");
+    const capFilterLoadMode = document.getElementById("cap-filter-load-mode");
+    const capFilterApprovalClass = document.getElementById("cap-filter-approval-class");
+    const capFilterBoundary = document.getElementById("cap-filter-boundary");
+    const capFilterHeavyExpensive = document.getElementById("cap-filter-heavy-expensive");
+    const capFilterReset = document.getElementById("cap-filter-reset");
+
+    const capabilityState = {
+      manifests: [],
+      filters: {
+        loadMode: "",
+        approvalClass: "",
+        boundary: "",
+        heavyExpensiveOnly: false,
+      },
+    };
 
     const viewMeta = {
       resume: {
@@ -775,6 +933,223 @@
         subtitle: "Workbench and safety toggles that future daemon state will control."
       }
     };
+
+    function boundaryLabel(manifest) {
+      if (manifest.boundaries.localOnly) {
+        return "local-only";
+      }
+      if (manifest.boundaries.remoteRequired) {
+        return "remote-required";
+      }
+      if (manifest.boundaries.remoteOptional) {
+        return "remote-optional";
+      }
+      return "boundary-unknown";
+    }
+
+    function isHeavyOrExpensive(manifest) {
+      return [manifest.runtime.cpuProfile, manifest.runtime.memoryProfile].some((value) => value === "heavy" || value === "extreme") || manifest.safety.approvalClass === "expensive";
+    }
+
+    function capabilityMatchesFilters(manifest) {
+      if (capabilityState.filters.loadMode && manifest.runtime.loadMode !== capabilityState.filters.loadMode) {
+        return false;
+      }
+      if (capabilityState.filters.approvalClass && manifest.safety.approvalClass !== capabilityState.filters.approvalClass) {
+        return false;
+      }
+      if (capabilityState.filters.boundary === "local-only" && !manifest.boundaries.localOnly) {
+        return false;
+      }
+      if (capabilityState.filters.boundary === "remote-capable" && !(manifest.boundaries.remoteOptional || manifest.boundaries.remoteRequired)) {
+        return false;
+      }
+      if (capabilityState.filters.heavyExpensiveOnly && !isHeavyOrExpensive(manifest)) {
+        return false;
+      }
+      return true;
+    }
+
+    function renderEmptyCard(container, message) {
+      container.innerHTML = `<div class="empty">${escapeHtml(message)}</div>`;
+    }
+
+    function renderKeyValueCard(titleLabel, value) {
+      return `
+        <div class="meta">
+          <div class="k">${escapeHtml(titleLabel)}</div>
+          <div class="v">${escapeHtml(value)}</div>
+        </div>
+      `;
+    }
+
+    function renderResume(data) {
+      const resume = data?.resume ?? null;
+      const statusText = resume
+        ? `${resume.daemonStatus} · ${resume.mode} · ${resume.pendingApprovalsCount} approval${resume.pendingApprovalsCount === 1 ? "" : "s"} pending`
+        : "Read-only fallback state";
+      resumeStatus.textContent = statusText;
+
+      if (!resume) {
+        resumeMeta.innerHTML = [
+          renderKeyValueCard("Current project", "Prism Spectra workspace placeholder"),
+          renderKeyValueCard("Last activity", "Awaiting daemon state projection"),
+          renderKeyValueCard("Pending approvals", "None yet, approval queue will appear here"),
+          renderKeyValueCard("Changed items", "No change timeline connected yet"),
+        ].join("");
+        resumeNextSafeAction.innerHTML = "<span>Review the manifest list or wait for a real resume snapshot.</span>";
+        renderEmptyCard(resumeCheckpoints, "No checkpoints available yet.");
+        renderEmptyCard(resumeConversations, "No conversations available yet.");
+        return;
+      }
+
+      resumeMeta.innerHTML = [
+        renderKeyValueCard("Current project", resume.projectLabel || "Prism Spectra workspace placeholder"),
+        renderKeyValueCard("Work dir", resume.workDirLabel || ".demo/work"),
+        renderKeyValueCard("Last activity", resume.lastActivitySummary || "No daemon activity has been recorded yet."),
+        renderKeyValueCard("Pending approvals", String(resume.pendingApprovalsCount)),
+        renderKeyValueCard("Changed items", String(resume.changedItemsCount)),
+      ].join("");
+
+      resumeNextSafeAction.innerHTML = `<span>${escapeHtml(resume.nextSafeAction || "Stay in Resume and wait for daemon data or manifest-driven next steps.")}</span>`;
+
+      if (resume.recentCheckpoints.length === 0) {
+        renderEmptyCard(resumeCheckpoints, "No checkpoints have been recorded yet.");
+      } else {
+        resumeCheckpoints.innerHTML = resume.recentCheckpoints.map((checkpoint) => `
+          <div class="meta">
+            <div class="k">${escapeHtml(checkpoint.createdAt)}</div>
+            <div class="v">
+              <strong>${escapeHtml(checkpoint.nodeId || "unknown node")}</strong>
+              <div class="placeholder-line" style="margin-top: 6px;">
+                <span>graph ${escapeHtml(checkpoint.graphId || "unknown")}</span>
+                <span>sha ${escapeHtml(checkpoint.sha)}</span>
+                <span>${checkpoint.hadChanges ? "had changes" : "no changes"}</span>
+                <span>${checkpoint.rolledBack ? "rolled back" : "active"}</span>
+              </div>
+            </div>
+          </div>
+        `).join("");
+      }
+
+      if (resume.recentConversations.length === 0) {
+        renderEmptyCard(resumeConversations, "No conversations have been recorded yet.");
+      } else {
+        resumeConversations.innerHTML = resume.recentConversations.map((conversation) => `
+          <div class="meta">
+            <div class="k">${escapeHtml(conversation.createdAt)}</div>
+            <div class="v">
+              <strong>${escapeHtml(conversation.title || "Untitled conversation")}</strong>
+              <div class="placeholder-line" style="margin-top: 6px;">
+                <span>${conversation.messageCount} message${conversation.messageCount === 1 ? "" : "s"}</span>
+                <span>latest ${escapeHtml(conversation.latestMessageAt || "unknown")}</span>
+                <span>conversation ${conversation.id}</span>
+              </div>
+            </div>
+          </div>
+        `).join("");
+      }
+    }
+
+    function renderApprovals(data) {
+      const approvals = data?.approvals ?? null;
+      if (!approvals) {
+        approvalsStatus.textContent = "Empty placeholder";
+        renderEmptyCard(approvalsEmpty, "No active approvals yet. This screen is a placeholder for future approval cards and previews.");
+        approvalsList.innerHTML = "";
+        return;
+      }
+
+      approvalsStatus.textContent = `${approvals.count} approval${approvals.count === 1 ? "" : "s"} queued`;
+      if (approvals.items.length === 0) {
+        renderEmptyCard(approvalsEmpty, approvals.emptyStateMessage);
+        approvalsList.innerHTML = "";
+        return;
+      }
+
+      approvalsEmpty.innerHTML = "";
+      approvalsList.innerHTML = approvals.items.map((approval) => `
+        <article class="timeline-card">
+          <div class="timeline-topline">
+            <strong>${escapeHtml(approval.actionSummary)}</strong>
+            <span>${approval.approvalClass}${approval.example ? " · example" : ""}</span>
+          </div>
+          <div class="field-list">
+            <div class="field">
+              <div class="k">Affected files/artifacts</div>
+              <div class="v">${escapeHtml(approval.affectedItems.join(", ") || "none yet")}</div>
+            </div>
+            <div class="field">
+              <div class="k">Checkpoint policy</div>
+              <div class="v">${escapeHtml(approval.checkpointPolicy)}</div>
+            </div>
+            <div class="field">
+              <div class="k">Preview availability</div>
+              <div class="v">${approval.previewAvailable ? "Preview is available" : "Preview is unavailable; risk note required."}</div>
+            </div>
+            <div class="field">
+              <div class="k">Local / remote boundary</div>
+              <div class="v">${escapeHtml(approval.localBoundary)}</div>
+            </div>
+            <div class="field">
+              <div class="k">CLI equivalent</div>
+              <div class="v"><code>${escapeHtml(approval.cliEquivalent)}</code></div>
+            </div>
+          </div>
+          <div class="risk" style="margin-top: 12px;">
+            <strong style="color: var(--text);">Risk notes</strong>
+            <ul style="margin: 8px 0 0 18px; padding: 0; display: grid; gap: 4px;">
+              ${(approval.riskNotes || []).map((note) => `<li>${escapeHtml(note)}</li>`).join("") || "<li>No risk notes provided.</li>"}
+            </ul>
+          </div>
+        </article>
+      `).join("");
+    }
+
+    function renderChanges(data) {
+      const changes = data?.changes ?? null;
+      if (!changes) {
+        changesStatus.textContent = "Empty placeholder";
+        renderEmptyCard(changesEmpty, "No timeline connected yet. Future events will stream in here from the daemon and provenance ledger.");
+        changesList.innerHTML = "";
+        return;
+      }
+
+      changesStatus.textContent = `${changes.count} change${changes.count === 1 ? "" : "s"} available`;
+      if (changes.items.length === 0) {
+        renderEmptyCard(changesEmpty, changes.emptyStateMessage);
+        changesList.innerHTML = "";
+        return;
+      }
+
+      changesEmpty.innerHTML = "";
+      changesList.innerHTML = changes.items.map((change) => `
+        <article class="timeline-card">
+          <div class="timeline-topline">
+            <strong>${escapeHtml(change.summary)}</strong>
+            <span>${escapeHtml(change.time)}</span>
+          </div>
+          <div class="field-list">
+            <div class="field">
+              <div class="k">Event type</div>
+              <div class="v">${escapeHtml(change.type)}</div>
+            </div>
+            <div class="field">
+              <div class="k">Related artifact</div>
+              <div class="v">${escapeHtml(change.relatedArtifactId || "none")}</div>
+            </div>
+            <div class="field">
+              <div class="k">Related capability</div>
+              <div class="v">${escapeHtml(change.relatedCapabilityId || "none")}</div>
+            </div>
+            <div class="field">
+              <div class="k">Related checkpoint</div>
+              <div class="v">${escapeHtml(change.relatedCheckpointId == null ? "none" : String(change.relatedCheckpointId))}</div>
+            </div>
+          </div>
+        </article>
+      `).join("");
+    }
 
     function setView(viewId) {
       for (const section of views) {
@@ -815,15 +1190,17 @@
     }
 
     function renderCapabilities(manifests) {
-      capabilityStatus.textContent = `${manifests.length} manifest${manifests.length === 1 ? "" : "s"} available for UI rendering.`;
-      capabilityList.innerHTML = manifests.map((manifest) => {
-        const boundary = manifest.boundaries.localOnly
-          ? "local-only"
-          : manifest.boundaries.remoteRequired
-            ? "remote-required"
-            : manifest.boundaries.remoteOptional
-              ? "remote-optional"
-              : "boundary-unknown";
+      const visible = manifests.filter(capabilityMatchesFilters);
+      capabilityStatus.textContent = `${visible.length} of ${manifests.length} manifest${manifests.length === 1 ? "" : "s"} visible. Read-only data only.`;
+      if (visible.length === 0) {
+        capabilityList.innerHTML = `
+          <div class="empty">No manifests match the current filters. Adjust the controls above to widen the view.</div>
+        `;
+        return;
+      }
+
+      capabilityList.innerHTML = visible.map((manifest) => {
+        const boundary = boundaryLabel(manifest);
         const enabledState = "disabled placeholder";
         const riskNotes = (manifest.safety.riskNotes || []).length
           ? manifest.safety.riskNotes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")
@@ -873,12 +1250,64 @@
       }).join("");
     }
 
+    function syncCapabilityFilters() {
+      capabilityState.filters.loadMode = capFilterLoadMode.value;
+      capabilityState.filters.approvalClass = capFilterApprovalClass.value;
+      capabilityState.filters.boundary = capFilterBoundary.value;
+      capabilityState.filters.heavyExpensiveOnly = capFilterHeavyExpensive.checked;
+      renderCapabilities(capabilityState.manifests);
+    }
+
+    capFilterLoadMode.addEventListener("change", syncCapabilityFilters);
+    capFilterApprovalClass.addEventListener("change", syncCapabilityFilters);
+    capFilterBoundary.addEventListener("change", syncCapabilityFilters);
+    capFilterHeavyExpensive.addEventListener("change", syncCapabilityFilters);
+    capFilterReset.addEventListener("click", () => {
+      capFilterLoadMode.value = "";
+      capFilterApprovalClass.value = "";
+      capFilterBoundary.value = "";
+      capFilterHeavyExpensive.checked = false;
+      syncCapabilityFilters();
+    });
+
+    async function loadResume() {
+      try {
+        const response = await fetch("/api/v1/workbench/resume");
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        renderResume(await response.json());
+      } catch (error) {
+        renderResume(null);
+        resumeStatus.textContent = "Read-only fallback state";
+      }
+    }
+
+    async function loadApprovals() {
+      try {
+        const response = await fetch("/api/v1/workbench/approvals");
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        renderApprovals(await response.json());
+      } catch (error) {
+        renderApprovals(null);
+      }
+    }
+
+    async function loadChanges() {
+      try {
+        const response = await fetch("/api/v1/workbench/changes");
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        renderChanges(await response.json());
+      } catch (error) {
+        renderChanges(null);
+      }
+    }
+
     async function loadManifests() {
       try {
         const response = await fetch("/api/v1/capabilities/manifests");
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
-        renderCapabilities(Array.isArray(data.manifests) ? data.manifests : []);
+        capabilityState.manifests = Array.isArray(data.manifests) ? data.manifests : [];
+        renderCapabilities(capabilityState.manifests);
       } catch (error) {
         capabilityStatus.textContent = "Unable to load manifests from the daemon; showing a minimal fallback.";
         capabilityList.innerHTML = `
@@ -895,6 +1324,9 @@
     const initialView = (location.hash || "#resume").slice(1);
     const validView = viewMeta[initialView] ? initialView : "resume";
     setView(validView);
+    loadResume();
+    loadApprovals();
+    loadChanges();
     loadManifests();
   </script>
 </body>

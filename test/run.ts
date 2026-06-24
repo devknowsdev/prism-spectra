@@ -2836,6 +2836,37 @@ async function main() {
     assert.match(workbenchHtml, /Approvals/);
     assert.match(workbenchHtml, /Changes/);
     assert.match(workbenchHtml, /Settings/);
+    assert.match(workbenchHtml, /Load mode/);
+    assert.match(workbenchHtml, /Reset filters/);
+
+    const resumeResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/resume`);
+    assert.equal(resumeResponse.ok, true);
+    const resumePayload = await resumeResponse.json();
+    assert.ok(resumePayload.resume);
+    assert.equal(resumePayload.resume.daemonStatus, "healthy");
+    assert.equal(resumePayload.resume.mode, "read-only");
+    assert.equal(typeof resumePayload.resume.projectLabel, "string");
+    assert.equal(typeof resumePayload.resume.workDirLabel, "string");
+    assert.ok(Array.isArray(resumePayload.resume.recentCheckpoints));
+    assert.ok(Array.isArray(resumePayload.resume.recentConversations));
+    assert.equal(resumePayload.resume.pendingApprovalsCount, 0);
+
+    const approvalsResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/approvals`);
+    assert.equal(approvalsResponse.ok, true);
+    const approvalsPayload = await approvalsResponse.json();
+    assert.ok(approvalsPayload.approvals);
+    assert.equal(approvalsPayload.approvals.count, 0);
+    assert.deepEqual(approvalsPayload.approvals.items, []);
+    assert.ok(String(approvalsPayload.approvals.emptyStateMessage).length > 0);
+
+    const changesResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/changes`);
+    assert.equal(changesResponse.ok, true);
+    const changesPayload = await changesResponse.json();
+    assert.ok(changesPayload.changes);
+    assert.equal(typeof changesPayload.changes.count, "number");
+    assert.ok(Array.isArray(changesPayload.changes.items));
+    assert.equal(changesPayload.changes.count, changesPayload.changes.items.length);
+    assert.ok(String(changesPayload.changes.emptyStateMessage).length > 0);
 
     // POST to execute-graph (streaming). Use a simple node that writes a file.
     const graph = { id: "g-e2e", projectId: "p-e2e", nodes: [{ id: "n1", packet: { intent: "create marker", node_type: "ui", context: { targetFile: "marker.txt" }, filePaths: ["marker.txt"], dependencies: [] } }] };

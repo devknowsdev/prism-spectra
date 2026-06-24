@@ -10,7 +10,7 @@ import cp from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { GraphBuilder, ExecutionEngine, seedCapabilityManifests } from "../src/index.js";
+import { GraphBuilder, ExecutionEngine, buildWorkbenchApprovals, buildWorkbenchChanges, buildWorkbenchResume, seedCapabilityManifests } from "../src/index.js";
 import { TaskGraph } from "../src/taskGraph/graph.js";
 
 const PORT = Number(process.env.AI_FORGE_DAEMON_PORT ?? 3000);
@@ -70,6 +70,14 @@ async function readWorkbenchHtml(): Promise<string> {
   return fs.promises.readFile(WORKBENCH_HTML_PATH, "utf-8");
 }
 
+function getWorkbenchContext() {
+  const cwd = process.cwd();
+  return {
+    projectLabel: path.basename(path.resolve(cwd)) || "workspace",
+    workDirLabel: path.join(".demo", "work"),
+  };
+}
+
 async function start() {
   const { engine, graphBuilder } = await initEngine();
 
@@ -83,6 +91,26 @@ async function start() {
 
       if (req.method === "GET" && url.pathname === "/api/v1/capabilities/manifests") {
         return jsonResponse(res, 200, { manifests: seedCapabilityManifests });
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/v1/workbench/resume") {
+        const ctx = getWorkbenchContext();
+        return jsonResponse(res, 200, {
+          resume: buildWorkbenchResume(engine.memory, {
+            projectLabel: ctx.projectLabel,
+            workDirLabel: ctx.workDirLabel,
+            daemonStatus: "healthy",
+            mode: "read-only",
+          }),
+        });
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/v1/workbench/approvals") {
+        return jsonResponse(res, 200, { approvals: buildWorkbenchApprovals(engine.memory) });
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/v1/workbench/changes") {
+        return jsonResponse(res, 200, { changes: buildWorkbenchChanges(engine.memory) });
       }
 
       if (!url.pathname.startsWith("/api/v1/")) return jsonResponse(res, 404, { error: "not found" });
