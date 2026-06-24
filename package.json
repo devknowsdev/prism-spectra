@@ -14,6 +14,8 @@
     "sandbox:reset": "node --import tsx sandbox/scripts/reset-sandbox.ts",
     "sandbox:seed": "node --import tsx sandbox/scripts/seed-sandbox.ts",
     "test:browser": "node --import tsx test/browser/workbench-smoke.test.ts",
+    "test:setup": "npm run doctor && npm run typecheck && npm run build",
+    "test:full": "node --import tsx test/run.ts",
     "forge": "tsx src/cli.ts",
     "start": "tsx src/cli.ts",
     "doctor": "tsx tools/doctor.ts",
