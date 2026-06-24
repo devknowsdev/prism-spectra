@@ -30,7 +30,7 @@ Spectra currently selects Ollama models in `src/executors/ollama.ts`.
 Recommended local override while Spectra still defaults to `qwen3:9b`:
 
 ```bash
-OLLAMA_GENERAL_MODEL=qwen3:8b npm run local-ai:bootstrap
+OLLAMA_GENERAL_MODEL=qwen3:8b bash tools/bootstrap-local-ai.sh
 ```
 
 `qwen3:8b` is listed in the Ollama qwen3 library at roughly 5.2GB. This
@@ -42,19 +42,19 @@ your shell/session.
 From the `prism-spectra` repo root:
 
 ```bash
-npm run local-ai:bootstrap
+bash tools/bootstrap-local-ai.sh
 ```
 
 If you need the verified general-model override:
 
 ```bash
-OLLAMA_GENERAL_MODEL=qwen3:8b npm run local-ai:bootstrap
+OLLAMA_GENERAL_MODEL=qwen3:8b bash tools/bootstrap-local-ai.sh
 ```
 
 If your Ollama daemon is not on the default local URL:
 
 ```bash
-OLLAMA_HOST=http://127.0.0.1:11434 OLLAMA_GENERAL_MODEL=qwen3:8b npm run local-ai:bootstrap
+OLLAMA_HOST=http://127.0.0.1:11434 OLLAMA_GENERAL_MODEL=qwen3:8b bash tools/bootstrap-local-ai.sh
 ```
 
 The script exits before pulling if:
@@ -118,3 +118,9 @@ npm run test:setup
 
 These commands inspect and validate the local setup path. They do not replace
 the explicit model bootstrap confirmation.
+
+## Package Script Note
+
+This branch keeps the bootstrap callable by direct shell path. A later local
+commit can add an npm alias such as `local-ai:bootstrap` after reviewing package
+script policy locally.
