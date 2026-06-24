@@ -37,6 +37,9 @@ For the current build boundary and stabilization rationale, see
 For first-run setup, doctor checks, provider status, and workbench launch guidance,
 see [docs/SPECTRA_SETUP.md](docs/SPECTRA_SETUP.md).
 
+For the current test-surface split and daemon e2e stabilization notes, see
+[docs/TEST_STABILIZATION.md](docs/TEST_STABILIZATION.md).
+
 ## What this repo is for
 
 - Deterministic graph building and routing
@@ -63,12 +66,10 @@ npm install
 npm run doctor
 ```
 
-Then validate the developer path:
+Then validate the setup/build path:
 
 ```bash
-npm run typecheck
-npm test
-npm run build
+npm run test:setup
 ```
 
 Provider status, without executing a workflow:
@@ -85,11 +86,22 @@ npm run workbench
 
 ## Tests
 
-Run the repo test suite with:
+Run CI-safe setup validation with:
+
+```bash
+npm run test:setup
+```
+
+Run the existing full harness deliberately when working on daemon, workbench,
+checkpoint, execute-graph, rollback, preview, attachment, or event-ledger behavior:
 
 ```bash
 npm test
+# or
+npm run test:full
 ```
+
+For current test-surface notes, see [docs/TEST_STABILIZATION.md](docs/TEST_STABILIZATION.md).
 
 If you are working on orchestrator behavior, also run:
 
