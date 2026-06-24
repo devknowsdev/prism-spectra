@@ -30,6 +30,11 @@ Both scripts refuse to operate outside the repository sandbox paths they are res
 - `browser smoke: failed: <reason>`
 
 The smoke only talks to `127.0.0.1`, so it stays local-first and does not contact external services.
+If the environment blocks local socket binding, the smoke will skip with:
+
+- `browser smoke: skipped: socket bind is not permitted in this environment`
+
+On Dave's Mac, the same command should finish with `browser smoke: ran and passed` when Chrome and localhost binding are available.
 
 ## What the sandbox can test now
 
@@ -61,6 +66,7 @@ The smoke only talks to `127.0.0.1`, so it stays local-first and does not contac
 - The daemon cannot bind a local port in the current sandbox.
 - The workbench stops rendering the seeded attachment row or preview boundary reminder.
 - The smoke assertions fail because the UI behavior changed.
+- If the sandbox says socket bind is not permitted, this is a local environment blocker rather than a browser harness bug.
 
 ## Recommended next step
 
