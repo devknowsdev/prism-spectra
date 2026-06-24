@@ -16,6 +16,9 @@
     "test:browser": "node --import tsx test/browser/workbench-smoke.test.ts",
     "forge": "tsx src/cli.ts",
     "start": "tsx src/cli.ts",
+    "doctor": "tsx tools/doctor.ts",
+    "setup": "tsx tools/doctor.ts --setup-guide",
+    "workbench": "tsx tools/daemon.ts",
     "pretest": "npm run typecheck",
     "test": "node --import tsx test/run.ts"
   },
