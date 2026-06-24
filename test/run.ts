@@ -216,6 +216,13 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
+function uploadAttachmentId(payload: unknown, label: string): number {
+  const attachment = payload && typeof payload === "object" ? (payload as Record<string, unknown>).attachment : undefined;
+  const id = Number(attachment && typeof attachment === "object" ? (attachment as Record<string, unknown>).id : NaN);
+  assert.ok(Number.isFinite(id), `${label} response missing a finite attachment id: ${JSON.stringify(payload)}`);
+  return id;
+}
+
 async function freshEngine(name: string, opts: { ollamaSwapDelayMs?: number } = {}): Promise<ExecutionEngine> {
   const dir = path.join(ROOT, name);
   fs.rmSync(dir, { recursive: true, force: true });
@@ -3424,8 +3431,7 @@ async function main() {
     });
     assert.equal(uploadResponse.ok, true);
     const uploadPayload = await uploadResponse.json();
-    const attachmentId = Number(uploadPayload.id);
-    assert.ok(Number.isFinite(attachmentId));
+    const attachmentId = uploadAttachmentId(uploadPayload, "legacy upload");
 
     const tagResponse = await fetch(`http://127.0.0.1:${port}/api/v1/attachments/${attachmentId}/tags`, {
       method: "POST",
@@ -3582,8 +3588,7 @@ async function main() {
     });
     assert.equal(imageUploadResponse.ok, true);
     const imageUploadPayload = await imageUploadResponse.json();
-    const imageAttachmentId = Number(imageUploadPayload.id);
-    assert.ok(Number.isFinite(imageAttachmentId));
+    const imageAttachmentId = uploadAttachmentId(imageUploadPayload, "image upload");
 
     const imagePreviewResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments/${imageAttachmentId}/preview`);
     assert.equal(imagePreviewResponse.ok, true);
@@ -3611,8 +3616,7 @@ async function main() {
     });
     assert.equal(audioUploadResponse.ok, true);
     const audioUploadPayload = await audioUploadResponse.json();
-    const audioAttachmentId = Number(audioUploadPayload.id);
-    assert.ok(Number.isFinite(audioAttachmentId));
+    const audioAttachmentId = uploadAttachmentId(audioUploadPayload, "audio upload");
 
     const audioAttachmentDetailResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments/${audioAttachmentId}`);
     assert.equal(audioAttachmentDetailResponse.ok, true);
