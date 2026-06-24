@@ -13,6 +13,20 @@ export { CheckpointManager } from "./safety/checkpoint.js";
 export { validate } from "./safety/validation.js";
 export { FileLockManager } from "./engine/fileLock.js";
 export { ExecutionEngine } from "./engine/executionEngine.js";
+export {
+  AI_REQUEST_RISK_CLASSES,
+  buildAiRequestIntent,
+  normalizeAiRequestBody,
+  parseStructuredResponse,
+} from "./engine/aiRequest.js";
+export type {
+  AiRequestFailure,
+  AiRequestInput,
+  AiRequestResult,
+  AiRequestRiskClass,
+  AiRequestSuccess,
+  AiRequestValidation,
+} from "./engine/aiRequest.js";
 export { buildExecutorRegistry } from "./executors/index.js";
 export * from "./adapters/index.js";
 export * from "./ingest/index.js";
