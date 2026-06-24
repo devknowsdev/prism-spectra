@@ -296,6 +296,189 @@ function removeAttachmentTag(
   };
 }
 
+function inlineFilenameValue(filename: string): { fallback: string; encoded: string } {
+  const raw = filename.trim() || "preview";
+  const fallback = raw.replace(/[^\x20-\x7E]/g, "_").replace(/["\\]/g, "_");
+  const encoded = encodeURIComponent(raw)
+    .replace(/['()]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
+    .replace(/\*/g, "%2A");
+  return { fallback, encoded };
+}
+
+function isSafeAttachmentPreviewPath(candidatePath: string, baseDir: string): boolean {
+  const resolved = path.resolve(candidatePath);
+  const boundary = baseDir.endsWith(path.sep) ? baseDir : `${baseDir}${path.sep}`;
+  return resolved === baseDir || resolved.startsWith(boundary);
+}
+
+function appendAttachmentPreviewEvent(
+  eventLedger: InMemoryPrismEventLedger,
+  type: "attachment.preview.requested" | "attachment.preview.available" | "attachment.preview.blocked" | "attachment.preview.failed",
+  summary: string,
+  attachmentId: number,
+  filename: string | null,
+  previewKind: string,
+  previewStatus: string,
+  extraMetadata: Record<string, unknown> = {},
+) {
+  eventLedger.append({
+    type,
+    summary,
+    severity: type === "attachment.preview.failed" ? "high" : type === "attachment.preview.blocked" ? "low" : "info",
+    source: "attachment",
+    relatedArtifactId: `attachment:${attachmentId}`,
+    metadata: {
+      attachmentId,
+      filename,
+      previewKind,
+      previewStatus,
+      ...extraMetadata,
+    },
+  });
+}
+
+async function sendWorkbenchAttachmentPreview(
+  res: http.ServerResponse,
+  engine: ExecutionEngine,
+  eventLedger: InMemoryPrismEventLedger,
+  attachmentId: number,
+) {
+  const attachment = getWorkbenchAttachment(engine.memory, attachmentId, eventLedger);
+  if (!attachment) {
+    return jsonResponse(res, 404, { error: "attachment not found" });
+  }
+
+  appendAttachmentPreviewEvent(
+    eventLedger,
+    "attachment.preview.requested",
+    `Preview requested for ${attachment.displayName || attachment.filename || `attachment ${attachmentId}`}`,
+    attachmentId,
+    attachment.displayName || attachment.filename || null,
+    attachment.preview.kind,
+    attachment.preview.status,
+  );
+
+  if (!attachment.preview.safeToRenderInline || attachment.preview.status !== "available") {
+    appendAttachmentPreviewEvent(
+      eventLedger,
+      "attachment.preview.blocked",
+      `Preview blocked for ${attachment.displayName || attachment.filename || `attachment ${attachmentId}`}`,
+      attachmentId,
+      attachment.displayName || attachment.filename || null,
+      attachment.preview.kind,
+      attachment.preview.status,
+      {
+        reason: attachment.preview.reason || "preview unavailable",
+      },
+    );
+    return jsonResponse(res, 415, {
+      error: attachment.preview.reason || "preview unavailable",
+      preview: attachment.preview,
+    });
+  }
+
+  const row = attachmentRowById(engine.memory.db, attachmentId);
+  if (!row) {
+    appendAttachmentPreviewEvent(
+      eventLedger,
+      "attachment.preview.failed",
+      `Preview failed for attachment ${attachmentId}`,
+      attachmentId,
+      attachment.displayName || attachment.filename || null,
+      attachment.preview.kind,
+      attachment.preview.status,
+      { reason: "attachment row missing" },
+    );
+    return jsonResponse(res, 404, { error: "attachment not found" });
+  }
+
+  const storedPath = String(row.path || "");
+  const uploadsBase = path.resolve(attachmentUploadsDir());
+  if (!storedPath || !isSafeAttachmentPreviewPath(storedPath, uploadsBase)) {
+    appendAttachmentPreviewEvent(
+      eventLedger,
+      "attachment.preview.blocked",
+      `Preview blocked for ${attachment.displayName || attachment.filename || `attachment ${attachmentId}`}`,
+      attachmentId,
+      attachment.displayName || attachment.filename || null,
+      attachment.preview.kind,
+      attachment.preview.status,
+      { reason: "unsafe attachment path" },
+    );
+    return jsonResponse(res, 403, { error: "preview path is not allowed", preview: attachment.preview });
+  }
+
+  try {
+    const stat = await fs.promises.stat(storedPath);
+    if (!stat.isFile()) {
+      throw new Error("attachment path is not a file");
+    }
+
+    const mimeType = typeof row.content_type === "string" && row.content_type.trim().length > 0
+      ? row.content_type.trim()
+      : "application/octet-stream";
+    const filename = String(row.filename || `attachment-${attachmentId}`);
+    const { fallback, encoded } = inlineFilenameValue(filename);
+
+    appendAttachmentPreviewEvent(
+      eventLedger,
+      "attachment.preview.available",
+      `Preview available for ${filename}`,
+      attachmentId,
+      filename,
+      attachment.preview.kind,
+      attachment.preview.status,
+      {
+        contentType: mimeType,
+        path: storedPath,
+      },
+    );
+
+    res.writeHead(200, {
+      "Content-Type": mimeType,
+      "Content-Length": String(stat.size),
+      "Content-Disposition": `inline; filename="${fallback}"; filename*=UTF-8''${encoded}`,
+      "X-Content-Type-Options": "nosniff",
+      "Cache-Control": "no-store",
+      "Access-Control-Allow-Origin": "*",
+    });
+    const stream = fs.createReadStream(storedPath);
+    stream.on("error", () => {
+      try {
+        if (!res.headersSent) {
+          appendAttachmentPreviewEvent(
+            eventLedger,
+            "attachment.preview.failed",
+            `Preview failed for ${filename}`,
+            attachmentId,
+            filename,
+            attachment.preview.kind,
+            attachment.preview.status,
+            { reason: "stream error" },
+          );
+          jsonResponse(res, 500, { error: "could not read attachment preview" });
+        } else {
+          res.destroy();
+        }
+      } catch (error) {}
+    });
+    stream.pipe(res);
+    return;
+  } catch (error) {
+    appendAttachmentPreviewEvent(
+      eventLedger,
+      "attachment.preview.failed",
+      `Preview failed for ${attachment.displayName || attachment.filename || `attachment ${attachmentId}`}`,
+      attachmentId,
+      attachment.displayName || attachment.filename || null,
+      attachment.preview.kind,
+      attachment.preview.status,
+      { reason: "could not read attachment preview" },
+    );
+    return jsonResponse(res, 500, { error: "could not read attachment preview" });
+  }
+}
+
 async function sendVendorFile(res: http.ServerResponse, requestPath: string) {
   const relative = decodeURIComponent(requestPath.replace(/^\/vendor\//, ""));
   const resolved = path.resolve(NODE_MODULES_DIR, relative);
@@ -649,6 +832,12 @@ async function start() {
       if (req.method === "GET" && url.pathname === "/api/v1/workbench/attachments") {
         const limit = Number(url.searchParams.get("limit") || 25);
         return jsonResponse(res, 200, { attachments: listWorkbenchAttachments(engine.memory, limit, eventLedger) });
+      }
+
+      const workbenchAttachmentPreviewMatch = url.pathname.match(/^\/api\/v1\/workbench\/attachments\/(\d+)\/preview$/);
+      if (workbenchAttachmentPreviewMatch && req.method === "GET") {
+        const attachmentId = Number(workbenchAttachmentPreviewMatch[1]);
+        return sendWorkbenchAttachmentPreview(res, engine, eventLedger, attachmentId);
       }
 
       const workbenchAttachmentMatch = url.pathname.match(/^\/api\/v1\/workbench\/attachments\/(\d+)$/);
