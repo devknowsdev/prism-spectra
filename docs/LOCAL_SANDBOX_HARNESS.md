@@ -43,6 +43,7 @@ On Dave's Mac, the same command should finish with `browser smoke: ran and passe
 - Deterministic file seeding and reset behavior.
 - Attachment and metadata fixture handling without touching real user folders.
 - A minimal browser smoke path that proves the workbench loads and does not eagerly request preview bytes for a selected sandbox attachment.
+- A tiny browser audio positive path that synthesizes one local WAV in the smoke temp cwd, loads the safe preview route, and confirms the audio preview reaches a ready state.
 - The browser smoke status line makes it obvious whether the run passed, skipped, or failed.
 
 ## Safety guarantees
@@ -58,6 +59,7 @@ On Dave's Mac, the same command should finish with `browser smoke: ran and passe
 
 - Rich browser e2e coverage still needs a broader test strategy.
 - This smoke test does not verify waveform playback, visual regressions, or full attachment workflows.
+- It does not need a committed audio fixture because the smoke synthesizes one tiny WAV in its own disposable temp tree.
 - It uses the local Google Chrome app plus a tiny CDP runner, so the maintenance cost stays low without adding a browser dependency.
 
 ## Common Failure Causes

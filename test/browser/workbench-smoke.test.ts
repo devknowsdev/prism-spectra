@@ -176,29 +176,78 @@ function findButtonClickScript(text: string): string {
   })()`;
 }
 
-function buildAttachmentSeed(cwd: string): { attachmentId: number; attachmentName: string } {
+function clickAttachmentActionScript(action: string): string {
+  return `(() => {
+    const button = document.querySelector('button[data-attachment-action="${action}"]');
+    if (!(button instanceof HTMLElement)) {
+      throw new Error('button not found: ${action}');
+    }
+    button.click();
+    return true;
+  })()`;
+}
+
+function createSilentWavBuffer(durationSeconds = 0.125, sampleRate = 8000): Buffer {
+  const sampleCount = Math.max(1, Math.floor(durationSeconds * sampleRate));
+  const dataSize = sampleCount * 2;
+  const buffer = Buffer.alloc(44 + dataSize);
+
+  buffer.write("RIFF", 0);
+  buffer.writeUInt32LE(36 + dataSize, 4);
+  buffer.write("WAVE", 8);
+  buffer.write("fmt ", 12);
+  buffer.writeUInt32LE(16, 16);
+  buffer.writeUInt16LE(1, 20);
+  buffer.writeUInt16LE(1, 22);
+  buffer.writeUInt32LE(sampleRate, 24);
+  buffer.writeUInt32LE(sampleRate * 2, 28);
+  buffer.writeUInt16LE(2, 32);
+  buffer.writeUInt16LE(16, 34);
+  buffer.write("data", 36);
+  buffer.writeUInt32LE(dataSize, 40);
+  buffer.fill(0, 44);
+
+  return buffer;
+}
+
+function insertAttachmentRow(
+  db: MemoryDB,
+  uploadsDir: string,
+  conversationId: number,
+  filename: string,
+  contentType: string,
+  bytes: Buffer,
+): number {
+  const attachmentPath = path.join(uploadsDir, filename);
+  fs.writeFileSync(attachmentPath, bytes);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+
+  const result = db.db.prepare(
+    "INSERT INTO attachments (conversation_id, filename, path, content_type, size, sha256) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run(conversationId, filename, attachmentPath, contentType, bytes.byteLength, sha256);
+  return Number(result.lastInsertRowid);
+}
+
+function buildAttachmentSeed(cwd: string): { conversationId: number; textAttachmentId: number; audioAttachmentId: number; textAttachmentName: string; audioAttachmentName: string } {
   const dbPath = path.join(cwd, ".demo", "daemon.db");
   const uploadsDir = path.join(cwd, "uploads");
   fs.mkdirSync(uploadsDir, { recursive: true });
 
   const sandboxTextPath = path.join(SANDBOX_TMP_DIR, "attachments", "text-attachment.txt");
   const attachmentName = "browser-smoke.txt";
-  const attachmentPath = path.join(uploadsDir, attachmentName);
-  fs.copyFileSync(sandboxTextPath, attachmentPath);
-  const bytes = fs.readFileSync(attachmentPath);
-  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const audioAttachmentName = "browser-smoke-audio.wav";
+  const textBytes = fs.readFileSync(sandboxTextPath);
+  const audioBytes = createSilentWavBuffer();
 
   const db = new MemoryDB(dbPath);
   db.db.prepare("INSERT INTO conversations (title, metadata) VALUES (?, ?)").run("Browser smoke conversation", JSON.stringify({ source: "sandbox" }));
   const conversationRow = db.db.prepare("SELECT id FROM conversations ORDER BY id DESC LIMIT 1").get() as Record<string, unknown>;
   const conversationId = Number(conversationRow.id);
-  const result = db.db.prepare(
-    "INSERT INTO attachments (conversation_id, filename, path, content_type, size, sha256) VALUES (?, ?, ?, ?, ?, ?)"
-  ).run(conversationId, attachmentName, attachmentPath, "text/plain", bytes.byteLength, sha256);
-  const attachmentId = Number(result.lastInsertRowid);
+  const textAttachmentId = insertAttachmentRow(db, uploadsDir, conversationId, attachmentName, "text/plain", textBytes);
+  const audioAttachmentId = insertAttachmentRow(db, uploadsDir, conversationId, audioAttachmentName, "audio/wav", audioBytes);
   db.close();
 
-  return { attachmentId, attachmentName };
+  return { conversationId, textAttachmentId, audioAttachmentId, textAttachmentName: attachmentName, audioAttachmentName };
 }
 
 async function startDaemon(cwd: string, port: number): Promise<{ stop: () => Promise<void>; log: () => string }> {
@@ -321,7 +370,7 @@ async function main() {
   const daemonPort = 32800 + Math.floor(Math.random() * 1000);
   const chromePort = 35800 + Math.floor(Math.random() * 1000);
 
-  buildAttachmentSeed(browserTempRoot);
+  const seeded = buildAttachmentSeed(browserTempRoot);
   let daemon: Awaited<ReturnType<typeof startDaemon>> | null = null;
   let chrome: Awaited<ReturnType<typeof startChrome>> | null = null;
   try {
@@ -350,6 +399,7 @@ async function main() {
       await client.send("Runtime.evaluate", { expression: findButtonClickScript("Attachments") });
       await waitForExpr(client, `document.querySelector('[data-section="attachments"]')?.classList.contains("active")`);
       await waitForExpr(client, `Array.from(document.querySelectorAll('button[data-attachment-id]')).some((button) => (button.textContent || '').includes("browser-smoke.txt"))`);
+      await waitForExpr(client, `Array.from(document.querySelectorAll('button[data-attachment-id]')).some((button) => (button.textContent || '').includes("browser-smoke-audio.wav"))`);
       await client.send("Runtime.evaluate", { expression: findButtonClickScript("browser-smoke.txt") });
 
       await waitForExpr(client, `document.getElementById("attachment-detail")?.innerText.includes("Text preview pending")`);
@@ -370,6 +420,17 @@ async function main() {
       assert.equal(boundaryReminderVisible, true, "the local-only reminder should stay visible");
       assert.ok(await evalByValue<boolean>(client, `document.body.innerText.includes("Attachments")`));
       assert.ok(await evalByValue<boolean>(client, `document.body.innerText.includes("browser-smoke.txt")`));
+
+      const audioPreviewRequestsBefore = previewRequests.length;
+      await client.send("Runtime.evaluate", { expression: findButtonClickScript("browser-smoke-audio.wav") });
+      await waitForExpr(client, `document.getElementById("attachment-detail")?.innerText.includes("Waveform preview is idle.")`);
+      await waitForExpr(client, `document.querySelector('[data-audio-preview-shell][data-attachment-id="${seeded.audioAttachmentId}"]') instanceof HTMLElement`);
+      await client.send("Runtime.evaluate", { expression: clickAttachmentActionScript("audio-preview-load") });
+      await waitForExpr(client, `document.getElementById("attachment-detail")?.innerText.includes("Loading waveform preview from the safe local route")`);
+      await waitForExpr(client, `document.getElementById("attachment-detail")?.innerText.includes("Waveform ready")`);
+      assert.equal(audioPreviewRequestsBefore, 0, "audio preview should not load before the user clicks the button");
+      assert.ok(previewRequests.some((url) => url.includes(`/api/v1/workbench/attachments/${seeded.audioAttachmentId}/preview`)), "audio preview should reach the safe local preview route");
+      assert.ok(await evalByValue<boolean>(client, `document.querySelector('[data-attachment-action="audio-preview-play-pause"]') instanceof HTMLButtonElement && !document.querySelector('[data-attachment-action="audio-preview-play-pause"]').disabled`));
     } finally {
       await client.close().catch(() => {});
     }
