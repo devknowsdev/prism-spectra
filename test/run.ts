@@ -2772,6 +2772,14 @@ async function main() {
     assert.deepEqual(listed[0], valid);
   });
 
+  await test("capability manifests serialize cleanly for UI use", async () => {
+    const serialized = JSON.stringify(seedCapabilityManifests);
+    const parsed = JSON.parse(serialized) as Array<{ id: string; title: string }>;
+    assert.equal(parsed.length, seedCapabilityManifests.length);
+    assert.equal(parsed[0].id, seedCapabilityManifests[0].id);
+    assert.equal(parsed[0].title, seedCapabilityManifests[0].title);
+  });
+
   await test("e2e: daemon execute-graph and rollback via API", async () => {
     // spawn the daemon in a temporary cwd so it uses an isolated .demo/work
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "aiforge-e2e-"));
@@ -2811,6 +2819,23 @@ async function main() {
       daemon.kill();
       throw new Error("daemon did not start: " + stdoutBuf.slice(0, 2000));
     }
+
+    const manifestResponse = await fetch(`http://127.0.0.1:${port}/api/v1/capabilities/manifests`);
+    assert.equal(manifestResponse.ok, true);
+    const manifestPayload = await manifestResponse.json();
+    assert.ok(Array.isArray(manifestPayload.manifests));
+    assert.equal(manifestPayload.manifests.length, seedCapabilityManifests.length);
+    assert.equal(manifestPayload.manifests[0].id, seedCapabilityManifests[0].id);
+
+    const workbenchResponse = await fetch(`http://127.0.0.1:${port}/workbench`);
+    assert.equal(workbenchResponse.ok, true);
+    const workbenchHtml = await workbenchResponse.text();
+    assert.match(workbenchHtml, /Spectra Workbench/);
+    assert.match(workbenchHtml, /Resume/);
+    assert.match(workbenchHtml, /Capabilities/);
+    assert.match(workbenchHtml, /Approvals/);
+    assert.match(workbenchHtml, /Changes/);
+    assert.match(workbenchHtml, /Settings/);
 
     // POST to execute-graph (streaming). Use a simple node that writes a file.
     const graph = { id: "g-e2e", projectId: "p-e2e", nodes: [{ id: "n1", packet: { intent: "create marker", node_type: "ui", context: { targetFile: "marker.txt" }, filePaths: ["marker.txt"], dependencies: [] } }] };
