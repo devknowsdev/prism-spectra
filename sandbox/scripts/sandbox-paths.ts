@@ -49,8 +49,13 @@ export function resetSandboxTmp(): { sandboxDir: string; tmpDir: string; keepFil
   const sandboxDir = assertInsideSandbox(SANDBOX_DIR, "sandbox directory");
   const tmpDir = assertInsideSandbox(SANDBOX_TMP_DIR, "sandbox tmp directory", sandboxDir);
 
-  fs.rmSync(tmpDir, { recursive: true, force: true });
-  fs.mkdirSync(tmpDir, { recursive: true });
+  if (fs.existsSync(tmpDir)) {
+    for (const entry of fs.readdirSync(tmpDir)) {
+      fs.rmSync(path.join(tmpDir, entry), { recursive: true, force: true });
+    }
+  } else {
+    fs.mkdirSync(tmpDir, { recursive: true });
+  }
 
   const keepFile = path.join(tmpDir, SANDBOX_KEEP_FILE);
   fs.writeFileSync(keepFile, "# Keeps sandbox/tmp present in git.\n", "utf8");

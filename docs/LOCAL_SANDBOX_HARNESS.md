@@ -19,6 +19,7 @@ Sprint 032 adds a disposable sandbox for fuller end-to-end testing of Prism Spec
 
 - `npm run sandbox:reset` removes and recreates `sandbox/tmp/`.
 - `npm run sandbox:seed` resets the sandbox and copies the tracked fixtures into `sandbox/tmp/`.
+- `npm run test:browser` opens the workbench in a local Chrome session and checks the sandbox-seeded browser smoke path.
 
 Both scripts refuse to operate outside the repository sandbox paths they are responsible for.
 
@@ -28,6 +29,7 @@ Both scripts refuse to operate outside the repository sandbox paths they are res
 - Path-escape rejection from the sandbox temp root.
 - Deterministic file seeding and reset behavior.
 - Attachment and metadata fixture handling without touching real user folders.
+- A minimal browser smoke path that proves the workbench loads and does not eagerly request preview bytes for a selected sandbox attachment.
 
 ## Safety guarantees
 
@@ -39,9 +41,10 @@ Both scripts refuse to operate outside the repository sandbox paths they are res
 
 ## What remains manual
 
-- Browser-driven workbench interactions still need a real browser runner for automatic coverage.
-- This sprint does not add Playwright or another e2e framework.
+- Rich browser e2e coverage still needs a broader test strategy.
+- This smoke test does not verify waveform playback, visual regressions, or full attachment workflows.
+- It uses the local Google Chrome app plus a tiny CDP runner, so the maintenance cost stays low without adding a browser dependency.
 
 ## Recommended next step
 
-Add a minimal Playwright smoke test that opens the workbench, runs the sandbox seed, and verifies the calm attachment flows in a browser. That should remain a separate sprint so the harness stays narrow and local-first.
+Expand browser coverage only where it reduces repeated manual smoke work. The next useful addition would be a focused audio waveform browser check once a tiny fixture is worth carrying.

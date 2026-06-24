@@ -13,6 +13,7 @@
     "demo": "tsx src/demo.ts",
     "sandbox:reset": "node --import tsx sandbox/scripts/reset-sandbox.ts",
     "sandbox:seed": "node --import tsx sandbox/scripts/seed-sandbox.ts",
+    "test:browser": "node --import tsx test/browser/workbench-smoke.test.ts",
     "forge": "tsx src/cli.ts",
     "start": "tsx src/cli.ts",
     "pretest": "npm run typecheck",
