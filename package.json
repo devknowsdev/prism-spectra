@@ -11,6 +11,8 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "demo": "tsx src/demo.ts",
+    "sandbox:reset": "node --import tsx sandbox/scripts/reset-sandbox.ts",
+    "sandbox:seed": "node --import tsx sandbox/scripts/seed-sandbox.ts",
     "forge": "tsx src/cli.ts",
     "start": "tsx src/cli.ts",
     "pretest": "npm run typecheck",

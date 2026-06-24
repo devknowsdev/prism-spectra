@@ -80,6 +80,16 @@ import { Wizard, MAX_QUESTIONS } from "../src/wizard/wizard.js";
 import { spawn } from "node:child_process";
 import os from "node:os";
 import type { TaskPacket } from "../src/types.js";
+import {
+  SANDBOX_DIR,
+  SANDBOX_FIXTURES_DIR,
+  SANDBOX_TMP_DIR,
+  assertInsideSandbox,
+  getSandboxSeedRelativePaths,
+  resetSandboxTmp,
+  resolveSandboxTmpPath,
+  seedSandboxTmp,
+} from "../sandbox/scripts/sandbox-paths.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..", ".test-tmp");
@@ -2678,6 +2688,86 @@ async function main() {
     assert.equal(destructive.error?.code, "unsupported_operation");
   });
 
+  await test("sandbox harness resets and seeds only sandbox/tmp and exposes seeded files through the filesystem adapter", async () => {
+    const fixtureTextPath = path.join(SANDBOX_FIXTURES_DIR, "attachments", "text-attachment.txt");
+    const fixtureJsonPath = path.join(SANDBOX_FIXTURES_DIR, "metadata", "example.json");
+    const fixtureTextBefore = fs.readFileSync(fixtureTextPath, "utf-8");
+    const fixtureJsonBefore = fs.readFileSync(fixtureJsonPath, "utf-8");
+
+    fs.rmSync(SANDBOX_TMP_DIR, { recursive: true, force: true });
+    fs.mkdirSync(path.join(SANDBOX_TMP_DIR, "transient"), { recursive: true });
+    fs.writeFileSync(path.join(SANDBOX_TMP_DIR, "transient", "volatile.txt"), "volatile");
+
+    const resetResult = resetSandboxTmp();
+    assert.equal(resetResult.tmpDir, SANDBOX_TMP_DIR);
+    assert.equal(fs.existsSync(path.join(SANDBOX_TMP_DIR, "transient", "volatile.txt")), false);
+    assert.equal(fs.existsSync(path.join(SANDBOX_TMP_DIR, ".gitkeep")), true);
+    assert.equal(fs.readFileSync(fixtureTextPath, "utf-8"), fixtureTextBefore);
+    assert.equal(fs.readFileSync(fixtureJsonPath, "utf-8"), fixtureJsonBefore);
+
+    const seededResult = seedSandboxTmp();
+    assert.equal(seededResult.tmpDir, SANDBOX_TMP_DIR);
+    assert.equal(seededResult.sandboxDir, SANDBOX_DIR);
+    assert.deepEqual(
+      seededResult.seededFiles.map((filePath) => path.relative(SANDBOX_TMP_DIR, filePath)).sort(),
+      [...getSandboxSeedRelativePaths()].sort(),
+    );
+
+    const adapter = createFilesystemAdapter({
+      id: "sandbox-harness",
+      allowedRoots: [SANDBOX_TMP_DIR],
+      baseDir: SANDBOX_TMP_DIR,
+    });
+
+    const textResult = await adapter.execute(
+      filesystemAction("sandbox1", "readTextFile", "readTextFile", "read_only", { path: "attachments/text-attachment.txt" }),
+      {},
+    );
+    assert.equal(textResult.success, true);
+    assert.equal(filesystemOutput(textResult, "readTextFile").content, fixtureTextBefore);
+
+    const jsonResult = await adapter.execute(
+      filesystemAction("sandbox2", "readJsonFile", "readJsonFile", "read_only", { path: "metadata/example.json" }),
+      {},
+    );
+    assert.equal(jsonResult.success, true);
+    assert.deepEqual(filesystemOutput(jsonResult, "readJsonFile").data, {
+      kind: "sandbox-metadata",
+      name: "example",
+      version: 1,
+      tags: ["local", "fixture", "deterministic"],
+    });
+
+    const listResult = await adapter.execute(filesystemAction("sandbox3", "listDirectory", "listDirectory", "read_only", { path: "." }), {});
+    assert.equal(listResult.success, true);
+    assert.ok(filesystemOutput(listResult, "listDirectory").entries.some((entry) => entry.name === "attachments"));
+    assert.ok(filesystemOutput(listResult, "listDirectory").entries.some((entry) => entry.name === "metadata"));
+    assert.ok(filesystemOutput(listResult, "listDirectory").entries.some((entry) => entry.name === "media"));
+
+    const blockedTraversal = await adapter.execute(
+      filesystemAction("sandbox4", "readTextFile", "readTextFile", "read_only", { path: "../fixtures/attachments/text-attachment.txt" }),
+      {},
+    );
+    assert.equal(blockedTraversal.blocked, true);
+    assert.equal(blockedTraversal.error?.code, "path_traversal_blocked");
+
+    const blockedEscape = await adapter.execute(
+      filesystemAction(
+        "sandbox5",
+        "readTextFile",
+        "readTextFile",
+        "read_only",
+        { path: path.join(SANDBOX_FIXTURES_DIR, "attachments", "text-attachment.txt") },
+      ),
+      {},
+    );
+    assert.equal(blockedEscape.blocked, true);
+    assert.equal(blockedEscape.error?.code, "path_outside_allowed_roots");
+
+    assert.throws(() => resolveSandboxTmpPath("..", "escape.txt"), /must stay inside/i);
+    assert.throws(() => assertInsideSandbox(path.join(SANDBOX_DIR, "..", "outside"), "sandbox escape check"), /must stay inside/i);
+  });
+
   await test("adapter guard treats unknown high-risk operations as blocked until approved", async () => {
     const adapter = {
       id: "unknown-adapter",
@@ -2929,7 +3019,7 @@ async function main() {
       requestedBy: "workbench",
     });
     ledger.append({
-      time: "2026-06-24T11:30:00.000Z",
+      time: "2099-01-01T00:00:00.000Z",
       type: "system.notice",
       summary: "Manual ledger note",
       severity: "info",

@@ -1,0 +1,2 @@
+This is a tiny sandbox attachment fixture.
+It exists so the local sandbox can seed predictable text content.

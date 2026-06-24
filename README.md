@@ -61,3 +61,6 @@ If you are working on orchestrator behavior, also run:
 ```bash
 npm run demo
 ```
+
+For a disposable local fixture harness, see
+[docs/LOCAL_SANDBOX_HARNESS.md](docs/LOCAL_SANDBOX_HARNESS.md).
