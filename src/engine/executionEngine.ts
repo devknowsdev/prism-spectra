@@ -42,6 +42,12 @@ import { applyPatch } from "../safety/patch.js";
 import { FileLockManager } from "./fileLock.js";
 import { LocalModelLock } from "./modelLock.js";
 import { selectModel as selectOllamaModel } from "../executors/ollama.js";
+import {
+  buildAiRequestIntent,
+  parseStructuredResponse,
+  type AiRequestInput,
+  type AiRequestResult,
+} from "./aiRequest.js";
 
 export interface EngineOptions {
   dbPath: string;
@@ -97,6 +103,127 @@ export class ExecutionEngine {
 
   async init(): Promise<void> {
     await this.checkpoints.init();
+  }
+
+  async runAiRequest(request: AiRequestInput): Promise<AiRequestResult> {
+    const sourceApp = request.sourceApp.trim() || "unknown";
+    const riskClass = request.riskClass ?? "read-only";
+    const preferredMode = request.preferredMode ?? "local-first";
+    const graphId = `ai-request-${sourceApp}-${Date.now()}`;
+    const nodeId = "request";
+    const packet: TaskPacket = {
+      intent: buildAiRequestIntent({ ...request, sourceApp, riskClass, preferredMode }),
+      node_type: request.nodeType ?? "docs",
+      dependencies: [],
+      constraints: ["read-only", "no-app-mutation", "no-file-write"],
+      context: {
+        aiRequest: {
+          sourceApp,
+          intent: request.intent,
+          riskClass,
+          input: request.input ?? {},
+          context: request.context ?? {},
+          preferredMode,
+        },
+        ...(request.conversationId == null ? {} : { conversationId: request.conversationId }),
+      },
+    };
+
+    const decision = this.router.route(packet);
+    const provenanceBase = {
+      routedBy: "prism-spectra" as const,
+      sourceApp,
+      riskClass,
+      preferredMode,
+      graphId,
+      nodeId,
+      recorded: false,
+      chainTried: decision.chainTried,
+    };
+
+    if (!decision.executor) {
+      return {
+        ok: false,
+        provider: null,
+        model: null,
+        response: "",
+        error: `no executor within budget; tried: ${JSON.stringify(decision.chainTried)}`,
+        provenance: provenanceBase,
+      };
+    }
+
+    let result: ExecutionResult;
+    try {
+      result = await this.executeViaRoute(packet, decision.executor);
+    } catch (error) {
+      return {
+        ok: false,
+        provider: decision.executor,
+        model: decision.executor === "ollama" ? selectOllamaModel(packet) : null,
+        dataBoundary: dataBoundaryFor(decision.executor),
+        response: "",
+        error: (error as Error).message,
+        provenance: provenanceBase,
+      };
+    }
+
+    const safeResult: ExecutionResult = { ...result, patch: undefined };
+    this.ledger.recordUsage(safeResult.provider, { cost: safeResult.cost });
+
+    const outcome: NodeOutcome = {
+      projectId: `ai-request:${sourceApp}`,
+      graphId,
+      nodeId,
+      nodeType: packet.node_type,
+      intent: request.intent,
+      provider: safeResult.provider,
+      dataBoundary: dataBoundaryFor(safeResult.provider),
+      result: safeResult,
+    };
+
+    const shouldRecord = request.record !== false;
+    if (shouldRecord) {
+      this.taskHistory.recordOutcome(outcome);
+      this.learningLoop.recordOutcome(outcome);
+      this.recordConversationMessage(packet, outcome, safeResult);
+    }
+
+    const provenance = {
+      ...provenanceBase,
+      recorded: shouldRecord,
+      chainTried: decision.chainTried,
+    };
+    const usage = {
+      tokensIn: safeResult.tokensIn,
+      tokensOut: safeResult.tokensOut,
+      cost: safeResult.cost,
+      latencyMs: safeResult.latencyMs,
+    };
+    const model = safeResult.provider === "ollama" ? selectOllamaModel(packet) : null;
+
+    if (!safeResult.success) {
+      return {
+        ok: false,
+        provider: safeResult.provider,
+        model,
+        dataBoundary: outcome.dataBoundary,
+        response: safeResult.output,
+        error: safeResult.error ?? "AI request failed",
+        provenance,
+        usage,
+      };
+    }
+
+    return {
+      ok: true,
+      provider: safeResult.provider,
+      model,
+      dataBoundary: outcome.dataBoundary,
+      response: safeResult.output,
+      structuredResponse: parseStructuredResponse(safeResult.output),
+      provenance,
+      usage,
+    };
   }
 
   async run(graph: TaskGraph, mode: ExecutionMode = "sequential"): Promise<NodeRunLog[]> {
@@ -208,7 +335,7 @@ export class ExecutionEngine {
           `)
           .run(graph.projectId, graph.id, nodeId, checkpointResult.sha, checkpointResult.hadChanges ? 1 : 0);
       } catch (e) {
-        console.warn('Failed to persist checkpoint record', e);
+        console.warn("Failed to persist checkpoint record", e);
       }
       const validation = result.cacheHit ? { passed: true } : await validate(packet, result, this.workDir);
 
@@ -246,26 +373,7 @@ export class ExecutionEngine {
       // only runs when `packet.context.conversationId` is provided by the
       // caller (e.g. the UI or adapter). Keeping this optional avoids
       // forcing conversation semantics on every node.
-      try {
-        const convId = (packet.context && (packet.context as any).conversationId) || null;
-        if (convId) {
-          const promptText = typeof packet.intent === 'string' ? packet.intent : JSON.stringify(packet.intent || '');
-          const responseText = result.output ?? '';
-          const modelName = outcome.provider === 'ollama' ? selectOllamaModel(packet) : null;
-          try {
-            this.memory.db
-              .prepare(`
-                INSERT INTO messages (conversation_id, role, provider, model, prompt, response, response_sha, attachments)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-              `)
-              .run(convId, 'assistant', outcome.provider, modelName, promptText, responseText, null, null);
-          } catch (e) {
-            console.warn('Failed to write message to DB', e);
-          }
-        }
-      } catch (e) {
-        /* no-op */
-      }
+      this.recordConversationMessage(packet, outcome, result);
 
       return {
         nodeId,
@@ -284,6 +392,29 @@ export class ExecutionEngine {
 
   close(): void {
     this.memory.close();
+  }
+
+  private recordConversationMessage(packet: TaskPacket, outcome: NodeOutcome, result: ExecutionResult): void {
+    try {
+      const convId = (packet.context && (packet.context as any).conversationId) || null;
+      if (!convId) return;
+
+      const promptText = typeof outcome.intent === "string" ? outcome.intent : JSON.stringify(outcome.intent || "");
+      const responseText = result.output ?? "";
+      const modelName = outcome.provider === "ollama" ? selectOllamaModel(packet) : null;
+      try {
+        this.memory.db
+          .prepare(`
+            INSERT INTO messages (conversation_id, role, provider, model, prompt, response, response_sha, attachments)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `)
+          .run(convId, "assistant", outcome.provider, modelName, promptText, responseText, null, null);
+      } catch (e) {
+        console.warn("Failed to write message to DB", e);
+      }
+    } catch (e) {
+      /* no-op */
+    }
   }
 
   private async executeViaRoute(packet: TaskPacket, executor: ExecutorName): Promise<ExecutionResult> {
