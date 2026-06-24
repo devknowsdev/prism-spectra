@@ -31,13 +31,13 @@ npm install
 npm run doctor
 ```
 
-Then run the safe validation path:
+Then run the CI-safe setup/build validation path:
 
 ```bash
-npm run typecheck
-npm test
-npm run build
+npm run test:setup
 ```
+
+`test:setup` runs the doctor, typecheck, and build. It does not run the long daemon e2e harness.
 
 ## Setup guide command
 
@@ -140,15 +140,15 @@ Until Spectra has a richer setup wizard, use this checklist before running workf
 ```bash
 npm run doctor
 npm run setup
-npm run typecheck
-npm test
-npm run build
+npm run test:setup
 npm run forge -- --status
 ```
 
 ## Commands that require extra care
 
 ```bash
+npm test
+npm run test:full
 npm run demo
 npm run sandbox:reset
 npm run sandbox:seed
@@ -156,7 +156,9 @@ npm run workbench
 npm run forge
 ```
 
-These can create local fixture state, start a long-running process, or move beyond passive inspection. Use them deliberately.
+These can create local fixture state, start a long-running process, execute graph paths, or move beyond passive inspection. Use them deliberately.
+
+For the current test-surface split and daemon e2e stabilization notes, see [docs/TEST_STABILIZATION.md](TEST_STABILIZATION.md).
 
 ## What future prompts can omit
 
