@@ -45,6 +45,9 @@ import {
   validateLocalFileSidecar,
   updateSidecarHashFields,
   validateSidecarShape,
+  ManifestCapabilityRegistry,
+  seedCapabilityManifests,
+  validateCapabilityManifest,
   type LocalFileRoundTripPlan,
   type LocalFileSidecarCommandInput,
   type LocalFileSidecarCommandResult,
@@ -2670,6 +2673,103 @@ async function main() {
     assert.throws(() => {
       ensureApprovalAllowed(adapter, { approval: { granted: true, approver: "tester" } }, action("a6", "push", "publish", "external_write"));
     }, /cannot execute/i);
+  });
+
+  await test("capability manifest seed data validates and stays within the scaffold boundary", async () => {
+    assert.equal(seedCapabilityManifests.length, 8);
+    for (const manifest of seedCapabilityManifests) {
+      const result = validateCapabilityManifest(manifest);
+      assert.equal(result.valid, true, `expected ${manifest.id} to validate: ${result.errors.join("; ")}`);
+      assert.equal(result.errors.length, 0);
+    }
+  });
+
+  await test("capability manifest validation rejects empty ids", async () => {
+    const manifest = structuredClone(seedCapabilityManifests[0]);
+    manifest.id = "";
+    const result = validateCapabilityManifest(manifest);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some((error) => error.includes("id must be non-empty and stable-looking")));
+  });
+
+  await test("capability manifest validation rejects heavy/extreme capabilities in always mode", async () => {
+    const manifest = structuredClone(seedCapabilityManifests[3]);
+    manifest.runtime.cpuProfile = "heavy";
+    manifest.runtime.memoryProfile = "heavy";
+    manifest.runtime.loadMode = "always";
+    const result = validateCapabilityManifest(manifest);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some((error) => error.includes("heavy/extreme capabilities cannot use loadMode always")));
+  });
+
+  await test("capability manifest validation rejects remote-required manifests without remote approval", async () => {
+    const manifest = structuredClone(seedCapabilityManifests[0]);
+    manifest.boundaries.remoteRequired = true;
+    manifest.safety.approvalClass = "observe";
+    const result = validateCapabilityManifest(manifest);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some((error) => error.includes("require approvalClass remote")));
+  });
+
+  await test("capability manifest validation rejects write manifests with checkpointPolicy none", async () => {
+    const manifest = structuredClone(seedCapabilityManifests[0]);
+    manifest.safety.approvalClass = "write";
+    manifest.safety.checkpointPolicy = "none";
+    const result = validateCapabilityManifest(manifest);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some((error) => error.includes("checkpointPolicy none")));
+  });
+
+  await test("capability manifest validation rejects download-required manifests without model provenance", async () => {
+    const manifest = structuredClone(seedCapabilityManifests[7]);
+    manifest.provenance.storesModelInfo = false;
+    const result = validateCapabilityManifest(manifest);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some((error) => error.includes("must store model info in provenance")));
+  });
+
+  await test("capability manifest validation rejects avoid/reference_only manifests with commands", async () => {
+    const manifest = structuredClone(seedCapabilityManifests[1]);
+    manifest.runtime.loadMode = "avoid";
+    const result = validateCapabilityManifest(manifest);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some((error) => error.includes("avoid/reference_only capabilities cannot declare active CLI or API commands")));
+  });
+
+  await test("manifest registry rejects invalid manifests without mutating prior state", async () => {
+    const registry = new ManifestCapabilityRegistry();
+    const valid = structuredClone(seedCapabilityManifests[6]);
+    const validResult = registry.registerCapabilityManifest(valid);
+    assert.equal(validResult.registered, true);
+    assert.equal(validResult.manifestId, valid.id);
+
+    const before = registry.getCapabilityManifest(valid.id);
+    assert.ok(before);
+
+    const invalid = structuredClone(valid);
+    invalid.title = "";
+    invalid.safety.approvalClass = "write";
+    invalid.safety.checkpointPolicy = "none";
+    const invalidResult = registry.registerCapabilityManifest(invalid);
+    assert.equal(invalidResult.registered, false);
+    assert.equal(invalidResult.manifest, undefined);
+    assert.ok(invalidResult.validation.errors.length > 0);
+
+    const after = registry.getCapabilityManifest(valid.id);
+    assert.deepEqual(after, before);
+  });
+
+  await test("manifest registry returns registered manifests by id", async () => {
+    const registry = new ManifestCapabilityRegistry();
+    const valid = structuredClone(seedCapabilityManifests[2]);
+    const result = registry.registerCapabilityManifest(valid);
+    assert.equal(result.registered, true);
+    const fetched = registry.getCapabilityManifest(valid.id);
+    assert.ok(fetched);
+    assert.deepEqual(fetched, valid);
+    const listed = registry.listCapabilityManifests();
+    assert.equal(listed.length, 1);
+    assert.deepEqual(listed[0], valid);
   });
 
   await test("e2e: daemon execute-graph and rollback via API", async () => {
