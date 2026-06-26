@@ -16,6 +16,25 @@ Focus feature -> Focus AiAdapter -> Spectra /api/v1/ai/request -> Spectra provid
 Focus owns task/planner state. Spectra owns provider routing/model selection.
 The first Focus integration is read-only and must not mutate Focus state.
 
+## Expected user-facing behaviour
+
+The setup should be understandable from inside Focus without needing an AI
+assistant to explain it.
+
+Focus Settings -> AI now includes a `Spectra AI gateway` panel and a five-step
+setup wizard:
+
+1. Understand what Focus AI does.
+2. Connect Spectra.
+3. Test the connection.
+4. Use AI in Focus.
+5. Troubleshoot common failures.
+
+The wizard explains that a browser app cannot silently start a local Node/Ollama
+process. It therefore gives the safest near-button-driven path: save defaults,
+copy or download a launcher, keep the Spectra terminal window open, then test
+from inside Focus.
+
 ## Start Spectra for Focus
 
 From the `prism-spectra` repo:
@@ -80,18 +99,29 @@ python3 -m http.server 8080
 Then open Focus in the browser and go to:
 
 ```text
-Settings -> AI -> Spectra AI gateway
+Settings -> AI -> Spectra AI gateway -> Open AI setup wizard
 ```
 
-Use:
+The intended browser flow is:
+
+1. Click `Use dev defaults`.
+2. Click `Copy mock command` or `Download launcher`.
+3. Start/keep open the Spectra terminal window.
+4. Click `Test Spectra`.
+5. Enable AI features.
+6. Try daily plan suggestion, journal interpretation, or task parsing.
+
+A successful test should show:
 
 ```text
-URL:   http://127.0.0.1:3000
-Token: dev-local-token
+Connected
+provider: ...
+model: ...
+data: local / external
 ```
 
-Click `Test Spectra`. The test performs a health check and one read-only AI
-request. It should report the provider, model, and data boundary.
+If mock mode is active, Focus should explicitly say the bridge is working but
+answers are test responses.
 
 ## Safety notes
 
@@ -100,3 +130,10 @@ request. It should report the provider, model, and data boundary.
 - Do not add app-local provider routing to Focus.
 - Do not put runtime AI calls in Beam.
 - Mock mode is for proving the bridge; real local mode requires Ollama running.
+
+## Product follow-up
+
+A true one-click local AI experience will need a packaged local helper app,
+Electron/Tauri shell, LaunchAgent, or signed macOS launcher. A static browser app
+can copy commands, download helper scripts, and test localhost, but should not
+pretend it can safely start background local processes by itself.
