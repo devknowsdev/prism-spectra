@@ -61,6 +61,11 @@ function paidTierPreference(complexity: Complexity): ExecutorName[] {
   return complexity === "high" ? ["claude", "gpt"] : ["gpt", "claude"];
 }
 
+// TODO(Tier-1): this stub always returns true; the real Ollama health gate is
+// handled by applyProviderProbe() in cli.ts, daemon.ts, and ai-gateway.ts,
+// which sets rpmLimit:0 via the ledger when Ollama is unreachable.
+// If a direct-router caller (bypassing those entry points) needs its own gate,
+// wire a cached probeOllama() result here.
 function localTierAvailable(_packet: TaskPacket): boolean {
   return true;
 }
