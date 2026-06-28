@@ -862,7 +862,8 @@ async function start() {
       }
 
       if (req.method === "GET" && url.pathname === "/api/v1/workbench/changes") {
-        return jsonResponse(res, 200, { changes: buildWorkbenchChanges(engine.memory, getWorkbenchOptions(eventLedger, approvalQueue)) });
+        const changesLimit = Math.min(Number(url.searchParams.get("limit") || 50), 200);
+        return jsonResponse(res, 200, { changes: buildWorkbenchChanges(engine.memory, getWorkbenchOptions(eventLedger, approvalQueue), changesLimit) });
       }
 
       if (req.method === "GET" && url.pathname === "/api/v1/workbench/conversations") {
