@@ -27,6 +27,7 @@ import {
   seedCapabilityManifests,
 } from "../src/index.js";
 import { TaskGraph } from "../src/taskGraph/graph.js";
+import { probeAllProviders, applyProviderProbe } from "../src/config/providerProbe.js";
 
 const PORT = Number(process.env.AI_FORGE_DAEMON_PORT ?? 3000);
 const HOST = process.env.AI_FORGE_DAEMON_HOST ?? "127.0.0.1";
@@ -38,9 +39,9 @@ const WORKBENCH_SHIM_DIR = path.resolve(DAEMON_DIR, "../ui/workbench/vendor-shim
 const NODE_MODULES_DIR = path.resolve(DAEMON_DIR, "../node_modules");
 
 async function initEngine() {
-  const engine = new ExecutionEngine({ dbPath: ".demo/daemon.db", workDir: ".demo/work", mockExecutors: true, fallbackOnFailure: false });
+  const engine = new ExecutionEngine({ dbPath: ".demo/daemon.db", workDir: ".demo/work", mockExecutors: process.env.AI_FORGE_MOCK_EXECUTORS === "1", fallbackOnFailure: false });
   await engine.init();
-  const graphBuilder = new GraphBuilder(engine.memory, engine.taskHistory);
+  const statuses = await probeAllProviders();   applyProviderProbe(engine, statuses);   const ollamaStatus = statuses.find(s => s.provider === "ollama");   if (!ollamaStatus?.available) {     console.warn("[daemon] Ollama unavailable at startup — local tier disabled:", ollamaStatus?.reason ?? "no reason given");   }   const graphBuilder = new GraphBuilder(engine.memory, engine.taskHistory);
   return { engine, graphBuilder };
 }
 
@@ -861,7 +862,8 @@ async function start() {
       }
 
       if (req.method === "GET" && url.pathname === "/api/v1/workbench/changes") {
-        return jsonResponse(res, 200, { changes: buildWorkbenchChanges(engine.memory, getWorkbenchOptions(eventLedger, approvalQueue)) });
+        const changesLimit = Math.min(Number(url.searchParams.get("limit") || 50), 200);
+        return jsonResponse(res, 200, { changes: buildWorkbenchChanges(engine.memory, getWorkbenchOptions(eventLedger, approvalQueue), changesLimit) });
       }
 
       if (req.method === "GET" && url.pathname === "/api/v1/workbench/conversations") {

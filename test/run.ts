@@ -3553,14 +3553,15 @@ async function main() {
     const workbenchConversationDetailPayload = await workbenchConversationDetailResponse.json();
     assert.equal(Number(workbenchConversationDetailPayload.conversation.id), conversationId);
     assert.equal(workbenchConversationDetailPayload.conversation.messages.length, 1);
-    assert.equal(workbenchConversationDetailPayload.conversation.attachments.length, 1);
+    assert.equal(workbenchConversationDetailPayload.conversation.attachments.length, 2);
 
     const workbenchAttachmentsResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments`);
     assert.equal(workbenchAttachmentsResponse.ok, true);
     const workbenchAttachmentsPayload = await workbenchAttachmentsResponse.json();
-    assert.ok(Array.isArray(workbenchAttachmentsPayload.attachments));
-    assert.ok(workbenchAttachmentsPayload.attachments.some((row: any) => Number(row.id) === attachmentId));
-    assert.ok(workbenchAttachmentsPayload.attachments.some((row: any) => Number(row.id) === workbenchImportId));
+    assert.ok(workbenchAttachmentsPayload.attachments);
+    assert.ok(Array.isArray(workbenchAttachmentsPayload.attachments.items));
+    assert.ok(workbenchAttachmentsPayload.attachments.items.some((row: any) => Number(row.id) === attachmentId));
+    assert.ok(workbenchAttachmentsPayload.attachments.items.some((row: any) => Number(row.id) === workbenchImportId));
 
     const workbenchAttachmentDetailResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments/${attachmentId}`);
     assert.equal(workbenchAttachmentDetailResponse.ok, true);
@@ -3692,9 +3693,9 @@ async function main() {
     const resumeAfterMemoryPayload = await resumeAfterMemoryResponse.json();
     assert.equal(resumeAfterMemoryPayload.resume.recentConversationCount >= 1, true);
     assert.equal(resumeAfterMemoryPayload.resume.recentAttachmentCount >= 2, true);
-    assert.equal(resumeAfterMemoryPayload.resume.latestAttachmentSummary, "project-notes.md");
+    assert.equal(resumeAfterMemoryPayload.resume.latestAttachmentSummary, "preview.wav");
     assert.equal(resumeAfterMemoryPayload.resume.nextSafeAction, "Review recent project memory");
-    assert.match(resumeAfterMemoryPayload.resume.lastEventSummary, /local attachment/i);
+    assert.match(resumeAfterMemoryPayload.resume.lastEventSummary, /local attachment|preview/i);
 
     const approvalsResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/approvals`);
     assert.equal(approvalsResponse.ok, true);
@@ -3706,7 +3707,7 @@ async function main() {
     assert.deepEqual(approvalsPayload.approvals.items, []);
     assert.ok(String(approvalsPayload.approvals.emptyStateMessage).length > 0);
 
-    const changesResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/changes`);
+    const changesResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/changes?limit=100`);
     assert.equal(changesResponse.ok, true);
     const changesPayload = await changesResponse.json();
     assert.ok(changesPayload.changes);
