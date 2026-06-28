@@ -4,16 +4,107 @@
 import type { Executor, ExecutionResult, NodeType, TaskPacket } from "../types.js";
 import { buildTaskPrompt, collectTargetFiles, patchFromFileResponse } from "./aiPrompt.js";
 
+export type ModelRole = "classifier" | "coder" | "planner" | "reasoner" | "fallback";
+
+export interface LocalModelEntry {
+  ollamaModel: string;
+  role: ModelRole;
+  maxContext: number;
+}
+
 export const OLLAMA_CODER_MODEL = "qwen2.5-coder:7b";
 export const OLLAMA_GENERAL_MODEL = "qwen3:9b";
 export const DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434";
 
+/**
+ * Role-tagged local model catalog for Track A.
+ * Defaults match models confirmed installed on the local machine.
+ * Each role can be overridden via OLLAMA_MODEL_<ROLE> env vars
+ * (e.g. OLLAMA_MODEL_CODER=codellama:7b).
+ * Do not confuse with src/config/modelRegistry.ts — that is Track B and excluded from build.
+ */
+export const LOCAL_MODEL_CATALOG: Record<ModelRole, LocalModelEntry> = {
+  classifier: { ollamaModel: "phi3:mini", role: "classifier", maxContext: 4096 },
+  coder: { ollamaModel: "qwen2.5-coder:7b", role: "coder", maxContext: 8192 },
+  planner: { ollamaModel: "qwen3:8b", role: "planner", maxContext: 8192 },
+  reasoner: { ollamaModel: "qwen3:8b", role: "reasoner", maxContext: 8192 },
+  fallback: { ollamaModel: "phi3:mini", role: "fallback", maxContext: 4096 },
+};
+
+const ROLE_BY_NODE_TYPE: Record<string, ModelRole> = {
+  ui: "coder",
+  backend: "coder",
+  tests: "coder",
+  docs: "planner",
+  terminal: "reasoner",
+};
+
+/**
+ * Resolve the Ollama model string for a given role.
+ * Checks OLLAMA_MODEL_<ROLE> env var first, then catalog default.
+ */
+export function selectModelForRole(role: ModelRole): string {
+  const envKey = `OLLAMA_MODEL_${role.toUpperCase()}`;
+  return process.env[envKey] ?? LOCAL_MODEL_CATALOG[role].ollamaModel;
+}
+
 const CODING_NODE_TYPES: ReadonlySet<NodeType> = new Set(["ui", "backend", "tests"]);
 
 export function selectModel(packet: TaskPacket, opts?: { coderModel?: string; generalModel?: string }): string {
-  const coder = opts?.coderModel ?? process.env.OLLAMA_CODER_MODEL ?? OLLAMA_CODER_MODEL;
-  const general = opts?.generalModel ?? process.env.OLLAMA_GENERAL_MODEL ?? OLLAMA_GENERAL_MODEL;
-  return CODING_NODE_TYPES.has(packet.node_type) ? coder : general;
+  // Legacy env var / opts compat — Focus and CLI set OLLAMA_CODER_MODEL / OLLAMA_GENERAL_MODEL.
+  // If either legacy override is active, use the original binary selection so nothing breaks.
+  const legacyCoder = opts?.coderModel ?? process.env.OLLAMA_CODER_MODEL;
+  const legacyGeneral = opts?.generalModel ?? process.env.OLLAMA_GENERAL_MODEL;
+  if (legacyCoder || legacyGeneral) {
+    const coder = legacyCoder ?? OLLAMA_CODER_MODEL;
+    const general = legacyGeneral ?? OLLAMA_GENERAL_MODEL;
+    return CODING_NODE_TYPES.has(packet.node_type) ? coder : general;
+  }
+  // Role-based selection via catalog.
+  const role = ROLE_BY_NODE_TYPE[packet.node_type] ?? "planner";
+  return selectModelForRole(role);
+}
+
+/**
+ * Lightweight pre-classification call using the classifier-role model.
+ * Calls Ollama directly (short timeout, small output limit).
+ * Returns null on any failure — callers must handle null gracefully and fall back
+ * to selectModel() without pre-classification.
+ *
+ * NOT yet wired into OllamaExecutor.execute() — this is the primitive for Tier 2b.
+ * When wired, it must go through the same ModelLock as the main execute() call.
+ */
+export async function classifyIntent(
+  intent: string,
+  host = ollamaHost()
+): Promise<{ role: ModelRole; reasoning: string } | null> {
+  const model = selectModelForRole("classifier");
+  const prompt = `You are a task classifier. Given a task intent, respond with ONLY a JSON object with no other text: {"role": "<coder|planner|reasoner|fallback>", "reasoning": "<one sentence>"}. Task: "${intent.slice(0, 500)}"`;
+
+  try {
+    const response = await fetch(`${host}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        stream: false,
+        options: { num_predict: 80 },
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) return null;
+    const data = (await response.json()) as { message?: { content?: string } };
+    const text = (data.message?.content ?? "").trim();
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    const parsed = JSON.parse(match[0]) as { role?: string; reasoning?: string };
+    const validRoles: ModelRole[] = ["coder", "planner", "reasoner", "fallback"];
+    if (!parsed.role || !validRoles.includes(parsed.role as ModelRole)) return null;
+    return { role: parsed.role as ModelRole, reasoning: parsed.reasoning ?? "" };
+  } catch {
+    return null;
+  }
 }
 
 export function ollamaHost(): string {
