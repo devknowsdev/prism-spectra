@@ -3553,7 +3553,7 @@ async function main() {
     const workbenchConversationDetailPayload = await workbenchConversationDetailResponse.json();
     assert.equal(Number(workbenchConversationDetailPayload.conversation.id), conversationId);
     assert.equal(workbenchConversationDetailPayload.conversation.messages.length, 1);
-    assert.equal(workbenchConversationDetailPayload.conversation.attachments.length, 1);
+    assert.equal(workbenchConversationDetailPayload.conversation.attachments.length, 2);
 
     const workbenchAttachmentsResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/attachments`);
     assert.equal(workbenchAttachmentsResponse.ok, true);
