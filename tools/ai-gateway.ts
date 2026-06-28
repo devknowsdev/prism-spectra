@@ -4,6 +4,7 @@ import http from "node:http";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { ExecutionEngine, normalizeAiRequestBody } from "../src/index.js";
+import { probeAllProviders, applyProviderProbe } from "../src/config/providerProbe.js";
 
 const PORT = Number(process.env.AI_FORGE_AI_GATEWAY_PORT ?? process.env.AI_FORGE_DAEMON_PORT ?? 3000);
 const HOST = process.env.AI_FORGE_AI_GATEWAY_HOST ?? process.env.AI_FORGE_DAEMON_HOST ?? "127.0.0.1";
@@ -11,7 +12,7 @@ const ENV_TOKEN = process.env.AI_FORGE_AI_GATEWAY_TOKEN ?? process.env.AI_FORGE_
 const TOKEN = ENV_TOKEN || randomBytes(18).toString("hex");
 const DB_PATH = process.env.AI_FORGE_AI_GATEWAY_DB ?? ".demo/ai-gateway.db";
 const WORK_DIR = process.env.AI_FORGE_AI_GATEWAY_WORKDIR ?? path.join(".demo", "ai-gateway-work");
-const MOCK_EXECUTORS = process.env.AI_FORGE_MOCK_EXECUTORS !== "0";
+const MOCK_EXECUTORS = process.env.AI_FORGE_MOCK_EXECUTORS === "1";
 
 function jsonResponse(res: http.ServerResponse, code: number, body: unknown) {
   const s = JSON.stringify(body, null, 2);
@@ -44,6 +45,8 @@ async function readBody(req: http.IncomingMessage): Promise<unknown> {
 }
 
 async function start() {
+  console.log(`[ai-gateway] mockExecutors: ${MOCK_EXECUTORS} (set AI_FORGE_MOCK_EXECUTORS=1 to enable mocks)`);
+
   const engine = new ExecutionEngine({
     dbPath: DB_PATH,
     workDir: WORK_DIR,
@@ -51,6 +54,14 @@ async function start() {
     fallbackOnFailure: false,
   });
   await engine.init();
+
+  // Wire Ollama health check — same pattern as cli.ts
+  const statuses = await probeAllProviders();
+  applyProviderProbe(engine, statuses);
+  const ollamaStatus = statuses.find(s => s.provider === "ollama");
+  if (!ollamaStatus?.available) {
+    console.warn("[ai-gateway] Ollama unavailable at startup — local tier disabled:", ollamaStatus?.reason ?? "no reason given");
+  }
 
   const server = http.createServer(async (req, res) => {
     try {
