@@ -94,6 +94,7 @@ function run() {
   assert.equal(g5.nextAction?.action, "show-logs");
   assert.equal(g5.nextAction?.role, "spectra-validation");
   assert.equal(g5.nextAction?.requiresApproval, false);
+  assert.match(g5.nextAction?.reason ?? "", /Review the failed validation output below/);
 
   const html = renderProjectCockpitHtml();
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]);
@@ -107,7 +108,10 @@ function run() {
   assert.match(html, /guided-panel/, "cockpit should render the guided panel scaffold");
   assert.match(html, /advanced-section/, "cockpit should keep advanced process controls behind a section");
   assert.match(html, /data-guided-action/, "guided approve buttons should use structured action packets");
-  assert.match(html, /Open validation logs/, "failed validation guidance should expose a direct log button");
+  assert.match(html, /What to do now/, "failed validation should become a guided next-step card");
+  assert.match(html, /Validation output/, "failed validation should show inline output in the guided panel");
+  assert.match(html, /Run validation again/, "failed validation should expose a rerun action in the guided panel");
+  assert.match(html, /Open advanced logs/, "advanced logs should be explicitly secondary");
   assert.match(html, /let advancedOpen = false/, "advanced drawer state should survive auto-refresh renders");
   assert.match(html, /openLogRoles/, "open log cards should survive auto-refresh renders");
   assert.match(html, /join\('\\\\n'\)/, "cockpit logs should join with an escaped newline literal");
