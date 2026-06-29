@@ -57,6 +57,26 @@ async function main() {
   assert.equal(classifierSmoke.request.maxOutputTokens, 80);
   assert.equal(classifierSmoke.request.record, false);
 
+  const focusChat = normalizeAiRequestBody({
+    sourceApp: "prism-focus",
+    intent: "focus-chat-message",
+    riskClass: "read-only",
+    preferredMode: "local-first",
+    aiRole: "planner",
+    maxOutputTokens: 900,
+    record: false,
+    input: {
+      prompt: "what can you do?",
+      instruction: "Return ONLY valid JSON with this shape: { reply, proposedTasks, proposedSchedule, followUpQuestion }",
+    },
+    context: {
+      feature: "focus-chat",
+      appSurface: "chat-modal",
+    },
+  });
+  assert.equal(focusChat.ok, true);
+  if (!focusChat.ok) throw new Error("expected focus chat request");
+
   const engine = new ExecutionEngine({
     dbPath: path.join(ROOT, "gateway.db"),
     workDir: path.join(ROOT, "work"),
@@ -88,6 +108,17 @@ async function main() {
   assert.equal(smokeResult.provider, "ollama");
   assert.equal(smokeResult.model, "qwen3:1.7b");
   assert.equal(smokeResult.provenance.recorded, false);
+
+  const focusChatResult = await engine.runAiRequest(focusChat.request);
+  assert.equal(focusChatResult.ok, true);
+  assert.equal(focusChatResult.provider, "ollama");
+  assert.equal(focusChatResult.model, "qwen3.5:9b");
+  assert.equal(focusChatResult.provenance.recorded, false);
+  assert.equal(typeof focusChatResult.structuredResponse, "object");
+  assert.ok(focusChatResult.structuredResponse);
+  assert.equal(typeof (focusChatResult.structuredResponse as any).reply, "string");
+  assert.deepEqual((focusChatResult.structuredResponse as any).proposedTasks, []);
+  assert.deepEqual((focusChatResult.structuredResponse as any).proposedSchedule, []);
 
   const summary = engine.taskHistory
     .dataBoundarySummary("ai-request:prism-focus")
