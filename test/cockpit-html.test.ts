@@ -84,6 +84,17 @@ function run() {
   assert.equal(g4.checklist.find(c => c.id === "validation")?.status, "done");
   assert.equal(g4.checklist.find(c => c.id === "bridge")?.status, "pending");
 
+  const g5 = deriveCockpitGuidance(mockProfile({
+    roles: mockProfile().roles.map((role: any) => {
+      if (role.id === "focus-ui") return { ...role, status: { running: true, externalPortOwner: false } };
+      if (role.id === "spectra-validation") return { ...role, status: { running: false, lastExitCode: 1 } };
+      return role;
+    }),
+  }));
+  assert.equal(g5.nextAction?.action, "show-logs");
+  assert.equal(g5.nextAction?.role, "spectra-validation");
+  assert.equal(g5.nextAction?.requiresApproval, false);
+
   const html = renderProjectCockpitHtml();
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]);
 
@@ -96,6 +107,9 @@ function run() {
   assert.match(html, /guided-panel/, "cockpit should render the guided panel scaffold");
   assert.match(html, /advanced-section/, "cockpit should keep advanced process controls behind a section");
   assert.match(html, /data-guided-action/, "guided approve buttons should use structured action packets");
+  assert.match(html, /Open validation logs/, "failed validation guidance should expose a direct log button");
+  assert.match(html, /let advancedOpen = false/, "advanced drawer state should survive auto-refresh renders");
+  assert.match(html, /openLogRoles/, "open log cards should survive auto-refresh renders");
   assert.match(html, /join\('\\\\n'\)/, "cockpit logs should join with an escaped newline literal");
   assert.doesNotMatch(html, /join\('\n'\)/, "cockpit logs must not render a literal line break inside a string");
   assert.doesNotMatch(html, /external pid\(s\).*status\.port\.pids\.join/, "external pid display should filter real positive PIDs before rendering");
