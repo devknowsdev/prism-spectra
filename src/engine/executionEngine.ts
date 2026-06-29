@@ -26,11 +26,12 @@
 //     crediting a provider with a free win it didn't actually do would
 //     distort routing_weights' success/cost/latency averages.
 
-import type { ExecutionMode, ExecutionResult, ExecutorName, NodeOutcome, TaskPacket } from "../types.js";
+import type { CacheHitKind, ExecutionMode, ExecutionResult, ExecutorName, NodeOutcome, TaskPacket } from "../types.js";
 import { dataBoundaryFor } from "../types.js";
 import { MemoryDB } from "../memory/db.js";
 import { Ledger } from "../memory/ledger.js";
-import { PatternCache } from "../memory/patternCache.js";
+import { PatternCache, type CacheLookup } from "../memory/patternCache.js";
+import { SemanticPatternCache } from "../memory/semanticPatternCache.js";
 import { TaskHistory } from "../memory/taskHistory.js";
 import { LearningLoop } from "../intelligence/learningLoop.js";
 import { Router } from "../routing/router.js";
@@ -49,6 +50,7 @@ import {
   selectModelForRole,
   type ModelRole,
 } from "../executors/ollama.js";
+import { OllamaEmbeddingProvider, startEmbeddingKeepalive, type EmbeddingProvider } from "../embeddings/ollamaEmbeddings.js";
 import {
   buildAiRequestIntent,
   parseStructuredResponse,
@@ -71,6 +73,14 @@ export interface EngineOptions {
   useLiveOllamaClassifier?: boolean;
   /** Cascade quality-gate threshold for local confidence scoring. */
   confidenceThreshold?: number;
+  /** Enable Layer B semantic cache. Defaults on for real executors, off for mocks unless a provider is injected. */
+  semanticCacheEnabled?: boolean;
+  /** Test/adapter injection point. Production defaults to Ollama /api/embed. */
+  semanticEmbeddingProvider?: EmbeddingProvider;
+  /** Semantic cache cosine threshold. Default 0.92. */
+  semanticCacheThreshold?: number;
+  /** Keep the embedding model warm. Defaults on for real executors. Timer is unref'd. */
+  semanticEmbeddingKeepalive?: boolean;
 }
 
 export interface NodeRunLog {
@@ -78,6 +88,7 @@ export interface NodeRunLog {
   status: "success" | "failed";
   provider: ExecutorName;
   cacheHit: boolean;
+  cacheHitKind?: CacheHitKind;
   cost: number;
   latencyMs: number;
   error?: string;
@@ -90,6 +101,7 @@ export class ExecutionEngine {
   readonly memory: MemoryDB;
   readonly ledger: Ledger;
   readonly patternCache: PatternCache;
+  readonly semanticPatternCache?: SemanticPatternCache;
   readonly taskHistory: TaskHistory;
   readonly learningLoop: LearningLoop;
   readonly router: Router;
@@ -101,6 +113,8 @@ export class ExecutionEngine {
   private fallbackOnFailure: boolean;
   private useLiveOllamaClassifier: boolean;
   private confidenceThreshold: number;
+  private embeddingProvider?: EmbeddingProvider;
+  private embeddingKeepalive?: { stop: () => void };
 
   constructor(opts: EngineOptions) {
     this.workDir = opts.workDir;
@@ -111,6 +125,18 @@ export class ExecutionEngine {
     this.memory = new MemoryDB(opts.dbPath);
     this.ledger = new Ledger(this.memory);
     this.patternCache = new PatternCache(this.memory);
+    const semanticEnabled = opts.semanticCacheEnabled ?? (Boolean(opts.semanticEmbeddingProvider) || !mockExecutors);
+    if (semanticEnabled) {
+      this.embeddingProvider = opts.semanticEmbeddingProvider ?? new OllamaEmbeddingProvider();
+      this.semanticPatternCache = new SemanticPatternCache({
+        provider: this.embeddingProvider,
+        similarityThreshold: opts.semanticCacheThreshold,
+      });
+      const keepWarm = opts.semanticEmbeddingKeepalive ?? !mockExecutors;
+      if (keepWarm) {
+        this.embeddingKeepalive = startEmbeddingKeepalive(this.embeddingProvider);
+      }
+    }
     this.taskHistory = new TaskHistory(this.memory);
     this.learningLoop = new LearningLoop(this.memory);
     this.router = new Router(this.ledger, this.learningLoop);
@@ -278,7 +304,7 @@ export class ExecutionEngine {
       let chainTried: NodeRunLog["ledgerChainTried"];
 
       const cacheable = packet.node_type !== "terminal";
-      const cacheLookup = cacheable ? this.patternCache.get(packet) : { hit: false as const };
+      const cacheLookup = cacheable ? await this.lookupCache(packet) : { hit: false as const };
 
       if (cacheLookup.hit) {
         result = {
@@ -290,6 +316,7 @@ export class ExecutionEngine {
           cost: 0,
           latencyMs: 0,
           cacheHit: true,
+          cacheHitKind: cacheLookup.semantic ? "semantic" : "exact",
           patch: cacheLookup.originPatch,
         };
       } else {
@@ -371,6 +398,7 @@ export class ExecutionEngine {
         node.result = result;
         if (!result.cacheHit) {
           this.patternCache.set(packet, result.output, result.provider, result.tokensIn, result.tokensOut, result.patch);
+          await this.semanticPatternCache?.set(packet, result.output, result.provider, result.tokensIn, result.tokensOut, result.patch);
         }
       } else {
         await this.checkpoints.rollback(nodeId);
@@ -407,6 +435,7 @@ export class ExecutionEngine {
         status: result.success ? "success" : "failed",
         provider: result.provider,
         cacheHit: !!result.cacheHit,
+        cacheHitKind: result.cacheHitKind,
         cost: result.cost,
         latencyMs: result.latencyMs,
         error: result.error,
@@ -420,7 +449,16 @@ export class ExecutionEngine {
   }
 
   close(): void {
+    this.embeddingKeepalive?.stop();
+    this.embeddingProvider?.close?.();
     this.memory.close();
+  }
+
+  private async lookupCache(packet: TaskPacket): Promise<CacheLookup & { semantic?: true }> {
+    const exact = this.patternCache.get(packet);
+    if (exact.hit) return exact;
+    const semantic = await this.semanticPatternCache?.get(packet);
+    return semantic?.hit ? semantic : { hit: false };
   }
 
   private recordConversationMessage(packet: TaskPacket, outcome: NodeOutcome, result: ExecutionResult): void {

@@ -100,6 +100,9 @@ export interface FileEdit {
 export interface Patch {
   edits: FileEdit[];
 }
+
+export type CacheHitKind = "exact" | "semantic";
+
 export interface ExecutionResult {
   success: boolean;
   output: string;
@@ -111,6 +114,8 @@ export interface ExecutionResult {
   error?: string;
   /** True if served from the global pattern cache — no executor was actually called. */
   cacheHit?: boolean;
+  /** Whether a cache hit came from exact SHA matching or derived semantic matching. */
+  cacheHitKind?: CacheHitKind;
   /** Tier 2b routing quality-gate score. Null/undefined means not scored. */
   confidenceScore?: number | null;
   /** Human-readable reason a result was escalated or considered for fallback. */
