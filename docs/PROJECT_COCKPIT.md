@@ -83,9 +83,9 @@ The cockpit currently runs only preset commands. It does not expose a free-form 
 
 This keeps the first version useful for the current workflow while avoiding accidental arbitrary shell execution from the browser.
 
-The Focus UI card includes a **Kill port** action for port `4173`, because that was the immediate source of local testing confusion. The running Spectra gateway card does not expose a kill-port action for port `3000`, because killing that port from the cockpit would kill the cockpit itself.
+The Focus UI card includes a **Kill port** action only for a process the cockpit started and owns. If port `4173` is already owned by an external process, the card shows an external-process warning and a manual terminal command instead of killing it from the browser. The running Spectra gateway card does not expose a kill-port action for port `3000`, because killing that port from the cockpit would kill the cockpit itself.
 
-If a role's port is already owned by a process the cockpit did not start, the card shows an external-process warning, disables **Start / Run** and **Restart**, and leaves **Kill port** available when that action is allowed. Use **Kill port** first when you want the cockpit to take ownership of that role.
+If a role's port is already owned by a process the cockpit did not start, the card shows an external-process warning, disables **Start / Run**, **Restart**, and browser-based **Kill port**, and displays the manual command needed to free the port. Use the manual command first when you want the cockpit to take ownership of that role.
 
 ## Browser notes
 
