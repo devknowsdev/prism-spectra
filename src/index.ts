@@ -12,6 +12,8 @@ export type { WizardMode, GraphBuilderInput, BuildOutcome, FailureNote } from ".
 export { Router, classifyComplexity } from "./routing/router.js";
 export { classifyTaskHeuristic } from "./routing/l1Classifier.js";
 export type { L1Classification, TaskClass } from "./routing/l1Classifier.js";
+export { RouteDecisionCache, paidProviderPreference, routeSignature } from "./routing/routeDecisionCache.js";
+export type { RouteDecisionCacheEntry, RouteDecisionCacheOptions, RouteDecisionHint } from "./routing/routeDecisionCache.js";
 export { TaskGraph } from "./taskGraph/graph.js";
 export { CheckpointManager } from "./safety/checkpoint.js";
 export { validate } from "./safety/validation.js";
