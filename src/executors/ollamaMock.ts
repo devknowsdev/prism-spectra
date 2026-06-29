@@ -25,7 +25,7 @@ export class OllamaMockExecutor implements Executor {
       };
     }
 
-    const output = `[ollama:mock:${model}] handled "${packet.intent}" (${packet.node_type})`;
+    const output = mockOutputFor(packet, model);
     return {
       success: true,
       output,
@@ -37,6 +37,35 @@ export class OllamaMockExecutor implements Executor {
       patch: mockPatchFor(packet, "ollama"),
     };
   }
+}
+
+function mockOutputFor(packet: TaskPacket, model: string): string {
+  if (isFocusJsonAiRequest(packet)) {
+    return JSON.stringify({
+      reply: "Mock mode is connected. I can help you break down tasks, prioritise your day, plan gentle schedule blocks, and reflect on notes without changing anything until you apply it.",
+      proposedTasks: [],
+      proposedSchedule: [],
+      followUpQuestion: "",
+    });
+  }
+
+  return `[ollama:mock:${model}] handled "${packet.intent}" (${packet.node_type})`;
+}
+
+function isFocusJsonAiRequest(packet: TaskPacket): boolean {
+  const aiRequest = (packet.context as Record<string, any> | undefined)?.aiRequest;
+  if (!aiRequest || typeof aiRequest !== "object") return false;
+
+  const sourceApp = String(aiRequest.sourceApp ?? "");
+  const input = aiRequest.input && typeof aiRequest.input === "object" ? aiRequest.input as Record<string, unknown> : {};
+  const context = aiRequest.context && typeof aiRequest.context === "object" ? aiRequest.context as Record<string, unknown> : {};
+  const instruction = String(input.instruction ?? "");
+
+  return sourceApp === "prism-focus" && (
+    context.feature === "focus-chat" ||
+    instruction.includes("Return ONLY valid JSON") ||
+    instruction.includes("proposedTasks")
+  );
 }
 
 function sleep(ms: number): Promise<void> {
