@@ -56,11 +56,21 @@ function mockOutputFor(packet: TaskPacket, model: string): string {
 function focusMockReply(request: { prompt: string; context: Record<string, unknown>; input: Record<string, unknown> }): FocusMockReply {
   const prompt = request.prompt.toLowerCase();
   const historyText = focusHistoryText(request.input).toLowerCase();
+  const conversationText = `${historyText}\n${prompt}`;
   const currentFocusState = request.input.currentFocusState && typeof request.input.currentFocusState === "object"
     ? request.input.currentFocusState as Record<string, unknown>
     : {};
   const openTaskCount = Number(currentFocusState.openTaskCount ?? currentFocusState.taskCount ?? 0);
   const isChooseFollowUp = /four task names|help choose|choose more specifically|which task|choose one/.test(historyText) && looksLikeTaskList(prompt);
+  const hasKnownTaskList = /feed (my |the )?dog|garden|guitar|dinner|neighbou?r/.test(conversationText);
+
+  if (isPlannerResetRequest(prompt)) {
+    return safePlannerResetBoundaryReply();
+  }
+
+  if (hasKnownTaskList && /put them|whatever times|tag .*urgency|urgency|urgent|schedule them|at .*times/.test(prompt)) {
+    return scheduleKnownTaskListReply();
+  }
 
   if (/overwhelm|too much|choose|prioriti[sz]e|pick one|which task/.test(prompt) || isChooseFollowUp) {
     if (isChooseFollowUp) return chooseFromTaskListReply(request.prompt);
@@ -146,6 +156,38 @@ function chooseFromTaskListReply(rawPrompt: string): FocusMockReply {
     proposedSchedule: [],
     followUpQuestion: "",
   };
+}
+
+function scheduleKnownTaskListReply(): FocusMockReply {
+  return {
+    reply: "I can propose a calm order, but I will not directly change existing Focus items. I would handle the care task first, then the neighbour dinner, then music, and leave garden work for daylight or a lower-energy slot.",
+    proposedTasks: [
+      { text: "Feed the dog", ts: "17:30", estimatedMins: 10, note: "Urgency: high — care task, quick win.", taskScope: "day" },
+      { text: "Cook dinner for the neighbours", ts: "18:00", estimatedMins: 75, note: "Urgency: high — commitment to other people.", taskScope: "day" },
+      { text: "Practice acoustic guitar set", ts: "20:00", estimatedMins: 35, note: "Urgency: medium — meaningful, but can be bounded.", taskScope: "day" },
+      { text: "Work on the garden", ts: "10:00", estimatedMins: 30, note: "Urgency: low — best in daylight; move to tomorrow if needed.", taskScope: "day" },
+    ],
+    proposedSchedule: [
+      { start: "17:30", end: "17:40", text: "Feed the dog", estimatedMins: 10, note: "Urgency: high." },
+      { start: "18:00", end: "19:15", text: "Cook dinner for the neighbours", estimatedMins: 75, note: "Urgency: high." },
+      { start: "20:00", end: "20:35", text: "Practice acoustic guitar set", estimatedMins: 35, note: "Urgency: medium." },
+      { start: "10:00", end: "10:30", text: "Work on the garden", estimatedMins: 30, note: "Urgency: low; daylight slot." },
+    ],
+    followUpQuestion: "",
+  };
+}
+
+function safePlannerResetBoundaryReply(): FocusMockReply {
+  return {
+    reply: "I cannot clear existing planner items from chat or mock mode. That is a destructive change and needs an explicit Focus confirmation flow. I can help you review what is listed and propose what to keep, move, or remove, but I should not silently clear it.",
+    proposedTasks: [],
+    proposedSchedule: [],
+    followUpQuestion: "Do you want a review-only cleanup plan instead?",
+  };
+}
+
+function isPlannerResetRequest(prompt: string): boolean {
+  return /(clear|remove|delete|wipe).*(event|planner|schedule|calendar)|clear out all/.test(prompt);
 }
 
 function looksLikeTaskList(prompt: string): boolean {
