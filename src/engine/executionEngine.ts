@@ -34,7 +34,8 @@ import { PatternCache, type CacheLookup } from "../memory/patternCache.js";
 import { SemanticPatternCache } from "../memory/semanticPatternCache.js";
 import { TaskHistory } from "../memory/taskHistory.js";
 import { LearningLoop } from "../intelligence/learningLoop.js";
-import { Router } from "../routing/router.js";
+import { Router, type RouteDecision } from "../routing/router.js";
+import { RouteDecisionCache } from "../routing/routeDecisionCache.js";
 import { classifyTaskHeuristic, type L1Classification } from "../routing/l1Classifier.js";
 import { buildExecutorRegistry } from "../executors/index.js";
 import { TaskGraph } from "../taskGraph/graph.js";
@@ -81,6 +82,10 @@ export interface EngineOptions {
   semanticCacheThreshold?: number;
   /** Keep the embedding model warm. Defaults on for real executors. Timer is unref'd. */
   semanticEmbeddingKeepalive?: boolean;
+  /** Enable Tier 3b route decision hint cache. Defaults on for real executors, off for mocks unless a provider is injected. */
+  routeDecisionCacheEnabled?: boolean;
+  /** Route decision cache cosine threshold. Default 0.9. */
+  routeDecisionCacheThreshold?: number;
 }
 
 export interface NodeRunLog {
@@ -89,6 +94,8 @@ export interface NodeRunLog {
   provider: ExecutorName;
   cacheHit: boolean;
   cacheHitKind?: CacheHitKind;
+  routeCacheHit?: boolean;
+  routeCacheSimilarity?: number;
   cost: number;
   latencyMs: number;
   error?: string;
@@ -102,6 +109,7 @@ export class ExecutionEngine {
   readonly ledger: Ledger;
   readonly patternCache: PatternCache;
   readonly semanticPatternCache?: SemanticPatternCache;
+  readonly routeDecisionCache?: RouteDecisionCache;
   readonly taskHistory: TaskHistory;
   readonly learningLoop: LearningLoop;
   readonly router: Router;
@@ -126,12 +134,23 @@ export class ExecutionEngine {
     this.ledger = new Ledger(this.memory);
     this.patternCache = new PatternCache(this.memory);
     const semanticEnabled = opts.semanticCacheEnabled ?? (Boolean(opts.semanticEmbeddingProvider) || !mockExecutors);
-    if (semanticEnabled) {
+    const routeDecisionEnabled = opts.routeDecisionCacheEnabled ?? (Boolean(opts.semanticEmbeddingProvider) || !mockExecutors);
+    if (semanticEnabled || routeDecisionEnabled) {
       this.embeddingProvider = opts.semanticEmbeddingProvider ?? new OllamaEmbeddingProvider();
+    }
+    if (semanticEnabled && this.embeddingProvider) {
       this.semanticPatternCache = new SemanticPatternCache({
         provider: this.embeddingProvider,
         similarityThreshold: opts.semanticCacheThreshold,
       });
+    }
+    if (routeDecisionEnabled && this.embeddingProvider) {
+      this.routeDecisionCache = new RouteDecisionCache({
+        provider: this.embeddingProvider,
+        similarityThreshold: opts.routeDecisionCacheThreshold,
+      });
+    }
+    if (this.embeddingProvider) {
       const keepWarm = opts.semanticEmbeddingKeepalive ?? !mockExecutors;
       if (keepWarm) {
         this.embeddingKeepalive = startEmbeddingKeepalive(this.embeddingProvider);
@@ -173,7 +192,7 @@ export class ExecutionEngine {
       },
     };
 
-    const decision = this.router.route(packet);
+    const decision = await this.route(packet);
     const provenanceBase = {
       routedBy: "prism-spectra" as const,
       sourceApp,
@@ -183,6 +202,8 @@ export class ExecutionEngine {
       nodeId,
       recorded: false,
       chainTried: decision.chainTried,
+      routeCacheHit: decision.routeCacheHit,
+      routeCacheSimilarity: decision.routeCacheSimilarity,
     };
 
     if (!decision.executor) {
@@ -230,6 +251,7 @@ export class ExecutionEngine {
       this.taskHistory.recordOutcome(outcome);
       this.learningLoop.recordOutcome(outcome);
       this.recordConversationMessage(packet, outcome, safeResult);
+      if (safeResult.success) await this.rememberRoute(packet, safeResult.provider);
     }
 
     const provenance = {
@@ -302,6 +324,8 @@ export class ExecutionEngine {
     try {
       let result: ExecutionResult;
       let chainTried: NodeRunLog["ledgerChainTried"];
+      let routeCacheHit: boolean | undefined;
+      let routeCacheSimilarity: number | undefined;
 
       const cacheable = packet.node_type !== "terminal";
       const cacheLookup = cacheable ? await this.lookupCache(packet) : { hit: false as const };
@@ -320,8 +344,10 @@ export class ExecutionEngine {
           patch: cacheLookup.originPatch,
         };
       } else {
-        let decision = this.router.route(packet);
+        let decision = await this.route(packet);
         chainTried = decision.chainTried;
+        routeCacheHit = decision.routeCacheHit;
+        routeCacheSimilarity = decision.routeCacheSimilarity;
 
         if (!decision.executor) {
           result = {
@@ -348,8 +374,10 @@ export class ExecutionEngine {
             }
 
             tried.push(decision.executor);
-            decision = this.router.route(packet, tried);
+            decision = await this.route(packet, tried);
             chainTried = [...(chainTried ?? []), ...decision.chainTried];
+            routeCacheHit = routeCacheHit || decision.routeCacheHit;
+            routeCacheSimilarity = routeCacheSimilarity ?? decision.routeCacheSimilarity;
             if (!decision.executor) break;
             const retry = await this.executeViaRoute(packet, decision.executor);
             result = {
@@ -399,6 +427,7 @@ export class ExecutionEngine {
         if (!result.cacheHit) {
           this.patternCache.set(packet, result.output, result.provider, result.tokensIn, result.tokensOut, result.patch);
           await this.semanticPatternCache?.set(packet, result.output, result.provider, result.tokensIn, result.tokensOut, result.patch);
+          await this.rememberRoute(packet, result.provider);
         }
       } else {
         await this.checkpoints.rollback(nodeId);
@@ -436,6 +465,8 @@ export class ExecutionEngine {
         provider: result.provider,
         cacheHit: !!result.cacheHit,
         cacheHitKind: result.cacheHitKind,
+        routeCacheHit,
+        routeCacheSimilarity,
         cost: result.cost,
         latencyMs: result.latencyMs,
         error: result.error,
@@ -459,6 +490,17 @@ export class ExecutionEngine {
     if (exact.hit) return exact;
     const semantic = await this.semanticPatternCache?.get(packet);
     return semantic?.hit ? semantic : { hit: false };
+  }
+
+  private async route(packet: TaskPacket, exclude: ExecutorName[] = []): Promise<RouteDecision> {
+    const hint = await this.routeDecisionCache?.get(packet);
+    return this.router.route(packet, exclude, hint?.hit ? hint : null);
+  }
+
+  private async rememberRoute(packet: TaskPacket, provider: ExecutorName): Promise<void> {
+    if (!this.routeDecisionCache) return;
+    const role = modelRoleFromPacketContext(packet) ?? readL1(packet)?.role ?? classifyTaskHeuristic(packet).role;
+    await this.routeDecisionCache.set(packet, role, provider);
   }
 
   private recordConversationMessage(packet: TaskPacket, outcome: NodeOutcome, result: ExecutionResult): void {
@@ -504,10 +546,11 @@ export class ExecutionEngine {
   private async prepareOllamaPacket(packet: TaskPacket): Promise<TaskPacket> {
     const explicitRole = modelRoleFromPacketContext(packet);
     const l1 = classifyTaskHeuristic(packet);
-    let selectedRole: ModelRole = explicitRole ?? l1.role;
+    const routeHint = !explicitRole ? await this.routeDecisionCache?.get(packet) : null;
+    let selectedRole: ModelRole = explicitRole ?? routeHint?.role ?? l1.role;
     let classifierResult: { role: ModelRole; reasoning: string } | null = null;
 
-    if (!explicitRole && this.useLiveOllamaClassifier && l1.confidence < 0.85) {
+    if (!explicitRole && !routeHint?.hit && this.useLiveOllamaClassifier && l1.confidence < 0.85) {
       classifierResult = await this.modelLock.run(selectModelForRole("classifier"), () => classifyIntent(packet.intent));
       if (classifierResult) selectedRole = classifierResult.role;
     }
@@ -528,6 +571,9 @@ export class ExecutionEngine {
           modelRole: selectedRole,
           l1,
           classifier: classifierResult,
+          routeDecisionCache: routeHint?.hit
+            ? { role: routeHint.role, taskClass: routeHint.taskClass, similarity: routeHint.similarity }
+            : null,
         },
       },
     };
