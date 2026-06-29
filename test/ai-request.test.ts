@@ -10,6 +10,30 @@ import { ExecutionEngine, normalizeAiRequestBody } from "../src/index.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..", ".test-tmp", "ai-request");
 
+function focusChatRequest(prompt: string, extraInput: Record<string, unknown> = {}) {
+  const request = normalizeAiRequestBody({
+    sourceApp: "prism-focus",
+    intent: "focus-chat-message",
+    riskClass: "read-only",
+    preferredMode: "local-first",
+    aiRole: "planner",
+    maxOutputTokens: 900,
+    record: false,
+    input: {
+      prompt,
+      instruction: "Return ONLY valid JSON with this shape: { reply, proposedTasks, proposedSchedule, followUpQuestion }",
+      ...extraInput,
+    },
+    context: {
+      feature: "focus-chat",
+      appSurface: "chat-modal",
+    },
+  });
+  assert.equal(request.ok, true);
+  if (!request.ok) throw new Error("expected focus chat request");
+  return request.request;
+}
+
 async function main() {
   fs.rmSync(ROOT, { recursive: true, force: true });
   fs.mkdirSync(ROOT, { recursive: true });
@@ -57,26 +81,6 @@ async function main() {
   assert.equal(classifierSmoke.request.maxOutputTokens, 80);
   assert.equal(classifierSmoke.request.record, false);
 
-  const focusChat = normalizeAiRequestBody({
-    sourceApp: "prism-focus",
-    intent: "focus-chat-message",
-    riskClass: "read-only",
-    preferredMode: "local-first",
-    aiRole: "planner",
-    maxOutputTokens: 900,
-    record: false,
-    input: {
-      prompt: "what can you do?",
-      instruction: "Return ONLY valid JSON with this shape: { reply, proposedTasks, proposedSchedule, followUpQuestion }",
-    },
-    context: {
-      feature: "focus-chat",
-      appSurface: "chat-modal",
-    },
-  });
-  assert.equal(focusChat.ok, true);
-  if (!focusChat.ok) throw new Error("expected focus chat request");
-
   const engine = new ExecutionEngine({
     dbPath: path.join(ROOT, "gateway.db"),
     workDir: path.join(ROOT, "work"),
@@ -109,16 +113,34 @@ async function main() {
   assert.equal(smokeResult.model, "qwen3:1.7b");
   assert.equal(smokeResult.provenance.recorded, false);
 
-  const focusChatResult = await engine.runAiRequest(focusChat.request);
+  const focusChatResult = await engine.runAiRequest(focusChatRequest("what can you do?"));
   assert.equal(focusChatResult.ok, true);
   assert.equal(focusChatResult.provider, "ollama");
   assert.equal(focusChatResult.model, "qwen3.5:9b");
   assert.equal(focusChatResult.provenance.recorded, false);
   assert.equal(typeof focusChatResult.structuredResponse, "object");
   assert.ok(focusChatResult.structuredResponse);
-  assert.equal(typeof (focusChatResult.structuredResponse as any).reply, "string");
+  assert.match((focusChatResult.structuredResponse as any).reply, /choose a next task/);
   assert.deepEqual((focusChatResult.structuredResponse as any).proposedTasks, []);
   assert.deepEqual((focusChatResult.structuredResponse as any).proposedSchedule, []);
+
+  const overwhelmResult = await engine.runAiRequest(focusChatRequest(
+    "I have four tasks and feel overloaded. Help me choose one.",
+    { currentFocusState: { taskCount: 4, openTaskCount: 4, currentFocusTask: "" } }
+  ));
+  assert.equal(overwhelmResult.ok, true);
+  assert.match((overwhelmResult.structuredResponse as any).reply, /4 open tasks/);
+  assert.match((overwhelmResult.structuredResponse as any).reply, /low-overwhelm next move/);
+  assert.equal((overwhelmResult.structuredResponse as any).proposedTasks.length, 1);
+  assert.match((overwhelmResult.structuredResponse as any).followUpQuestion, /four task names/);
+
+  const breakdownResult = await engine.runAiRequest(focusChatRequest("Break down sort my admin into tiny steps."));
+  assert.equal(breakdownResult.ok, true);
+  assert.ok((breakdownResult.structuredResponse as any).proposedTasks.length >= 2);
+
+  const scheduleResult = await engine.runAiRequest(focusChatRequest("Plan the next 90 minutes gently."));
+  assert.equal(scheduleResult.ok, true);
+  assert.ok((scheduleResult.structuredResponse as any).proposedSchedule.length >= 2);
 
   const summary = engine.taskHistory
     .dataBoundarySummary("ai-request:prism-focus")
