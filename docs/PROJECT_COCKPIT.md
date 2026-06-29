@@ -30,7 +30,9 @@ From the Spectra repo:
 cd ~/Desktop/prism-spectra
 git fetch origin
 git checkout spectra-project-cockpit-20260629
+git pull --ff-only
 npm install
+npm run test:cockpit
 
 AI_FORGE_AI_GATEWAY_TOKEN="dev-local-token" \
 AI_FORGE_MOCK_EXECUTORS=1 \
@@ -94,6 +96,12 @@ npm run test:cockpit
 ```
 
 That check verifies the inline browser script parses as JavaScript, which protects against malformed generated HTML.
+
+For the exact local retest sequence, see:
+
+```text
+docs/COCKPIT_LOCAL_RETEST.md
+```
 
 ## Environment overrides
 
