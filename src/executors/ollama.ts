@@ -50,7 +50,28 @@ export function selectModelForRole(role: ModelRole): string {
 
 const CODING_NODE_TYPES: ReadonlySet<NodeType> = new Set(["ui", "backend", "tests"]);
 
+/**
+ * Reads an explicit aiRole hint threaded through packet.context.aiRequest by
+ * ExecutionEngine.runAiRequest(). Returns null if absent or not a known role
+ * (defensive — context is an untyped Record, callers outside the ai/request
+ * path won't have this field at all).
+ */
+function explicitAiRole(packet: TaskPacket): ModelRole | null {
+  const aiRequest = packet.context?.aiRequest as { aiRole?: unknown } | undefined;
+  const role = aiRequest?.aiRole;
+  if (role === "classifier" || role === "coder" || role === "planner" || role === "reasoner" || role === "fallback") {
+    return role;
+  }
+  return null;
+}
+
 export function selectModel(packet: TaskPacket, opts?: { coderModel?: string; generalModel?: string }): string {
+  // Explicit role hint (aiRole on the ai/request endpoint) wins over everything else —
+  // callers that know what kind of work this is should not be second-guessed by
+  // node-type heuristics built for code-graph nodes. See aiRequest.ts AiHelperRole.
+  const explicitRole = explicitAiRole(packet);
+  if (explicitRole) return selectModelForRole(explicitRole);
+
   // Legacy env var / opts compat — Focus and CLI set OLLAMA_CODER_MODEL / OLLAMA_GENERAL_MODEL.
   // If either legacy override is active, use the original binary selection so nothing breaks.
   const legacyCoder = opts?.coderModel ?? process.env.OLLAMA_CODER_MODEL;

@@ -124,6 +124,7 @@ export class ExecutionEngine {
           input: request.input ?? {},
           context: request.context ?? {},
           preferredMode,
+          aiRole: request.aiRole,
         },
         ...(request.conversationId == null ? {} : { conversationId: request.conversationId }),
       },

@@ -18,7 +18,7 @@ import { GraphBuilder, staticFallbackNodes, toNodeInputs } from "../src/intellig
 import { TaskHistory } from "../src/memory/taskHistory.js";
 import { applyPatch } from "../src/safety/patch.js";
 import { LocalModelLock } from "../src/engine/modelLock.js";
-import { selectModel as selectOllamaModel } from "../src/executors/ollama.js";
+import { selectModel as selectOllamaModel, selectModelForRole } from "../src/executors/ollama.js";
 import {
   createFilesystemAdapter,
   createMockExternalPublishingAdapter,
@@ -528,6 +528,53 @@ async function main() {
     assert.notEqual(coder, general);
     assert.equal(selectOllamaModel(packet({ intent: "x", node_type: "ui" })), coder);
     assert.equal(selectOllamaModel(packet({ intent: "x", node_type: "tests" })), coder);
+  });
+
+  await test("selectModel: explicit aiRole in packet.context.aiRequest overrides node-type lookup", async () => {
+    // nodeType "ui" would normally resolve to the coder model (see test above) —
+    // an explicit aiRole of "planner" should win instead. This is the fix for
+    // Focus's chat bridge, which tags conversational messages as nodeType "ui"
+    // (a leftover from when only code-graph node types existed) but should be
+    // routed as a planner-role conversational request, not code generation.
+    const uiNodeTypeDefault = selectOllamaModel(packet({ intent: "x", node_type: "ui" }));
+    const withExplicitPlanner = selectOllamaModel(
+      packet({ intent: "x", node_type: "ui", context: { aiRequest: { aiRole: "planner" } } })
+    );
+    assert.notEqual(withExplicitPlanner, uiNodeTypeDefault);
+    assert.equal(withExplicitPlanner, selectModelForRole("planner"));
+  });
+
+  await test("selectModel: explicit aiRole resolves to the classifier (lightweight) model for short prompts", async () => {
+    const withClassifier = selectOllamaModel(
+      packet({ intent: "x", node_type: "docs", context: { aiRequest: { aiRole: "classifier" } } })
+    );
+    assert.equal(withClassifier, selectModelForRole("classifier"));
+    assert.notEqual(withClassifier, selectModelForRole("planner"));
+  });
+
+  await test("selectModel: explicit aiRole takes priority over legacy OLLAMA_CODER_MODEL/OLLAMA_GENERAL_MODEL opts", async () => {
+    // An explicit, purpose-declared aiRole should not be silently overridden by
+    // the legacy binary coder/general split — see precedence comment in
+    // selectModel(). Without this, a global OLLAMA_GENERAL_MODEL override would
+    // defeat per-call role routing for every aiRole-tagged request.
+    const withLegacyOptsOnly = selectOllamaModel(
+      packet({ intent: "x", node_type: "ui" }),
+      { coderModel: "legacy-coder-model", generalModel: "legacy-general-model" }
+    );
+    assert.equal(withLegacyOptsOnly, "legacy-coder-model");
+
+    const withExplicitRoleAndLegacyOpts = selectOllamaModel(
+      packet({ intent: "x", node_type: "ui", context: { aiRequest: { aiRole: "reasoner" } } }),
+      { coderModel: "legacy-coder-model", generalModel: "legacy-general-model" }
+    );
+    assert.equal(withExplicitRoleAndLegacyOpts, selectModelForRole("reasoner"));
+  });
+
+  await test("selectModel: unrecognized aiRole value is ignored, falls through to node-type lookup", async () => {
+    const withGarbageRole = selectOllamaModel(
+      packet({ intent: "x", node_type: "backend", context: { aiRequest: { aiRole: "not-a-real-role" } } })
+    );
+    assert.equal(withGarbageRole, selectOllamaModel(packet({ intent: "x", node_type: "backend" })));
   });
 
   await test("two ollama nodes needing DIFFERENT models never run concurrently, even in 'parallel' mode", async () => {

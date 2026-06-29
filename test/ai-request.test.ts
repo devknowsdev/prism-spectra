@@ -42,7 +42,7 @@ async function main() {
   const result = await engine.runAiRequest(valid.request);
   assert.equal(result.ok, true);
   assert.equal(result.provider, "ollama");
-  assert.equal(result.model, "qwen3:9b");
+  assert.equal(result.model, "qwen3:8b"); // planner role per LOCAL_MODEL_CATALOG (Tier 2a); was stale at "qwen3:9b" (legacy OLLAMA_GENERAL_MODEL constant) — pre-existing, unrelated to aiRole changes
   assert.equal(result.dataBoundary, "local");
   assert.match(result.response, /ollama:mock/);
   assert.equal(result.provenance.routedBy, "prism-spectra");
@@ -56,6 +56,36 @@ async function main() {
     .dataBoundarySummary("ai-request:prism-focus")
     .map((row) => ({ ...row }));
   assert.deepEqual(summary, [{ dataBoundary: "local", count: 1 }]);
+
+  // aiRole end-to-end: a request tagged nodeType "ui" (which alone would
+  // resolve to the coder model) should resolve to the classifier model when
+  // an explicit aiRole is set — this is the fix for Focus's chat bridge,
+  // which previously tagged conversational chat messages as nodeType "ui"
+  // with no way to say "this isn't code, route it as a lightweight helper".
+  const withAiRole = normalizeAiRequestBody({
+    sourceApp: "prism-focus",
+    intent: "Chat message from Focus Assistant",
+    riskClass: "read-only",
+    nodeType: "ui",
+    aiRole: "classifier",
+    input: { prompt: "what can you do in this app?" },
+  });
+  assert.equal(withAiRole.ok, true);
+  if (!withAiRole.ok) throw new Error("expected valid request");
+  assert.equal(withAiRole.request.aiRole, "classifier");
+
+  const roleResult = await engine.runAiRequest(withAiRole.request);
+  assert.equal(roleResult.ok, true);
+  assert.equal(roleResult.model, "phi3:mini"); // classifier role per LOCAL_MODEL_CATALOG, not the coder model nodeType "ui" would otherwise select
+
+  const invalidRole = normalizeAiRequestBody({
+    sourceApp: "prism-focus",
+    intent: "x",
+    riskClass: "read-only",
+    aiRole: "coder", // coder is reserved for code-graph nodes, not the ai/request endpoint
+  });
+  assert.equal(invalidRole.ok, false);
+  if (!invalidRole.ok) assert.match(invalidRole.error, /aiRole must be one of/);
 
   engine.close();
   console.log("  ok  - ai request gateway contract");

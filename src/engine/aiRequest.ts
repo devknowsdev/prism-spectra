@@ -1,8 +1,19 @@
 import type { ChainAttempt } from "../routing/router.js";
 import type { DataBoundary, ExecutorName, NodeType } from "../types.js";
+import type { ModelRole } from "../executors/ollama.js";
 
 export const AI_REQUEST_RISK_CLASSES = ["read-only"] as const;
 export type AiRequestRiskClass = (typeof AI_REQUEST_RISK_CLASSES)[number];
+
+/**
+ * Roles available to AI-helper requests (chat, extraction, short prompts).
+ * Excludes "coder" — that role is reserved for actual code-graph nodes
+ * (ui/backend/tests); an AI-helper request describing itself as "coder"
+ * almost certainly means the caller wants code generated, which is out of
+ * scope for the read-only ai/request endpoint.
+ */
+export const AI_HELPER_ROLES = ["classifier", "planner", "reasoner", "fallback"] as const;
+export type AiHelperRole = (typeof AI_HELPER_ROLES)[number];
 
 export interface AiRequestInput {
   sourceApp: string;
@@ -12,6 +23,17 @@ export interface AiRequestInput {
   context?: Record<string, unknown>;
   preferredMode?: "local-first" | "local-only" | "balanced";
   nodeType?: Exclude<NodeType, "terminal">;
+  /**
+   * Explicit model-role hint for AI-helper requests (chat, extraction,
+   * short coaching prompts, etc.) that don't represent actual code-graph
+   * nodes. When set, this takes priority over nodeType-based role lookup
+   * in selectModel() — see ROLE_BY_NODE_TYPE in executors/ollama.ts.
+   * nodeType's 5 values (ui/backend/tests/docs/terminal) describe
+   * code-graph execution nodes and are a poor fit for conversational or
+   * lightweight AI-helper calls; aiRole lets callers say what they need
+   * directly instead of picking the least-wrong nodeType.
+   */
+  aiRole?: AiHelperRole;
   conversationId?: number | string | null;
   record?: boolean;
 }
@@ -96,6 +118,11 @@ export function normalizeAiRequestBody(body: unknown): AiRequestValidation {
     return { ok: false, error: "nodeType must be one of ui, backend, tests, docs" };
   }
 
+  const aiRoleRaw = raw.aiRole == null ? undefined : String(raw.aiRole);
+  if (aiRoleRaw != null && !(AI_HELPER_ROLES as readonly string[]).includes(aiRoleRaw)) {
+    return { ok: false, error: `aiRole must be one of ${AI_HELPER_ROLES.join(", ")}` };
+  }
+
   const input = optionalRecord(raw.input, "input");
   if (!input.ok) return input;
   const context = optionalRecord(raw.context, "context");
@@ -111,6 +138,7 @@ export function normalizeAiRequestBody(body: unknown): AiRequestValidation {
       context: context.value,
       preferredMode: normalizePreferredMode(raw.preferredMode),
       nodeType: (nodeType as AiRequestInput["nodeType"]) ?? "docs",
+      aiRole: aiRoleRaw as AiHelperRole | undefined,
       conversationId: raw.conversationId as AiRequestInput["conversationId"],
       record: raw.record === false ? false : true,
     },
