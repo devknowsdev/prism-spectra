@@ -15,8 +15,9 @@
     "sandbox:seed": "node --import tsx sandbox/scripts/seed-sandbox.ts",
     "test:browser": "node --import tsx test/browser/workbench-smoke.test.ts",
     "test:setup": "npm run doctor && npm run typecheck && npm run build",
-    "test:full": "node --import tsx test/run.ts",
+    "test:full": "node --import tsx test/run.ts && node --import tsx test/tier2b-routing.test.ts",
     "test:ai-request": "node --import tsx test/ai-request.test.ts",
+    "test:tier2b": "node --import tsx test/tier2b-routing.test.ts",
     "test:focus-ai": "tsx tools/focus-ai-smoke.ts",
     "forge": "tsx src/cli.ts",
     "start": "tsx src/cli.ts",
@@ -26,7 +27,7 @@
     "ai:gateway": "tsx tools/ai-gateway.ts",
     "focus:ai:gateway": "tsx tools/ai-gateway.ts",
     "pretest": "npm run typecheck",
-    "test": "node --import tsx test/run.ts"
+    "test": "node --import tsx test/run.ts && node --import tsx test/tier2b-routing.test.ts"
   },
   "license": "ISC",
   "engines": {

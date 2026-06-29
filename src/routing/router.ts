@@ -48,6 +48,11 @@ export interface RouteDecision {
 
 export type Complexity = "low" | "medium" | "high";
 
+export interface ProviderAvailability {
+  available: boolean;
+  reason?: string;
+}
+
 const HIGH_COMPLEXITY_TYPES: ReadonlySet<NodeType> = new Set(["backend", "tests"]);
 const LOW_COMPLEXITY_TYPES: ReadonlySet<NodeType> = new Set(["docs"]);
 
@@ -61,17 +66,22 @@ function paidTierPreference(complexity: Complexity): ExecutorName[] {
   return complexity === "high" ? ["claude", "gpt"] : ["gpt", "claude"];
 }
 
-// TODO(Tier-1): this stub always returns true; the real Ollama health gate is
-// handled by applyProviderProbe() in cli.ts, daemon.ts, and ai-gateway.ts,
-// which sets rpmLimit:0 via the ledger when Ollama is unreachable.
-// If a direct-router caller (bypassing those entry points) needs its own gate,
-// wire a cached probeOllama() result here.
-function localTierAvailable(_packet: TaskPacket): boolean {
-  return true;
-}
-
 export class Router {
+  private providerAvailability: Partial<Record<ExecutorName, ProviderAvailability>> = {};
+
   constructor(private ledger: Ledger, private learningLoop: LearningLoop) {}
+
+  setProviderAvailability(provider: ExecutorName, status: ProviderAvailability): void {
+    this.providerAvailability[provider] = status;
+  }
+
+  private providerAvailable(provider: ExecutorName): ProviderAvailability {
+    return this.providerAvailability[provider] ?? { available: true };
+  }
+
+  private localTierAvailable(_packet: TaskPacket): ProviderAvailability {
+    return this.providerAvailable("ollama");
+  }
 
   route(packet: TaskPacket, exclude: ExecutorName[] = []): RouteDecision {
     if (packet.node_type === "terminal") {
@@ -81,19 +91,29 @@ export class Router {
     const chainTried: ChainAttempt[] = [];
     const excludeSet = new Set(exclude);
 
-    if (!excludeSet.has("ollama") && localTierAvailable(packet)) {
-      const check = this.ledger.check("ollama");
-      chainTried.push({ provider: "ollama", allowed: check.allowed, reason: check.reason });
-      if (check.allowed) {
-        return { executor: "ollama", chainTried };
+    if (!excludeSet.has("ollama")) {
+      const localStatus = this.localTierAvailable(packet);
+      if (!localStatus.available) {
+        chainTried.push({ provider: "ollama", allowed: false, reason: localStatus.reason ?? "provider unavailable" });
+      } else {
+        const check = this.ledger.check("ollama");
+        chainTried.push({ provider: "ollama", allowed: check.allowed, reason: check.reason });
+        if (check.allowed) {
+          return { executor: "ollama", chainTried };
+        }
       }
     }
 
     if (!excludeSet.has("free_tier")) {
-      const check = this.ledger.check("free_tier");
-      chainTried.push({ provider: "free_tier", allowed: check.allowed, reason: check.reason });
-      if (check.allowed) {
-        return { executor: "free_tier", chainTried };
+      const status = this.providerAvailable("free_tier");
+      if (!status.available) {
+        chainTried.push({ provider: "free_tier", allowed: false, reason: status.reason ?? "provider unavailable" });
+      } else {
+        const check = this.ledger.check("free_tier");
+        chainTried.push({ provider: "free_tier", allowed: check.allowed, reason: check.reason });
+        if (check.allowed) {
+          return { executor: "free_tier", chainTried };
+        }
       }
     }
 
@@ -102,6 +122,11 @@ export class Router {
     const ranked = this.learningLoop.rank(preferred, packet.node_type).map((w) => w.provider);
 
     for (const provider of ranked) {
+      const status = this.providerAvailable(provider);
+      if (!status.available) {
+        chainTried.push({ provider, allowed: false, reason: status.reason ?? "provider unavailable" });
+        continue;
+      }
       const check = this.ledger.check(provider);
       chainTried.push({ provider, allowed: check.allowed, reason: check.reason });
       if (check.allowed) {

@@ -8,6 +8,8 @@ export { LearningLoop } from "./intelligence/learningLoop.js";
 export { GraphBuilder, staticFallbackNodes, toNodeInputs, WIZARD_MODES } from "./intelligence/graphBuilder.js";
 export type { WizardMode, GraphBuilderInput, BuildOutcome, FailureNote } from "./intelligence/graphBuilder.js";
 export { Router, classifyComplexity } from "./routing/router.js";
+export { classifyTaskHeuristic } from "./routing/l1Classifier.js";
+export type { L1Classification, TaskClass } from "./routing/l1Classifier.js";
 export { TaskGraph } from "./taskGraph/graph.js";
 export { CheckpointManager } from "./safety/checkpoint.js";
 export { validate } from "./safety/validation.js";

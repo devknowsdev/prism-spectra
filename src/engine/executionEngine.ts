@@ -34,6 +34,7 @@ import { PatternCache } from "../memory/patternCache.js";
 import { TaskHistory } from "../memory/taskHistory.js";
 import { LearningLoop } from "../intelligence/learningLoop.js";
 import { Router } from "../routing/router.js";
+import { classifyTaskHeuristic, type L1Classification } from "../routing/l1Classifier.js";
 import { buildExecutorRegistry } from "../executors/index.js";
 import { TaskGraph } from "../taskGraph/graph.js";
 import { CheckpointManager } from "../safety/checkpoint.js";
@@ -41,7 +42,13 @@ import { validate } from "../safety/validation.js";
 import { applyPatch } from "../safety/patch.js";
 import { FileLockManager } from "./fileLock.js";
 import { LocalModelLock } from "./modelLock.js";
-import { selectModel as selectOllamaModel } from "../executors/ollama.js";
+import {
+  classifyIntent,
+  modelRoleFromPacketContext,
+  selectModel as selectOllamaModel,
+  selectModelForRole,
+  type ModelRole,
+} from "../executors/ollama.js";
 import {
   buildAiRequestIntent,
   parseStructuredResponse,
@@ -60,6 +67,10 @@ export interface EngineOptions {
   mockExecutors?: boolean;
   /** Retry the next tier when an executor call fails (CLI default: true). */
   fallbackOnFailure?: boolean;
+  /** Use the short live Ollama classifier after L1 when confidence is low. Defaults off in mock mode. */
+  useLiveOllamaClassifier?: boolean;
+  /** Cascade quality-gate threshold for local confidence scoring. */
+  confidenceThreshold?: number;
 }
 
 export interface NodeRunLog {
@@ -70,6 +81,8 @@ export interface NodeRunLog {
   cost: number;
   latencyMs: number;
   error?: string;
+  confidenceScore?: number | null;
+  fallbackReason?: string;
   ledgerChainTried?: { provider: ExecutorName; allowed: boolean; reason?: string }[];
 }
 
@@ -86,10 +99,15 @@ export class ExecutionEngine {
   private fileLocks = new FileLockManager();
   private workDir: string;
   private fallbackOnFailure: boolean;
+  private useLiveOllamaClassifier: boolean;
+  private confidenceThreshold: number;
 
   constructor(opts: EngineOptions) {
     this.workDir = opts.workDir;
     this.fallbackOnFailure = opts.fallbackOnFailure ?? false;
+    const mockExecutors = opts.mockExecutors ?? process.env.AI_FORGE_MOCK_EXECUTORS === "1";
+    this.useLiveOllamaClassifier = opts.useLiveOllamaClassifier ?? !mockExecutors;
+    this.confidenceThreshold = resolveConfidenceThreshold(opts.confidenceThreshold);
     this.memory = new MemoryDB(opts.dbPath);
     this.ledger = new Ledger(this.memory);
     this.patternCache = new PatternCache(this.memory);
@@ -98,7 +116,7 @@ export class ExecutionEngine {
     this.router = new Router(this.ledger, this.learningLoop);
     this.checkpoints = new CheckpointManager(this.workDir);
     this.modelLock = new LocalModelLock(opts.ollamaSwapDelayMs);
-    this.executors = buildExecutorRegistry({ mock: opts.mockExecutors });
+    this.executors = buildExecutorRegistry({ mock: mockExecutors });
   }
 
   async init(): Promise<void> {
@@ -293,7 +311,15 @@ export class ExecutionEngine {
           const tried: ExecutorName[] = [];
           result = await this.executeViaRoute(packet, decision.executor);
 
-          while (!result.success && this.fallbackOnFailure && decision.executor) {
+          while (this.fallbackOnFailure && decision.executor) {
+            const lowConfidenceReason = this.lowConfidenceFallbackReason(result);
+            if (result.success && !lowConfidenceReason) break;
+
+            const previousError = result.error;
+            if (lowConfidenceReason) {
+              result = { ...result, fallbackReason: lowConfidenceReason };
+            }
+
             tried.push(decision.executor);
             decision = this.router.route(packet, tried);
             chainTried = [...(chainTried ?? []), ...decision.chainTried];
@@ -301,7 +327,8 @@ export class ExecutionEngine {
             const retry = await this.executeViaRoute(packet, decision.executor);
             result = {
               ...retry,
-              error: result.error ? `${result.error}; then ${retry.error ?? "failed"}` : retry.error,
+              fallbackReason: lowConfidenceReason ?? retry.fallbackReason,
+              error: previousError && !lowConfidenceReason ? `${previousError}; then ${retry.error ?? "failed"}` : retry.error,
             };
           }
 
@@ -383,6 +410,8 @@ export class ExecutionEngine {
         cost: result.cost,
         latencyMs: result.latencyMs,
         error: result.error,
+        confidenceScore: result.confidenceScore,
+        fallbackReason: result.fallbackReason,
         ledgerChainTried: chainTried,
       };
     } finally {
@@ -424,8 +453,99 @@ export class ExecutionEngine {
         : packet;
 
     if (executor === "ollama") {
-      return this.modelLock.run(selectOllamaModel(packet), () => this.executors.ollama.execute(effectivePacket));
+      const routedPacket = await this.prepareOllamaPacket(effectivePacket);
+      const model = selectOllamaModel(routedPacket);
+      return this.modelLock.run(model, async () => {
+        const result = await this.executors.ollama.execute(routedPacket);
+        return this.scoreLocalResult(routedPacket, result);
+      });
     }
     return this.executors[executor].execute(effectivePacket);
   }
+
+  private async prepareOllamaPacket(packet: TaskPacket): Promise<TaskPacket> {
+    const explicitRole = modelRoleFromPacketContext(packet);
+    const l1 = classifyTaskHeuristic(packet);
+    let selectedRole: ModelRole = explicitRole ?? l1.role;
+    let classifierResult: { role: ModelRole; reasoning: string } | null = null;
+
+    if (!explicitRole && this.useLiveOllamaClassifier && l1.confidence < 0.85) {
+      classifierResult = await this.modelLock.run(selectModelForRole("classifier"), () => classifyIntent(packet.intent));
+      if (classifierResult) selectedRole = classifierResult.role;
+    }
+
+    const priorRouting =
+      typeof packet.context.routing === "object" && packet.context.routing !== null
+        ? (packet.context.routing as Record<string, unknown>)
+        : {};
+
+    return {
+      ...packet,
+      context: {
+        ...packet.context,
+        aiRole: selectedRole,
+        routing: {
+          ...priorRouting,
+          aiRole: selectedRole,
+          modelRole: selectedRole,
+          l1,
+          classifier: classifierResult,
+        },
+      },
+    };
+  }
+
+  private scoreLocalResult(packet: TaskPacket, result: ExecutionResult): ExecutionResult {
+    return { ...result, confidenceScore: scoreLocalConfidence(packet, result) };
+  }
+
+  private lowConfidenceFallbackReason(result: ExecutionResult): string | null {
+    if (!result.success || result.provider !== "ollama") return null;
+    if (typeof result.confidenceScore !== "number") return null;
+    if (result.confidenceScore >= this.confidenceThreshold) return null;
+    return `local confidence ${result.confidenceScore.toFixed(2)} below threshold ${this.confidenceThreshold.toFixed(2)}`;
+  }
+}
+
+function scoreLocalConfidence(packet: TaskPacket, result: ExecutionResult): number {
+  if (!result.success) return 0;
+  const output = result.output.trim();
+  if (!output) return 0.05;
+
+  let score = 0.72;
+  const l1 = readL1(packet);
+  if (l1) score += (l1.confidence - 0.5) * 0.2;
+
+  if (/\b(i am not sure|i'm not sure|i do not know|i don't know|cannot determine|unable to determine)\b/i.test(output)) {
+    score -= 0.45;
+  }
+  if (/\b(todo|tbd|placeholder|lorem ipsum|fixme)\b/i.test(output)) {
+    score -= 0.25;
+  }
+  if (result.tokensOut < 8 && packet.node_type !== "terminal") {
+    score -= 0.2;
+  }
+  if (result.tokensOut > 80) {
+    score += 0.05;
+  }
+
+  return clamp(score, 0, 1);
+}
+
+function readL1(packet: TaskPacket): L1Classification | null {
+  const routing = typeof packet.context.routing === "object" && packet.context.routing !== null ? (packet.context.routing as Record<string, unknown>) : null;
+  const l1 = routing?.l1;
+  if (!l1 || typeof l1 !== "object") return null;
+  const confidence = Number((l1 as { confidence?: unknown }).confidence);
+  if (!Number.isFinite(confidence)) return null;
+  return { ...(l1 as L1Classification), confidence };
+}
+
+function resolveConfidenceThreshold(option?: number): number {
+  const raw = option ?? Number(process.env.SPECTRA_CONFIDENCE_THRESHOLD ?? "0.4");
+  return Number.isFinite(raw) ? clamp(raw, 0, 1) : 0.4;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }

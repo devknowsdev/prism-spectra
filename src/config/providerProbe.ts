@@ -12,6 +12,11 @@ export interface ProviderStatus {
   reason?: string;
 }
 
+interface ProbeAwareEngine {
+  ledger: { setBudget: (p: ExecutorName, b: { rpmLimit: number }) => void };
+  router?: { setProviderAvailability?: (provider: ExecutorName, status: { available: boolean; reason?: string }) => void };
+}
+
 export async function probeAllProviders(): Promise<ProviderStatus[]> {
   const [ollama, freeTier, gpt, claude] = await Promise.all([
     probeOllama(),
@@ -30,8 +35,9 @@ export async function probeAllProviders(): Promise<ProviderStatus[]> {
 }
 
 /** Mark unavailable AI tiers as budget-exhausted so routing skips them cleanly. */
-export function applyProviderProbe(engine: { ledger: { setBudget: (p: ExecutorName, b: { rpmLimit: number }) => void } }, statuses: ProviderStatus[]): void {
+export function applyProviderProbe(engine: ProbeAwareEngine, statuses: ProviderStatus[]): void {
   for (const status of statuses) {
+    engine.router?.setProviderAvailability?.(status.provider, { available: status.available, reason: status.reason });
     if (status.provider === "terminal") continue;
     if (!status.available) {
       engine.ledger.setBudget(status.provider, { rpmLimit: 0 });
