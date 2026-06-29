@@ -55,12 +55,16 @@ function mockOutputFor(packet: TaskPacket, model: string): string {
 
 function focusMockReply(request: { prompt: string; context: Record<string, unknown>; input: Record<string, unknown> }): FocusMockReply {
   const prompt = request.prompt.toLowerCase();
+  const historyText = focusHistoryText(request.input).toLowerCase();
   const currentFocusState = request.input.currentFocusState && typeof request.input.currentFocusState === "object"
     ? request.input.currentFocusState as Record<string, unknown>
     : {};
   const openTaskCount = Number(currentFocusState.openTaskCount ?? currentFocusState.taskCount ?? 0);
+  const isChooseFollowUp = /four task names|help choose|choose more specifically|which task|choose one/.test(historyText) && looksLikeTaskList(prompt);
 
-  if (/overwhelm|too much|choose|prioriti[sz]e|pick one|which task/.test(prompt)) {
+  if (/overwhelm|too much|choose|prioriti[sz]e|pick one|which task/.test(prompt) || isChooseFollowUp) {
+    if (isChooseFollowUp) return chooseFromTaskListReply(request.prompt);
+
     const countText = openTaskCount > 0 ? `I can see ${openTaskCount} open task${openTaskCount === 1 ? "" : "s"}. ` : "";
     return {
       reply: `${countText}For a low-overwhelm next move, choose the task that is easiest to start, not the most important. Give it 10 minutes and stop after the first visible step.`,
@@ -119,6 +123,44 @@ function focusMockReply(request: { prompt: string; context: Record<string, unkno
     proposedSchedule: [],
     followUpQuestion: "",
   };
+}
+
+function chooseFromTaskListReply(rawPrompt: string): FocusMockReply {
+  const lower = rawPrompt.toLowerCase();
+  if (/feed (my |the )?dog/.test(lower)) {
+    return {
+      reply: "Start by feeding your dog. It is the clearest care task, it is time-sensitive, and finishing it should reduce background worry before you choose the next thing.",
+      proposedTasks: [
+        { text: "Feed the dog", ts: "", estimatedMins: 10, note: "Do this first to remove the urgent care task.", taskScope: "day" },
+      ],
+      proposedSchedule: [],
+      followUpQuestion: "After that, do you want help choosing between dinner, guitar practice, and the garden?",
+    };
+  }
+
+  return {
+    reply: "Choose the task with the clearest immediate consequence first, then the shortest useful next step. In mock mode I would start with the care or deadline task before open-ended work.",
+    proposedTasks: [
+      { text: "Do the clearest urgent/care task first", ts: "", estimatedMins: 10, note: "Pick the task with the most immediate consequence.", taskScope: "day" },
+    ],
+    proposedSchedule: [],
+    followUpQuestion: "",
+  };
+}
+
+function looksLikeTaskList(prompt: string): boolean {
+  return /\bi need to\b|,| and |\bthen\b|\btask/.test(prompt);
+}
+
+function focusHistoryText(input: Record<string, unknown>): string {
+  const history = input.history;
+  if (!Array.isArray(history)) return "";
+  return history.map((entry) => {
+    if (typeof entry === "string") return entry;
+    if (!entry || typeof entry !== "object") return "";
+    const record = entry as Record<string, unknown>;
+    return [record.role, record.content, record.text, record.reply].filter((value) => typeof value === "string").join(" ");
+  }).join("\n");
 }
 
 function focusJsonAiRequest(packet: TaskPacket): { prompt: string; context: Record<string, unknown>; input: Record<string, unknown> } | null {
