@@ -2,7 +2,8 @@
 set -euo pipefail
 
 CODER_MODEL="${OLLAMA_CODER_MODEL:-qwen2.5-coder:7b}"
-GENERAL_MODEL="${OLLAMA_GENERAL_MODEL:-qwen3:9b}"
+GENERAL_MODEL="${OLLAMA_GENERAL_MODEL:-qwen3.5:9b}"
+CLASSIFIER_MODEL="${OLLAMA_MODEL_CLASSIFIER:-qwen3:1.7b}"
 OLLAMA_ENDPOINT="${OLLAMA_HOST:-http://127.0.0.1:11434}"
 CONFIRM_WORD="PULL"
 
@@ -13,9 +14,10 @@ This command checks Ollama and offers to pull the local models Spectra will use.
 It does not read API keys, create tokens, call cloud APIs, scan folders, or start watchers.
 BANNER
 
-printf '\nOllama endpoint: %s\n' "$OLLAMA_ENDPOINT"
-printf 'Coder model:   %s\n' "$CODER_MODEL"
-printf 'General model: %s\n\n' "$GENERAL_MODEL"
+printf '\nOllama endpoint:  %s\n' "$OLLAMA_ENDPOINT"
+printf 'Coder model:      %s\n' "$CODER_MODEL"
+printf 'General model:    %s\n' "$GENERAL_MODEL"
+printf 'Classifier model: %s\n\n' "$CLASSIFIER_MODEL"
 
 if ! command -v ollama >/dev/null 2>&1; then
   cat <<'EOF'
@@ -35,21 +37,26 @@ fi
 
 if [[ "$GENERAL_MODEL" == "qwen3:9b" ]]; then
   cat <<'EOF'
-Spectra currently defaults OLLAMA_GENERAL_MODEL to qwen3:9b, but that tag is not verified in the Ollama qwen3 library.
-Use an explicit local override before pulling, for example:
-
-  OLLAMA_GENERAL_MODEL=qwen3:8b npm run local-ai:bootstrap
+The qwen3:9b tag does not exist in the Ollama Qwen3 family.
+Use qwen3.5:9b for the recommended general/planner/reasoner model, or set an explicit verified override.
 
 No model download was attempted.
 EOF
   exit 1
 fi
 
-models=("$CODER_MODEL" "$GENERAL_MODEL")
+models=()
+for model in "$CODER_MODEL" "$GENERAL_MODEL" "$CLASSIFIER_MODEL"; do
+  if [[ ! " ${models[*]} " =~ " ${model} " ]]; then
+    models+=("$model")
+  fi
+done
 
 model_size_hint() {
   case "$1" in
     qwen2.5-coder:7b) printf 'roughly 4.7GB' ;;
+    qwen3.5:9b) printf 'roughly 6.6GB' ;;
+    qwen3:1.7b) printf 'roughly 1.4GB' ;;
     qwen3:8b) printf 'roughly 5.2GB' ;;
     *) printf 'size unknown; check Ollama before pulling' ;;
   esac
