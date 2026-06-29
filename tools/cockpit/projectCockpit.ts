@@ -224,7 +224,9 @@ export function deriveCockpitGuidance(profile: CockpitProfile): CockpitGuidance 
       action: "show-logs",
       requiresApproval: false,
       risk: "none",
-      reason: "Validation found issues. Open the Spectra Validation logs to see what failed, then fix and re-run.",
+      reason: "Review the failed validation output below, then rerun validation after fixing the issue.",
+      commandPreview: validationRole?.commandPreview,
+      failureRecovery: "Use the inline output first. Advanced process controls are optional.",
     };
   } else if (!validationRun || !validationPassed) {
     stateSummary = `Gateway running (${modeLabel}) · Focus owned · Validation not run`;
@@ -236,8 +238,8 @@ export function deriveCockpitGuidance(profile: CockpitProfile): CockpitGuidance 
       risk: "none",
       reason: "Gateway and Focus are ready. Run validation to confirm the bridge is clean.",
       commandPreview: validationRole?.commandPreview,
-      expectedOutcome: "All checks exit 0. Log appears in the Spectra Validation card below.",
-      failureRecovery: "Open Spectra Validation logs to identify the failing check.",
+      expectedOutcome: "All checks exit 0. Log appears in the guided panel and the Spectra Validation card.",
+      failureRecovery: "If it fails, read the inline output in this guided panel first.",
     };
   } else {
     stateSummary = `Gateway running (${modeLabel}) · Focus owned · Validation passed`;
@@ -288,6 +290,7 @@ export function renderProjectCockpitHtml() {
     .actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
     .logs { margin-top:10px; max-height:230px; overflow:auto; display:none; }
     .logs.open { display:block; }
+    .guided-log { display:block; max-height:260px; margin:10px 0 0; }
     .small { font-size:12px; color:var(--muted); }
     .section-title { margin:22px 0 10px; font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em; }
     .guided-panel { background:var(--guided-bg); border:1px solid var(--guided-border); border-radius:18px; padding:20px 24px; margin-bottom:18px; }
@@ -298,7 +301,7 @@ export function renderProjectCockpitHtml() {
     .action-title { font-size:17px; font-weight:600; margin:0 0 6px; }
     .action-reason { font-size:13px; color:var(--muted); margin:0 0 10px; }
     .action-preview { margin:8px 0; }
-    .action-row { display:flex; gap:8px; margin-top:12px; align-items:center; }
+    .action-row { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; align-items:center; }
     .approve-btn { background:#2b3b5f; border:1px solid #485e91; color:var(--text); border-radius:10px; padding:9px 16px; cursor:pointer; font-size:14px; }
     .approve-btn:hover:not(:disabled) { border-color:var(--focus); }
     .terminal-hint { background:#0d1016; border:1px solid var(--line); border-radius:10px; padding:8px 10px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; color:#dbe7ff; margin-top:8px; white-space:pre-wrap; word-break:break-word; }
@@ -440,13 +443,34 @@ export function renderProjectCockpitHtml() {
       return '<button class="approve-btn" data-guided-action="' + encodeGuidedAction(action) + '">' + escapeHtml(label) + '</button>';
     }
 
+    function validationLogPreview(profile) {
+      var role = (profile.roles || []).find(function(r) { return r.id === 'spectra-validation'; });
+      var lines = (role && role.logs ? role.logs : []).slice(-40).map(function(line) {
+        return '[' + line.at + '] ' + line.level + ': ' + line.line;
+      }).join('\\n');
+      return '<div class="action-card">' +
+        '<div class="action-label">Validation output</div>' +
+        '<pre class="guided-log">' + escapeHtml(lines || 'No validation output is available yet. Run validation again to capture fresh output here.') + '</pre>' +
+        '</div>';
+    }
+
     function renderNextAction(action, profile) {
       if (!action) return '';
       if (action.action === 'show-logs') {
+        var rerun = {
+          workflow: action.workflow,
+          role: action.role,
+          action: 'run-one-shot',
+          requiresApproval: true,
+          risk: 'none',
+          reason: 'Run validation again after reviewing the output.',
+          commandPreview: action.commandPreview
+        };
         return '<div class="action-card">' +
-          '<div class="action-label">Status</div>' +
-          '<div class="action-title">' + escapeHtml(action.reason) + '</div>' +
-          '<div class="action-row">' + guidedButton(action, 'Open validation logs') + '</div>' +
+          '<div class="action-label">What to do now</div>' +
+          '<div class="action-title">Review the failed validation output below.</div>' +
+          '<div class="action-reason">The guided panel is now the main path. Advanced process controls are only for deeper inspection.</div>' +
+          '<div class="action-row">' + guidedButton(action, 'Open advanced logs') + guidedButton(rerun, 'Run validation again') + '</div>' +
           '</div>';
       }
       if (action.action === 'open-linked-app') {
@@ -511,10 +535,12 @@ export function renderProjectCockpitHtml() {
     function renderGuidedPanel(profile) {
       var g = profile.guidance;
       if (!g) return '';
+      var showValidationOutput = g.nextAction && g.nextAction.action === 'show-logs';
       return '<div class="guided-panel">' +
         '<div class="mission">' + escapeHtml(g.missionStatement) + ' · ' + escapeHtml(g.modeLabel) + '</div>' +
         '<div class="state-summary">' + escapeHtml(g.stateSummary) + '</div>' +
         (g.nextAction ? renderNextAction(g.nextAction, profile) : '<div class="waiting-state">Waiting for validation to complete…</div>') +
+        (showValidationOutput ? validationLogPreview(profile) : '') +
         '<div class="section-title" style="margin-top:14px">Readiness checklist</div>' + renderChecklist(g.checklist) +
         '</div>';
     }
