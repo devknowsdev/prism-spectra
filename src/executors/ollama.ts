@@ -64,7 +64,8 @@ export function modelRoleFromPacketContext(packet: TaskPacket): ModelRole | null
     normalizeModelRole(context.aiRole) ??
     normalizeModelRole(routing.aiRole) ??
     normalizeModelRole(routing.modelRole) ??
-    normalizeModelRole(aiRequest.aiRole)
+    normalizeModelRole(aiRequest.aiRole) ??
+    normalizeModelRole(aiRoleFromIntent(packet.intent))
   );
 }
 
@@ -223,13 +224,23 @@ export class OllamaExecutor implements Executor {
   }
 }
 
+function aiRoleFromIntent(intent: string): string | null {
+  const match = intent.match(/"aiRole"\s*:\s*"([^"]+)"/);
+  return match?.[1] ?? null;
+}
+
 function outputTokenCapFromPacketContext(packet: TaskPacket): number | undefined {
   const context = packet.context ?? {};
   const aiRequest = typeof context.aiRequest === "object" && context.aiRequest !== null ? (context.aiRequest as Record<string, unknown>) : {};
-  const raw = aiRequest.maxOutputTokens ?? aiRequest.outputTokens ?? context.maxOutputTokens;
+  const raw = aiRequest.maxOutputTokens ?? aiRequest.outputTokens ?? context.maxOutputTokens ?? maxOutputTokensFromIntent(packet.intent);
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) return undefined;
   return Math.max(1, Math.min(4096, Math.round(n)));
+}
+
+function maxOutputTokensFromIntent(intent: string): number | null {
+  const match = intent.match(/"maxOutputTokens"\s*:\s*(\d+)/);
+  return match ? Number(match[1]) : null;
 }
 
 function fail(start: number, error: string): ExecutionResult {
