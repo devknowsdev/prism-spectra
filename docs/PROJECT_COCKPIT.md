@@ -89,13 +89,13 @@ The Focus UI card includes a **Kill port** action for port `4173`, because that 
 
 If the page appears non-responsive, first check DevTools for errors starting with `cockpit:`. Errors from `contentscript.js`, `content_scripts.js`, or browser time-tracker/phishing/wallet extensions are extension noise, not Spectra cockpit source.
 
-The cockpit page has a regression check:
+The cockpit page has a regression test:
 
 ```bash
 npm run test:cockpit
 ```
 
-That check verifies the inline browser script parses as JavaScript, which protects against malformed generated HTML.
+That test verifies the inline browser script parses as JavaScript, which protects against malformed generated HTML.
 
 For the exact local retest sequence, see:
 
