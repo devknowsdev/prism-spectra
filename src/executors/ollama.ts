@@ -13,22 +13,22 @@ export interface LocalModelEntry {
 }
 
 export const OLLAMA_CODER_MODEL = "qwen2.5-coder:7b";
-export const OLLAMA_GENERAL_MODEL = "qwen3:9b";
+export const OLLAMA_GENERAL_MODEL = "qwen3.5:9b";
 export const DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434";
 
 /**
  * Role-tagged local model catalog for Track A.
- * Defaults match models confirmed installed on the local machine.
+ * Defaults target the recommended local stack for an M1 16GB machine.
  * Each role can be overridden via OLLAMA_MODEL_<ROLE> env vars
  * (e.g. OLLAMA_MODEL_CODER=codellama:7b).
  * Do not confuse with src/config/modelRegistry.ts — that is Track B and excluded from build.
  */
 export const LOCAL_MODEL_CATALOG: Record<ModelRole, LocalModelEntry> = {
-  classifier: { ollamaModel: "phi3:mini", role: "classifier", maxContext: 4096 },
+  classifier: { ollamaModel: "qwen3:1.7b", role: "classifier", maxContext: 4096 },
   coder: { ollamaModel: "qwen2.5-coder:7b", role: "coder", maxContext: 8192 },
-  planner: { ollamaModel: "qwen3:8b", role: "planner", maxContext: 8192 },
-  reasoner: { ollamaModel: "qwen3:8b", role: "reasoner", maxContext: 8192 },
-  fallback: { ollamaModel: "phi3:mini", role: "fallback", maxContext: 4096 },
+  planner: { ollamaModel: "qwen3.5:9b", role: "planner", maxContext: 256000 },
+  reasoner: { ollamaModel: "qwen3.5:9b", role: "reasoner", maxContext: 256000 },
+  fallback: { ollamaModel: "qwen3:1.7b", role: "fallback", maxContext: 4096 },
 };
 
 const ROLE_BY_NODE_TYPE: Record<string, ModelRole> = {
