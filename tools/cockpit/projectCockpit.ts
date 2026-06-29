@@ -266,7 +266,14 @@ export function renderProjectCockpitHtml() {
           '<span class="pill ' + stateClass(status) + '">' + stateText(status) + '</span>' +
           (role.port ? '<span class="pill">port ' + escapeHtml(role.port) + '</span>' : '') +
           (status.pid ? '<span class="pill">pid ' + escapeHtml(status.pid) + '</span>' : '') +
-          (externalPortOwner && status.port && status.port.pids && status.port.pids.length ? '<span class="pill warn">external pid(s) ' + escapeHtml(status.port.pids.join(', ')) + '</span>' : '') +
+          (function() {
+            if (!externalPortOwner || !status.port) return '';
+            var realPids = (status.port.pids || []).filter(function(p) {
+              return typeof p === 'number' && Number.isFinite(p) && p > 0;
+            });
+            if (!realPids.length) return '';
+            return '<span class="pill warn">external pid(s) ' + escapeHtml(realPids.join(', ')) + '</span>';
+          })() +
           (status.cwdExists === false ? '<span class="pill bad">cwd missing</span>' : '') +
         '</div>' +
         (role.cwd ? '<div class="small">cwd: ' + escapeHtml(role.cwd) + '</div>' : '') +
@@ -681,9 +688,18 @@ function shellWord(value: string) {
   return JSON.stringify(value);
 }
 
+export function parsePidOutput(raw: string): number[] {
+  const trimmed = raw.trim();
+  if (trimmed === "") return [];
+  return trimmed
+    .split(/\s+/)
+    .map(token => parseInt(token, 10))
+    .filter(n => Number.isInteger(n) && n > 0);
+}
+
 async function listeningPids(port: number) {
   const result = await safeExec("lsof", ["-tiTCP:" + String(port), "-sTCP:LISTEN"], 2200);
-  const pids = result.output.split(/\s+/).map(value => Number(value)).filter(Number.isFinite);
+  const pids = parsePidOutput(result.output);
   return {
     ok: result.ok || pids.length === 0,
     port,
