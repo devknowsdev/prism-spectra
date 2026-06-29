@@ -39,6 +39,13 @@ function htmlResponse(res: http.ServerResponse, code: number, body: string) {
   res.end(body);
 }
 
+function emptyResponse(res: http.ServerResponse, code = 204) {
+  res.writeHead(code, {
+    "Cache-Control": "no-store",
+  });
+  res.end();
+}
+
 function unauthorized(res: http.ServerResponse) {
   jsonResponse(res, 401, { error: "missing or invalid x-local-token header" });
 }
@@ -101,6 +108,10 @@ async function start() {
 
       if (req.method === "GET" && url.pathname === "/cockpit") {
         return htmlResponse(res, 200, renderProjectCockpitHtml());
+      }
+
+      if (req.method === "GET" && url.pathname === "/favicon.ico") {
+        return emptyResponse(res);
       }
 
       const provided = req.headers["x-local-token"];
