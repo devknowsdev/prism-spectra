@@ -42,7 +42,7 @@ async function main() {
   const result = await engine.runAiRequest(valid.request);
   assert.equal(result.ok, true);
   assert.equal(result.provider, "ollama");
-  assert.equal(result.model, "qwen3:9b");
+  assert.equal(result.model, "qwen3.5:9b");
   assert.equal(result.dataBoundary, "local");
   assert.match(result.response, /ollama:mock/);
   assert.equal(result.provenance.routedBy, "prism-spectra");
