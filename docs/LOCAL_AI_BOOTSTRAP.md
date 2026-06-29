@@ -1,6 +1,6 @@
 # Local AI Bootstrap
 
-Last-Updated: 2026-06-25
+Last-Updated: 2026-06-29
 
 ## Purpose
 
@@ -24,18 +24,12 @@ Spectra currently selects Ollama models in `src/executors/ollama.ts`.
 
 | Role | Env var | Spectra default | Notes |
 | --- | --- | --- | --- |
-| Coder | `OLLAMA_CODER_MODEL` | `qwen2.5-coder:7b` | Verified in the Ollama model library; roughly 4.7GB for the listed 7B Q4_K_M tag. |
-| General | `OLLAMA_GENERAL_MODEL` | `qwen3:9b` | Not listed in the Ollama qwen3 tags page. Use an explicit local override such as `qwen3:8b` unless/until the default is changed deliberately. |
+| Coder | `OLLAMA_CODER_MODEL` / `OLLAMA_MODEL_CODER` | `qwen2.5-coder:7b` | Purpose-built coding model; roughly 4.7GB. |
+| General / Planner / Reasoner | `OLLAMA_GENERAL_MODEL` / `OLLAMA_MODEL_PLANNER` / `OLLAMA_MODEL_REASONER` | `qwen3.5:9b` | Recommended long-context local reasoning model for M1 16GB; roughly 6.6GB. |
+| Classifier / Fallback | `OLLAMA_MODEL_CLASSIFIER` / `OLLAMA_MODEL_FALLBACK` | `qwen3:1.7b` | Small local classifier/fallback model; roughly 1.4GB. |
 
-Recommended local override while Spectra still defaults to `qwen3:9b`:
-
-```bash
-OLLAMA_GENERAL_MODEL=qwen3:8b bash tools/bootstrap-local-ai.sh
-```
-
-`qwen3:8b` is listed in the Ollama qwen3 library at roughly 5.2GB. This
-override does not change repository behavior; it only chooses the model for
-your shell/session.
+`qwen3:9b` is intentionally not used. That tag does not exist in the Ollama
+Qwen3 family; the 9B tag belongs to `qwen3.5:9b`.
 
 ## Run The Bootstrap
 
@@ -45,7 +39,7 @@ From the `prism-spectra` repo root:
 bash tools/bootstrap-local-ai.sh
 ```
 
-If you need the verified general-model override:
+If you want to override the recommended general model for a smaller local run:
 
 ```bash
 OLLAMA_GENERAL_MODEL=qwen3:8b bash tools/bootstrap-local-ai.sh
@@ -54,14 +48,14 @@ OLLAMA_GENERAL_MODEL=qwen3:8b bash tools/bootstrap-local-ai.sh
 If your Ollama daemon is not on the default local URL:
 
 ```bash
-OLLAMA_HOST=http://127.0.0.1:11434 OLLAMA_GENERAL_MODEL=qwen3:8b bash tools/bootstrap-local-ai.sh
+OLLAMA_HOST=http://127.0.0.1:11434 bash tools/bootstrap-local-ai.sh
 ```
 
 The script exits before pulling if:
 
 - the `ollama` CLI is missing
 - the Ollama daemon is unreachable
-- the selected general model is the unverified `qwen3:9b` default
+- the selected general model is the invalid `qwen3:9b` tag
 - you do not type the exact confirmation word `PULL`
 
 ## Start Spectra Gateway
@@ -72,11 +66,17 @@ For Focus or another Prism client to call Spectra, start the AI request gateway:
 npm run ai:gateway
 ```
 
-The gateway defaults to mock executors. To intentionally use real providers,
-including Ollama:
+The gateway now uses real executors by default. Use mock executors only when
+explicitly requested:
 
 ```bash
-AI_FORGE_MOCK_EXECUTORS=0 OLLAMA_GENERAL_MODEL=qwen3:8b npm run ai:gateway
+AI_FORGE_MOCK_EXECUTORS=1 npm run ai:gateway
+```
+
+To intentionally use real local Ollama with explicit model overrides:
+
+```bash
+OLLAMA_GENERAL_MODEL=qwen3.5:9b OLLAMA_MODEL_CLASSIFIER=qwen3:1.7b npm run ai:gateway
 ```
 
 Use a local token when you want a stable token across restarts:
