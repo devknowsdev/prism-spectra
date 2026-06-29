@@ -571,7 +571,7 @@ function buildRoles(options: CockpitOptions): CockpitRole[] {
       description: "Runs the current low-noise Spectra checks for this bridge slice.",
       cwd: spectraDir,
       command: "bash",
-      args: ["-lc", "npm run typecheck && npm run test:ai-request"],
+      args: ["-lc", "npm run typecheck && npm run test:ai-request && npm run test:cockpit"],
     },
     {
       id: "spectra-git-state",
