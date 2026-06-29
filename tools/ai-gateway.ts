@@ -9,6 +9,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { ExecutionEngine, normalizeAiRequestBody } from "../src/index.js";
 import { probeAllProviders, applyProviderProbe } from "../src/config/providerProbe.js";
+import { createProjectCockpitRouter, renderProjectCockpitHtml } from "./cockpit/projectCockpit.js";
 
 const PORT = Number(process.env.AI_FORGE_AI_GATEWAY_PORT ?? process.env.AI_FORGE_DAEMON_PORT ?? 3000);
 const HOST = process.env.AI_FORGE_AI_GATEWAY_HOST ?? process.env.AI_FORGE_DAEMON_HOST ?? "127.0.0.1";
@@ -28,6 +29,14 @@ function jsonResponse(res: http.ServerResponse, code: number, body: unknown) {
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
   });
   res.end(s);
+}
+
+function htmlResponse(res: http.ServerResponse, code: number, body: string) {
+  res.writeHead(code, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  res.end(body);
 }
 
 function unauthorized(res: http.ServerResponse) {
@@ -68,6 +77,15 @@ async function start() {
     console.warn("[ai-gateway] Ollama unavailable at startup — local tier disabled:", ollamaStatus?.reason ?? "no reason given");
   }
 
+  const handleProjectCockpitRequest = createProjectCockpitRouter({
+    host: HOST,
+    port: PORT,
+    token: TOKEN,
+    mockExecutors: MOCK_EXECUTORS,
+    dbPath: DB_PATH,
+    workDir: WORK_DIR,
+  });
+
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? "", `http://${req.headers.host}`);
@@ -81,8 +99,15 @@ async function start() {
         return res.end();
       }
 
+      if (req.method === "GET" && url.pathname === "/cockpit") {
+        return htmlResponse(res, 200, renderProjectCockpitHtml());
+      }
+
       const provided = req.headers["x-local-token"];
       if (provided !== TOKEN) return unauthorized(res);
+
+      const cockpitHandled = await handleProjectCockpitRequest(req, res, url);
+      if (cockpitHandled !== false) return;
 
       if (req.method === "GET" && url.pathname === "/api/v1/health") {
         return jsonResponse(res, 200, {
@@ -113,6 +138,7 @@ async function start() {
 
   server.listen(PORT, HOST, () => {
     console.log(`Prism Spectra AI gateway listening on http://${HOST}:${PORT}`);
+    console.log(`Project cockpit available on http://${HOST}:${PORT}/cockpit`);
     if (!ENV_TOKEN) console.log(`Generated local token: ${TOKEN}`);
     console.log(`Mock executors: ${MOCK_EXECUTORS ? "on" : "off"}`);
   });
