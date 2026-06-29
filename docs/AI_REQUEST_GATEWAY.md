@@ -1,6 +1,6 @@
 # Spectra AI Request Gateway
 
-Last-Updated: 2026-06-25
+Last-Updated: 2026-06-29
 
 ## Purpose
 
@@ -60,11 +60,11 @@ If no token is supplied, the gateway generates an ephemeral token at launch.
 
 ## Provider mode
 
-The gateway is safe-by-default and uses mock executors unless real executors are
-explicitly enabled:
+The gateway now uses real executors by default. Mock executors are enabled only
+when explicitly requested:
 
 ```bash
-AI_FORGE_MOCK_EXECUTORS=0 npm run ai:gateway
+AI_FORGE_MOCK_EXECUTORS=1 npm run ai:gateway
 ```
 
 When real executors are enabled, provider configuration follows the existing
@@ -74,9 +74,20 @@ Spectra provider environment variables, including:
 OLLAMA_HOST
 OLLAMA_CODER_MODEL
 OLLAMA_GENERAL_MODEL
+OLLAMA_MODEL_CLASSIFIER
+OLLAMA_MODEL_PLANNER
+OLLAMA_MODEL_REASONER
 OPENAI_API_KEY
 ANTHROPIC_API_KEY
 ```
+
+Current local defaults:
+
+| Role | Default |
+| --- | --- |
+| Coder | `qwen2.5-coder:7b` |
+| General / planner / reasoner | `qwen3.5:9b` |
+| Classifier / fallback | `qwen3:1.7b` |
 
 ## Request shape
 
@@ -112,7 +123,7 @@ import, publish, file-write, or execution path is connected.
 {
   "ok": true,
   "provider": "ollama",
-  "model": "qwen3:9b",
+  "model": "qwen3.5:9b",
   "dataBoundary": "local",
   "response": "...",
   "structuredResponse": null,
