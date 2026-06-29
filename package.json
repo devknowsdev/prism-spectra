@@ -29,6 +29,7 @@
     "setup": "tsx tools/doctor.ts --setup-guide",
     "workbench": "tsx tools/daemon.ts",
     "ai:gateway": "tsx tools/ai-gateway.ts",
+    "cockpit": "tsx tools/ai-gateway.ts",
     "focus:ai:gateway": "tsx tools/ai-gateway.ts",
     "pretest": "npm run typecheck",
     "test": "node --import tsx test/run.ts && node --import tsx test/tier2b-routing.test.ts && node --import tsx test/tier3a-semantic-cache.test.ts && node --import tsx test/tier3b-route-cache.test.ts && node --import tsx test/tier3b-engine-route-hints.test.ts && node --import tsx test/tier3c-routing-hardening.test.ts"
