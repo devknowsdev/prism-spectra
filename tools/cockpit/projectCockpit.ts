@@ -9,17 +9,8 @@ const execFileAsync = promisify(execFile);
 const MAX_LOG_LINES = 500;
 
 type RoleKind = "managed-process" | "one-shot" | "virtual" | "placeholder";
-
 type LogLevel = "info" | "stdout" | "stderr" | "error" | "system";
-
 type ChecklistStatus = "done" | "pending" | "running" | "warn" | "blocked";
-
-interface ChecklistItem {
-  id: string;
-  label: string;
-  status: ChecklistStatus;
-  note?: string;
-}
 
 type CockpitActionKind =
   | "refresh-status"
@@ -30,6 +21,13 @@ type CockpitActionKind =
   | "show-logs"
   | "open-linked-app"
   | "acknowledge-external";
+
+interface ChecklistItem {
+  id: string;
+  label: string;
+  status: ChecklistStatus;
+  note?: string;
+}
 
 interface CockpitActionPacket {
   workflow: string;
@@ -63,21 +61,6 @@ interface CockpitGatewayProfile {
   workDir: string;
 }
 
-interface CockpitProfileRole extends CockpitRole {
-  commandPreview?: string;
-  status?: Record<string, any>;
-  logs?: LogEntry[];
-}
-
-interface CockpitProfile {
-  ok: boolean;
-  name: string;
-  generatedAt: string;
-  gateway: CockpitGatewayProfile;
-  roles: CockpitProfileRole[];
-  guidance?: CockpitGuidance;
-}
-
 interface CockpitRole {
   id: string;
   label: string;
@@ -92,6 +75,21 @@ interface CockpitRole {
   healthUrl?: string;
   disabledReason?: string;
   allowKillPort?: boolean;
+}
+
+interface CockpitProfileRole extends CockpitRole {
+  commandPreview?: string;
+  status?: Record<string, any>;
+  logs?: LogEntry[];
+}
+
+interface CockpitProfile {
+  ok: boolean;
+  name: string;
+  generatedAt: string;
+  gateway: CockpitGatewayProfile;
+  roles: CockpitProfileRole[];
+  guidance?: CockpitGuidance;
 }
 
 interface RunningProcess {
@@ -159,7 +157,7 @@ export function deriveCockpitGuidance(profile: CockpitProfile): CockpitGuidance 
     {
       id: "bridge",
       label: "Bridge test ready to run",
-      status: validationPassed && focusOwned ? "pending" : "pending",
+      status: "pending",
     },
   ];
 
@@ -243,7 +241,6 @@ export function deriveCockpitGuidance(profile: CockpitProfile): CockpitGuidance 
     };
   } else {
     stateSummary = `Gateway running (${modeLabel}) · Focus owned · Validation passed`;
-    checklist[3].status = "pending";
     nextAction = {
       workflow: "focus-spectra-bridge",
       action: "open-linked-app",
@@ -254,14 +251,7 @@ export function deriveCockpitGuidance(profile: CockpitProfile): CockpitGuidance 
     };
   }
 
-  return {
-    workflow: "focus-spectra-bridge",
-    modeLabel,
-    missionStatement,
-    stateSummary,
-    nextAction,
-    checklist,
-  };
+  return { workflow: "focus-spectra-bridge", modeLabel, missionStatement, stateSummary, nextAction, checklist };
 }
 
 export function renderProjectCockpitHtml() {
@@ -272,185 +262,56 @@ export function renderProjectCockpitHtml() {
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Prism Spectra Project Cockpit</title>
   <style>
-    :root {
-      color-scheme: dark;
-      --bg: #111318;
-      --panel: #181c24;
-      --panel2: #202633;
-      --text: #eef2f7;
-      --muted: #aab4c4;
-      --line: #303849;
-      --good: #7ddc9f;
-      --warn: #ffd37a;
-      --bad: #ff8d8d;
-      --focus: #b7a8ff;
-      --guided-bg: rgba(28,32,46,0.97);
-      --guided-border: #3a4260;
-      --action-bg: #1a2035;
-      --action-border: #3d5291;
-      --checklist-done: var(--good);
-      --checklist-pending: #606880;
-      --checklist-warn: var(--warn);
-      --checklist-blocked: var(--bad);
-      --checklist-running: var(--focus);
-    }
+    :root { color-scheme: dark; --bg:#111318; --panel:#181c24; --panel2:#202633; --text:#eef2f7; --muted:#aab4c4; --line:#303849; --good:#7ddc9f; --warn:#ffd37a; --bad:#ff8d8d; --focus:#b7a8ff; --guided-bg:rgba(28,32,46,0.97); --guided-border:#3a4260; --action-bg:#1a2035; --action-border:#3d5291; --checklist-pending:#606880; }
     * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: radial-gradient(circle at top left, #202335 0, #111318 38rem);
-      color: var(--text);
-    }
-    header {
-      padding: 22px 28px 14px;
-      border-bottom: 1px solid var(--line);
-      background: rgba(17,19,24,0.86);
-      position: sticky;
-      top: 0;
-      z-index: 3;
-      backdrop-filter: blur(10px);
-    }
-    h1 { margin: 0 0 6px; font-size: 24px; letter-spacing: -0.02em; }
-    p { margin: 0; color: var(--muted); }
-    main { padding: 22px 28px 42px; max-width: 1320px; margin: 0 auto; }
-    .toolbar {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      align-items: center;
-      margin: 0 0 18px;
-      padding: 12px;
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      background: rgba(24,28,36,0.84);
-    }
-    label { color: var(--muted); }
-    input {
-      background: #0f1218;
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      color: var(--text);
-      padding: 9px 10px;
-      min-width: 220px;
-    }
-    button {
-      background: var(--panel2);
-      color: var(--text);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 8px 11px;
-      cursor: pointer;
-    }
-    button:hover:not(:disabled) { border-color: var(--focus); }
-    button:disabled { opacity: 0.44; cursor: not-allowed; }
-    .primary { background: #2b3b5f; border-color: #485e91; }
-    .danger { background: #3d2025; border-color: #7b3b42; }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
-      gap: 14px;
-    }
-    .card {
-      background: rgba(24,28,36,0.93);
-      border: 1px solid var(--line);
-      border-radius: 16px;
-      padding: 15px;
-      min-height: 220px;
-    }
-    .card h2 { margin: 0; font-size: 17px; }
-    .meta { display: flex; flex-wrap: wrap; gap: 7px; margin: 10px 0; }
-    .pill {
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      padding: 3px 8px;
-      color: var(--muted);
-      background: rgba(255,255,255,0.03);
-      font-size: 12px;
-    }
-    .ok { color: var(--good); }
-    .warn { color: var(--warn); }
-    .bad { color: var(--bad); }
-    .cmd, pre {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 12px;
-      white-space: pre-wrap;
-      word-break: break-word;
-      background: #0d1016;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 10px;
-      color: #dbe7ff;
-    }
-    .cmd { margin: 10px 0; }
-    .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-    .logs {
-      margin-top: 10px;
-      max-height: 230px;
-      overflow: auto;
-      display: none;
-    }
-    .logs.open { display: block; }
-    .small { font-size: 12px; color: var(--muted); }
-    .section-title {
-      margin: 22px 0 10px;
-      font-size: 13px;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-    }
-    .guided-panel {
-      background: var(--guided-bg);
-      border: 1px solid var(--guided-border);
-      border-radius: 18px;
-      padding: 20px 24px;
-      margin-bottom: 18px;
-    }
-    .mission { font-size: 13px; color: var(--muted); margin: 0 0 2px; }
-    .state-summary { font-size: 15px; font-weight: 600; margin: 0 0 16px; }
-    .action-card {
-      background: var(--action-bg);
-      border: 1px solid var(--action-border);
-      border-radius: 14px;
-      padding: 14px 16px;
-      margin-bottom: 14px;
-    }
-    .action-label { font-size: 13px; color: var(--muted); text-transform: uppercase;
-      letter-spacing: 0.08em; margin: 0 0 6px; }
-    .action-title { font-size: 17px; font-weight: 600; margin: 0 0 6px; }
-    .action-reason { font-size: 13px; color: var(--muted); margin: 0 0 10px; }
-    .action-preview { margin: 8px 0; }
-    .action-row { display: flex; gap: 8px; margin-top: 12px; align-items: center; }
-    .approve-btn {
-      background: #2b3b5f; border: 1px solid #485e91;
-      color: var(--text); border-radius: 10px;
-      padding: 9px 16px; cursor: pointer; font-size: 14px;
-    }
-    .approve-btn:hover:not(:disabled) { border-color: var(--focus); }
-    .approve-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-    .terminal-hint { background: #0d1016; border: 1px solid var(--line);
-      border-radius: 10px; padding: 8px 10px; font-family: ui-monospace,
-      SFMono-Regular, Menlo, monospace; font-size: 12px; color: #dbe7ff;
-      margin-top: 8px; white-space: pre-wrap; word-break: break-word; }
-    .waiting-state { color: var(--focus); font-size: 14px; font-style: italic; }
-    .checklist { list-style: none; margin: 0; padding: 0; display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px; }
-    .checklist li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
-    .check-icon { width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0;
-      display: flex; align-items: center; justify-content: center; font-size: 10px; }
-    .check-done   { background: var(--checklist-done);    color: #000; }
-    .check-pending { background: transparent; border: 1.5px solid var(--checklist-pending); }
-    .check-running { background: var(--checklist-running); color: #000; }
-    .check-warn   { background: var(--checklist-warn);    color: #000; }
-    .check-blocked { background: var(--checklist-blocked); color: #000; }
-    .check-note   { flex-basis: 100%; font-size: 11px; color: var(--muted); margin-left: 24px; }
-    .advanced-toggle {
-      width: 100%; text-align: left; background: transparent; border: none;
-      border-bottom: 1px solid var(--line); padding: 10px 0; color: var(--muted);
-      font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px;
-    }
-    .advanced-toggle:hover { color: var(--text); }
-    .advanced-section { display: none; }
-    .advanced-section.open { display: block; }
+    body { margin:0; font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:radial-gradient(circle at top left,#202335 0,#111318 38rem); color:var(--text); }
+    header { padding:22px 28px 14px; border-bottom:1px solid var(--line); background:rgba(17,19,24,0.86); position:sticky; top:0; z-index:3; backdrop-filter:blur(10px); }
+    h1 { margin:0 0 6px; font-size:24px; letter-spacing:-0.02em; }
+    p { margin:0; color:var(--muted); }
+    main { padding:22px 28px 42px; max-width:1320px; margin:0 auto; }
+    .toolbar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:0 0 18px; padding:12px; border:1px solid var(--line); border-radius:14px; background:rgba(24,28,36,0.84); }
+    label { color:var(--muted); }
+    input { background:#0f1218; border:1px solid var(--line); border-radius:10px; color:var(--text); padding:9px 10px; min-width:220px; }
+    button { background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:10px; padding:8px 11px; cursor:pointer; }
+    button:hover:not(:disabled) { border-color:var(--focus); }
+    button:disabled { opacity:0.44; cursor:not-allowed; }
+    .primary { background:#2b3b5f; border-color:#485e91; }
+    .danger { background:#3d2025; border-color:#7b3b42; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); gap:14px; }
+    .card { background:rgba(24,28,36,0.93); border:1px solid var(--line); border-radius:16px; padding:15px; min-height:220px; }
+    .card h2 { margin:0; font-size:17px; }
+    .meta { display:flex; flex-wrap:wrap; gap:7px; margin:10px 0; }
+    .pill { border:1px solid var(--line); border-radius:999px; padding:3px 8px; color:var(--muted); background:rgba(255,255,255,0.03); font-size:12px; }
+    .ok { color:var(--good); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+    .cmd, pre { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; white-space:pre-wrap; word-break:break-word; background:#0d1016; border:1px solid var(--line); border-radius:12px; padding:10px; color:#dbe7ff; }
+    .cmd { margin:10px 0; }
+    .actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+    .logs { margin-top:10px; max-height:230px; overflow:auto; display:none; }
+    .logs.open { display:block; }
+    .small { font-size:12px; color:var(--muted); }
+    .section-title { margin:22px 0 10px; font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em; }
+    .guided-panel { background:var(--guided-bg); border:1px solid var(--guided-border); border-radius:18px; padding:20px 24px; margin-bottom:18px; }
+    .mission { font-size:13px; color:var(--muted); margin:0 0 2px; }
+    .state-summary { font-size:15px; font-weight:600; margin:0 0 16px; }
+    .action-card { background:var(--action-bg); border:1px solid var(--action-border); border-radius:14px; padding:14px 16px; margin-bottom:14px; }
+    .action-label { font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:0.08em; margin:0 0 6px; }
+    .action-title { font-size:17px; font-weight:600; margin:0 0 6px; }
+    .action-reason { font-size:13px; color:var(--muted); margin:0 0 10px; }
+    .action-preview { margin:8px 0; }
+    .action-row { display:flex; gap:8px; margin-top:12px; align-items:center; }
+    .approve-btn { background:#2b3b5f; border:1px solid #485e91; color:var(--text); border-radius:10px; padding:9px 16px; cursor:pointer; font-size:14px; }
+    .approve-btn:hover:not(:disabled) { border-color:var(--focus); }
+    .terminal-hint { background:#0d1016; border:1px solid var(--line); border-radius:10px; padding:8px 10px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; color:#dbe7ff; margin-top:8px; white-space:pre-wrap; word-break:break-word; }
+    .waiting-state { color:var(--focus); font-size:14px; font-style:italic; }
+    .checklist { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:6px; }
+    .checklist li { display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:13px; }
+    .check-icon { width:16px; height:16px; border-radius:50%; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:10px; }
+    .check-done { background:var(--good); color:#000; } .check-pending { background:transparent; border:1.5px solid var(--checklist-pending); } .check-running { background:var(--focus); color:#000; } .check-warn { background:var(--warn); color:#000; } .check-blocked { background:var(--bad); color:#000; }
+    .check-note { flex-basis:100%; font-size:11px; color:var(--muted); margin-left:24px; }
+    .advanced-toggle { width:100%; text-align:left; background:transparent; border:none; border-bottom:1px solid var(--line); padding:10px 0; color:var(--muted); font-size:13px; cursor:pointer; display:flex; align-items:center; gap:6px; }
+    .advanced-toggle:hover { color:var(--text); }
+    .advanced-section { display:none; }
+    .advanced-section.open { display:block; }
   </style>
 </head>
 <body>
@@ -472,6 +333,8 @@ export function renderProjectCockpitHtml() {
     const tokenInput = document.getElementById('token');
     const content = document.getElementById('content');
     const summary = document.getElementById('summary');
+    let advancedOpen = false;
+    const openLogRoles = new Set();
     tokenInput.value = localStorage.getItem('spectraCockpitToken') || 'dev-local-token';
 
     document.getElementById('saveToken').onclick = () => {
@@ -483,26 +346,18 @@ export function renderProjectCockpitHtml() {
     async function api(path, options) {
       const response = await fetch(path, {
         method: options && options.method ? options.method : 'GET',
-        headers: {
-          'content-type': 'application/json',
-          'x-local-token': tokenInput.value.trim()
-        },
+        headers: { 'content-type': 'application/json', 'x-local-token': tokenInput.value.trim() },
         body: options && options.body ? JSON.stringify(options.body) : undefined
       });
       const text = await response.text();
       let data;
       try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
-      if (!response.ok) {
-        const message = data && data.error ? data.error : response.status + ' ' + response.statusText;
-        throw new Error(message);
-      }
+      if (!response.ok) throw new Error(data && data.error ? data.error : response.status + ' ' + response.statusText);
       return data;
     }
 
     function escapeHtml(value) {
-      return String(value ?? '').replace(/[&<>"']/g, ch => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
-      })[ch]);
+      return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' })[ch]);
     }
 
     function stateClass(status) {
@@ -532,7 +387,7 @@ export function renderProjectCockpitHtml() {
       const canStop = !disabled && status.running;
       const canRestart = !disabled && role.kind !== 'virtual' && !externalPortOwner;
       const canKillPort = !disabled && role.allowKillPort && role.port && status.port && status.port.listening && status.running;
-      const manualKill = role.port ? 'lsof -tiTCP:' + role.port + ' -sTCP:LISTEN | xargs -r kill' : '';
+      const manualKill = role.port ? 'lsof -tiTCP:' + role.port + ' -sTCP:LISTEN | xargs kill' : '';
       const logs = (role.logs || []).slice(-80).map(line => '[' + line.at + '] ' + line.level + ': ' + line.line).join('\\n');
       return '<article class="card" data-role="' + escapeHtml(role.id) + '">' +
         '<h2>' + escapeHtml(role.label) + '</h2>' +
@@ -542,14 +397,7 @@ export function renderProjectCockpitHtml() {
           '<span class="pill ' + stateClass(status) + '">' + stateText(status) + '</span>' +
           (role.port ? '<span class="pill">port ' + escapeHtml(role.port) + '</span>' : '') +
           (status.pid ? '<span class="pill">pid ' + escapeHtml(status.pid) + '</span>' : '') +
-          (function() {
-            if (!externalPortOwner || !status.port) return '';
-            var realPids = (status.port.pids || []).filter(function(p) {
-              return typeof p === 'number' && Number.isFinite(p) && p > 0;
-            });
-            if (!realPids.length) return '';
-            return '<span class="pill warn">external pid(s) ' + escapeHtml(realPids.join(', ')) + '</span>';
-          })() +
+          (function() { if (!externalPortOwner || !status.port) return ''; var realPids = (status.port.pids || []).filter(function(p) { return typeof p === 'number' && Number.isFinite(p) && p > 0; }); return realPids.length ? '<span class="pill warn">external pid(s) ' + escapeHtml(realPids.join(', ')) + '</span>' : ''; })() +
           (status.cwdExists === false ? '<span class="pill bad">cwd missing</span>' : '') +
         '</div>' +
         (role.cwd ? '<div class="small">cwd: ' + escapeHtml(role.cwd) + '</div>' : '') +
@@ -569,16 +417,13 @@ export function renderProjectCockpitHtml() {
     }
 
     function checkIcon(status) {
-      var icons = { done: '✓', pending: '', running: '…', warn: '!', blocked: '✗' };
+      var icons = { done:'✓', pending:'', running:'…', warn:'!', blocked:'✗' };
       return '<span class="check-icon check-' + status + '">' + (icons[status] || '') + '</span>';
     }
 
     function renderChecklist(items) {
       return '<ul class="checklist">' + items.map(function(item) {
-        return '<li>' + checkIcon(item.status) +
-          '<span class="check-label">' + escapeHtml(item.label) + '</span>' +
-          (item.note ? '<span class="check-note">' + escapeHtml(item.note) + '</span>' : '') +
-          '</li>';
+        return '<li>' + checkIcon(item.status) + '<span class="check-label">' + escapeHtml(item.label) + '</span>' + (item.note ? '<span class="check-note">' + escapeHtml(item.note) + '</span>' : '') + '</li>';
       }).join('') + '</ul>';
     }
 
@@ -591,13 +436,24 @@ export function renderProjectCockpitHtml() {
       return encodeURIComponent(JSON.stringify(action));
     }
 
+    function guidedButton(action, label) {
+      return '<button class="approve-btn" data-guided-action="' + encodeGuidedAction(action) + '">' + escapeHtml(label) + '</button>';
+    }
+
     function renderNextAction(action, profile) {
       if (!action) return '';
-      if (action.action === 'refresh-status' && !action.requiresApproval) {
+      if (action.action === 'show-logs') {
         return '<div class="action-card">' +
-          '<div class="action-label">Next action</div>' +
+          '<div class="action-label">Status</div>' +
           '<div class="action-title">' + escapeHtml(action.reason) + '</div>' +
-          (action.terminalHint ? '<div class="terminal-hint">' + escapeHtml(action.terminalHint) + '</div>' : '') +
+          '<div class="action-row">' + guidedButton(action, 'Open validation logs') + '</div>' +
+          '</div>';
+      }
+      if (action.action === 'open-linked-app') {
+        return '<div class="action-card">' +
+          '<div class="action-label">Ready</div>' +
+          '<div class="action-title">' + escapeHtml(action.reason) + '</div>' +
+          '<div class="action-row">' + guidedButton(action, 'Open Focus') + '</div>' +
           '</div>';
       }
       if (!action.requiresApproval) {
@@ -610,34 +466,30 @@ export function renderProjectCockpitHtml() {
       var actionTitle = {
         'start-role': 'Start ' + (action.role ? roleLabelById(profile, action.role) : 'role'),
         'restart-owned-role': 'Restart ' + (action.role ? roleLabelById(profile, action.role) : 'role'),
-        'run-one-shot': 'Run ' + (action.role ? roleLabelById(profile, action.role) : 'check'),
-        'show-logs': 'Open logs — ' + (action.role ? roleLabelById(profile, action.role) : '')
+        'run-one-shot': 'Run ' + (action.role ? roleLabelById(profile, action.role) : 'check')
       }[action.action] || action.action;
-
       return '<div class="action-card">' +
         '<div class="action-label">Next safe action</div>' +
         '<div class="action-title">▶  ' + escapeHtml(actionTitle) + '</div>' +
         '<div class="action-reason">' + escapeHtml(action.reason) + '</div>' +
         (action.commandPreview ? '<div class="cmd action-preview">' + escapeHtml(action.commandPreview) + '</div>' : '') +
-        '<div class="action-row">' +
-          '<button class="approve-btn" data-guided-action="' + encodeGuidedAction(action) + '">' +
-            'Approve — ' + escapeHtml(actionTitle) +
-          '</button>' +
-          (action.risk !== 'none' ? '<span class="small">Risk: ' + escapeHtml(action.risk) + '</span>' : '') +
-        '</div>' +
+        '<div class="action-row">' + guidedButton(action, 'Approve — ' + actionTitle) + (action.risk !== 'none' ? '<span class="small">Risk: ' + escapeHtml(action.risk) + '</span>' : '') + '</div>' +
         '</div>';
     }
 
     async function approveAction(action) {
       try {
         if (action.action === 'show-logs') {
+          advancedOpen = true;
+          if (action.role) openLogRoles.add(action.role);
           var card = document.querySelector('[data-role="' + action.role + '"]');
+          var section = document.querySelector('.advanced-section');
+          var toggle = document.querySelector('.advanced-toggle');
+          if (section) section.classList.add('open');
+          if (toggle) toggle.textContent = '▲ Hide advanced process controls';
           if (card) {
-            var section = document.querySelector('.advanced-section');
-            var toggle = document.querySelector('.advanced-toggle');
-            if (section) section.classList.add('open');
-            if (toggle) toggle.textContent = '▲ Hide advanced process controls';
-            card.querySelector('.logs').classList.add('open');
+            var logsEl = card.querySelector('.logs');
+            if (logsEl) logsEl.classList.add('open');
             card.scrollIntoView({ behavior: 'smooth', block: 'start' });
           }
           return;
@@ -646,9 +498,9 @@ export function renderProjectCockpitHtml() {
           window.open('http://127.0.0.1:4173/', '_blank');
           return;
         }
-        var apiAction = { 'start-role': 'start', 'restart-owned-role': 'restart', 'run-one-shot': 'start' }[action.action];
+        var apiAction = { 'start-role':'start', 'restart-owned-role':'restart', 'run-one-shot':'start' }[action.action];
         if (apiAction && action.role) {
-          await api('/api/v1/cockpit/processes/' + encodeURIComponent(action.role) + '/' + apiAction, { method: 'POST' });
+          await api('/api/v1/cockpit/processes/' + encodeURIComponent(action.role) + '/' + apiAction, { method:'POST' });
           await loadProfile();
         }
       } catch (error) {
@@ -662,55 +514,46 @@ export function renderProjectCockpitHtml() {
       return '<div class="guided-panel">' +
         '<div class="mission">' + escapeHtml(g.missionStatement) + ' · ' + escapeHtml(g.modeLabel) + '</div>' +
         '<div class="state-summary">' + escapeHtml(g.stateSummary) + '</div>' +
-        (g.nextAction ? renderNextAction(g.nextAction, profile) :
-          '<div class="waiting-state">Waiting for validation to complete…</div>') +
-        '<div class="section-title" style="margin-top:14px">Readiness checklist</div>' +
-        renderChecklist(g.checklist) +
+        (g.nextAction ? renderNextAction(g.nextAction, profile) : '<div class="waiting-state">Waiting for validation to complete…</div>') +
+        '<div class="section-title" style="margin-top:14px">Readiness checklist</div>' + renderChecklist(g.checklist) +
         '</div>';
     }
 
     function toggleAdvanced(btn) {
       var section = btn.nextElementSibling;
-      var open = section.classList.toggle('open');
-      btn.textContent = (open ? '▲ Hide' : '▼ Show') + ' advanced process controls';
+      advancedOpen = section.classList.toggle('open');
+      btn.textContent = (advancedOpen ? '▲ Hide' : '▼ Show') + ' advanced process controls';
     }
 
     function render(profile) {
-      summary.textContent = 'Gateway mode: ' + profile.gateway.mode +
-        ' · host: ' + profile.gateway.host + ':' + profile.gateway.port;
-
+      summary.textContent = 'Gateway mode: ' + profile.gateway.mode + ' · host: ' + profile.gateway.host + ':' + profile.gateway.port;
       var groups = [];
-      for (var role of profile.roles) {
-        if (!groups.includes(role.group)) groups.push(role.group);
-      }
+      for (var role of profile.roles) if (!groups.includes(role.group)) groups.push(role.group);
       var cardsHtml = groups.map(function(group) {
         var cards = profile.roles.filter(function(r) { return r.group === group; }).map(roleCard).join('');
-        return '<div class="section-title">' + escapeHtml(group) + '</div>' +
-               '<div class="grid">' + cards + '</div>';
+        return '<div class="section-title">' + escapeHtml(group) + '</div><div class="grid">' + cards + '</div>';
       }).join('');
-
-      content.innerHTML =
-        renderGuidedPanel(profile) +
-        '<button class="advanced-toggle">▼ Show advanced process controls</button>' +
-        '<div class="advanced-section">' + cardsHtml + '</div>';
+      content.innerHTML = renderGuidedPanel(profile) +
+        '<button class="advanced-toggle">' + (advancedOpen ? '▲ Hide' : '▼ Show') + ' advanced process controls</button>' +
+        '<div class="advanced-section' + (advancedOpen ? ' open' : '') + '">' + cardsHtml + '</div>';
 
       var advancedToggle = content.querySelector('.advanced-toggle');
-      if (advancedToggle) {
-        advancedToggle.onclick = function() { toggleAdvanced(advancedToggle); };
-      }
+      if (advancedToggle) advancedToggle.onclick = function() { toggleAdvanced(advancedToggle); };
 
       content.querySelectorAll('[data-guided-action]').forEach(function(button) {
         button.onclick = function() {
-          var raw = button.getAttribute('data-guided-action') || '';
-          approveAction(JSON.parse(decodeURIComponent(raw)));
+          approveAction(JSON.parse(decodeURIComponent(button.getAttribute('data-guided-action') || '')));
         };
       });
 
       content.querySelectorAll('.card').forEach(function(card) {
+        var roleId = card.getAttribute('data-role');
+        var logsEl = card.querySelector('.logs');
+        if (roleId && openLogRoles.has(roleId) && logsEl) logsEl.classList.add('open');
         card.querySelectorAll('button').forEach(function(button) {
           var action = button.getAttribute('data-action');
           if (!action) return;
-          button.onclick = function() { runAction(card.getAttribute('data-role'), action, card); };
+          button.onclick = function() { runAction(roleId, action, card); };
         });
       });
     }
@@ -718,10 +561,14 @@ export function renderProjectCockpitHtml() {
     async function runAction(id, action, card) {
       try {
         if (action === 'toggle-logs') {
-          card.querySelector('.logs').classList.toggle('open');
+          var logsEl = card.querySelector('.logs');
+          var open = logsEl.classList.toggle('open');
+          if (id) {
+            if (open) openLogRoles.add(id); else openLogRoles.delete(id);
+          }
           return;
         }
-        await api('/api/v1/cockpit/processes/' + encodeURIComponent(id) + '/' + action, { method: 'POST' });
+        await api('/api/v1/cockpit/processes/' + encodeURIComponent(id) + '/' + action, { method:'POST' });
         await loadProfile();
       } catch (error) {
         alert(error.message || String(error));
@@ -746,15 +593,9 @@ export function renderProjectCockpitHtml() {
 
 export function createProjectCockpitRouter(options: CockpitOptions) {
   const cockpit = new ProjectCockpit(options);
-
   return async function handleProjectCockpitRequest(req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
-    if (req.method === "GET" && url.pathname === "/api/v1/cockpit/profile") {
-      return jsonResponse(res, 200, await cockpit.profile());
-    }
-
-    if (req.method === "GET" && url.pathname === "/api/v1/cockpit/processes") {
-      return jsonResponse(res, 200, { ok: true, roles: await cockpit.rolesWithStatus() });
-    }
+    if (req.method === "GET" && url.pathname === "/api/v1/cockpit/profile") return jsonResponse(res, 200, await cockpit.profile());
+    if (req.method === "GET" && url.pathname === "/api/v1/cockpit/processes") return jsonResponse(res, 200, { ok: true, roles: await cockpit.rolesWithStatus() });
 
     const match = url.pathname.match(/^\/api\/v1\/cockpit\/processes\/([^/]+)\/(start|stop|restart|kill-port|logs)$/);
     if (!match) return false;
@@ -762,19 +603,12 @@ export function createProjectCockpitRouter(options: CockpitOptions) {
     const id = decodeURIComponent(match[1]);
     const action = match[2];
 
-    if (req.method === "GET" && action === "logs") {
-      return jsonResponse(res, 200, { ok: true, id, logs: cockpit.logsFor(id) });
-    }
-
-    if (req.method !== "POST") {
-      return jsonResponse(res, 405, { ok: false, error: "method not allowed" });
-    }
-
+    if (req.method === "GET" && action === "logs") return jsonResponse(res, 200, { ok: true, id, logs: cockpit.logsFor(id) });
+    if (req.method !== "POST") return jsonResponse(res, 405, { ok: false, error: "method not allowed" });
     if (action === "start") return jsonResponse(res, 200, await cockpit.start(id));
     if (action === "stop") return jsonResponse(res, 200, await cockpit.stop(id));
     if (action === "restart") return jsonResponse(res, 200, await cockpit.restart(id));
     if (action === "kill-port") return jsonResponse(res, 200, await cockpit.killPort(id));
-
     return false;
   };
 }
@@ -828,17 +662,11 @@ class ProjectCockpit {
     if (!role.command) return { ok: false, error: `${role.label} has no command configured.` };
 
     const existing = this.running.get(role.id);
-    if (existing && !existing.child.killed && existing.child.exitCode === null) {
-      return { ok: true, alreadyRunning: true, id: role.id, pid: existing.child.pid };
-    }
+    if (existing && !existing.child.killed && existing.child.exitCode === null) return { ok: true, alreadyRunning: true, id: role.id, pid: existing.child.pid };
 
     if (role.cwd) {
-      try {
-        await fs.access(role.cwd);
-      } catch {
-        this.append(role.id, "error", `Working directory does not exist: ${role.cwd}`);
-        return { ok: false, error: `Working directory does not exist: ${role.cwd}` };
-      }
+      try { await fs.access(role.cwd); }
+      catch { this.append(role.id, "error", `Working directory does not exist: ${role.cwd}`); return { ok: false, error: `Working directory does not exist: ${role.cwd}` }; }
     }
 
     if (role.port) {
@@ -851,7 +679,6 @@ class ProjectCockpit {
     }
 
     this.append(role.id, "system", `$ ${commandPreview(role)}`);
-
     const child = spawn(role.command, role.args ?? [], {
       cwd: role.cwd,
       env: { ...process.env, ...(role.env ?? {}) },
@@ -876,9 +703,7 @@ class ProjectCockpit {
   async stop(id: string) {
     const role = this.requireRole(id);
     const running = this.running.get(role.id);
-    if (!running || running.child.exitCode !== null) {
-      return { ok: true, id: role.id, stopped: false, message: "No managed process is running." };
-    }
+    if (!running || running.child.exitCode !== null) return { ok: true, id: role.id, stopped: false, message: "No managed process is running." };
 
     running.child.kill("SIGTERM");
     this.append(role.id, "system", "sent SIGTERM");
@@ -888,7 +713,6 @@ class ProjectCockpit {
         this.append(role.id, "system", "sent SIGKILL after timeout");
       }
     }, 1800);
-
     return { ok: true, id: role.id, stopped: true };
   }
 
@@ -900,25 +724,18 @@ class ProjectCockpit {
 
   async killPort(id: string) {
     const role = this.requireRole(id);
-    if (!role.port || role.allowKillPort === false) {
-      return { ok: false, error: `${role.label} does not allow kill-port from the cockpit.` };
-    }
+    if (!role.port || role.allowKillPort === false) return { ok: false, error: `${role.label} does not allow kill-port from the cockpit.` };
 
     const running = this.running.get(role.id);
     const isManaged = Boolean(running && running.child.exitCode === null && !running.child.killed);
     if (!isManaged) {
-      const manual = `lsof -tiTCP:${role.port} -sTCP:LISTEN | xargs -r kill`;
+      const manual = `lsof -tiTCP:${role.port} -sTCP:LISTEN | xargs kill`;
       this.append(role.id, "error", `Refusing to kill externally-owned port ${role.port}. Manual command: ${manual}`);
-      return {
-        ok: false,
-        error: `Refusing to kill externally-owned port ${role.port} from the browser. Run manually: ${manual}`,
-      };
+      return { ok: false, error: `Refusing to kill externally-owned port ${role.port} from the browser. Run manually: ${manual}` };
     }
 
     const port = await listeningPids(role.port);
-    if (!port.listening || port.pids.length === 0) {
-      return { ok: true, id: role.id, killed: [], message: `No listener on port ${role.port}.` };
-    }
+    if (!port.listening || port.pids.length === 0) return { ok: true, id: role.id, killed: [], message: `No listener on port ${role.port}.` };
 
     const childPid = running?.child.pid;
     const unsafePids = port.pids.filter(pid => pid === process.pid || pid === process.ppid || pid !== childPid);
@@ -929,12 +746,8 @@ class ProjectCockpit {
 
     const killed: number[] = [];
     for (const pid of port.pids) {
-      try {
-        process.kill(pid, "SIGTERM");
-        killed.push(pid);
-      } catch (error) {
-        this.append(role.id, "error", `Failed to kill pid ${pid}: ${(error as Error).message}`);
-      }
+      try { process.kill(pid, "SIGTERM"); killed.push(pid); }
+      catch (error) { this.append(role.id, "error", `Failed to kill pid ${pid}: ${(error as Error).message}`); }
     }
     this.append(role.id, "system", `sent SIGTERM to port ${role.port} pid(s): ${killed.join(", ")}`);
     return { ok: true, id: role.id, killed };
@@ -947,7 +760,6 @@ class ProjectCockpit {
     const cwdExists = role.cwd ? await exists(role.cwd) : undefined;
     const health = role.healthUrl ? await quickHealth(role.healthUrl, this.options.token) : null;
     const externalPortOwner = role.kind !== "virtual" && !isRunning && Boolean(port?.listening);
-
     return {
       kind: role.kind,
       disabled: role.kind === "placeholder",
@@ -988,105 +800,21 @@ function buildRoles(options: CockpitOptions): CockpitRole[] {
   const beamDir = resolveHome(process.env.PRISM_BEAM_DIR ?? path.join(os.homedir(), "Desktop", "prism-beam"));
 
   return [
-    {
-      id: "spectra-gateway-current",
-      label: "Spectra Gateway",
-      group: "Core runtime",
-      kind: "virtual",
-      description: "The currently running gateway that serves this cockpit and the Focus AI bridge.",
-      cwd: spectraDir,
-      port: options.port,
-      healthUrl: `http://${options.host}:${options.port}/api/v1/health`,
-      allowKillPort: false,
-    },
-    {
-      id: "focus-ui",
-      label: "Focus UI",
-      group: "Core runtime",
-      kind: "managed-process",
-      description: "Starts the Prism Focus browser app with a labelled, managed local server.",
-      cwd: focusDir,
-      command: "python3",
-      args: ["-m", "http.server", "4173"],
-      port: 4173,
-      healthUrl: "http://127.0.0.1:4173/",
-      allowKillPort: true,
-    },
-    {
-      id: "spectra-validation",
-      label: "Spectra Validation",
-      group: "Validation",
-      kind: "one-shot",
-      description: "Runs the current low-noise Spectra checks for this bridge slice.",
-      cwd: spectraDir,
-      command: "bash",
-      args: ["-lc", "npm run typecheck && npm run test:ai-request && npm run test:cockpit"],
-    },
-    {
-      id: "spectra-git-state",
-      label: "Spectra Git State",
-      group: "Validation",
-      kind: "one-shot",
-      description: "Shows current Spectra branch, local status, and recent commits.",
-      cwd: spectraDir,
-      command: "bash",
-      args: ["-lc", "printf 'branch: '; git branch --show-current; git status --short; git log --oneline -5"],
-    },
-    {
-      id: "focus-git-state",
-      label: "Focus Git State",
-      group: "Validation",
-      kind: "one-shot",
-      description: "Shows current Focus branch, local status, and recent commits.",
-      cwd: focusDir,
-      command: "bash",
-      args: ["-lc", "printf 'branch: '; git branch --show-current; git status --short; git log --oneline -5"],
-    },
-    {
-      id: "ollama-status",
-      label: "Ollama Status",
-      group: "Local models",
-      kind: "one-shot",
-      description: "Lists installed and currently loaded Ollama models without launching real inference.",
-      command: "bash",
-      args: ["-lc", "ollama list && printf '\\n--- loaded models ---\\n' && ollama ps"],
-    },
-    {
-      id: "vibe-coder-cli",
-      label: "Vibe-Coder CLI",
-      group: "Future interfaces",
-      kind: "placeholder",
-      description: "Reserved launch surface for a future vibe-coder CLI interface.",
-      cwd: spectraDir,
-      disabledReason: "Not built yet. This card locks the intended cockpit slot without pretending it is available.",
-    },
-    {
-      id: "prism-build",
-      label: "Prism Build",
-      group: "Future interfaces",
-      kind: "placeholder",
-      description: "Reserved launch surface for a future Prism Build interface.",
-      cwd: spectraDir,
-      disabledReason: "Not built yet. Next step is to define safe build presets and review gates.",
-    },
-    {
-      id: "beam-session-log",
-      label: "Beam Session Log",
-      group: "Reference layer",
-      kind: "one-shot",
-      description: "Read-only Beam orientation snapshot. Does not write progress logs.",
-      cwd: beamDir,
-      command: "bash",
-      args: ["-lc", "printf 'branch: '; git branch --show-current; git status --short; printf '\\nRecent progress markers:\\n'; grep -n \"Focus\\|Spectra\\|cockpit\" AI_PROGRESS_LOG.md | tail -20 || true"],
-    },
+    { id: "spectra-gateway-current", label: "Spectra Gateway", group: "Core runtime", kind: "virtual", description: "The currently running gateway that serves this cockpit and the Focus AI bridge.", cwd: spectraDir, port: options.port, healthUrl: `http://${options.host}:${options.port}/api/v1/health`, allowKillPort: false },
+    { id: "focus-ui", label: "Focus UI", group: "Core runtime", kind: "managed-process", description: "Starts the Prism Focus browser app with a labelled, managed local server.", cwd: focusDir, command: "python3", args: ["-m", "http.server", "4173"], port: 4173, healthUrl: "http://127.0.0.1:4173/", allowKillPort: true },
+    { id: "spectra-validation", label: "Spectra Validation", group: "Validation", kind: "one-shot", description: "Runs the current low-noise Spectra checks for this bridge slice.", cwd: spectraDir, command: "bash", args: ["-lc", "npm run typecheck && npm run test:ai-request && npm run test:cockpit"] },
+    { id: "spectra-git-state", label: "Spectra Git State", group: "Validation", kind: "one-shot", description: "Shows current Spectra branch, local status, and recent commits.", cwd: spectraDir, command: "bash", args: ["-lc", "printf 'branch: '; git branch --show-current; git status --short; git log --oneline -5"] },
+    { id: "focus-git-state", label: "Focus Git State", group: "Validation", kind: "one-shot", description: "Shows current Focus branch, local status, and recent commits.", cwd: focusDir, command: "bash", args: ["-lc", "printf 'branch: '; git branch --show-current; git status --short; git log --oneline -5"] },
+    { id: "ollama-status", label: "Ollama Status", group: "Local models", kind: "one-shot", description: "Lists installed and currently loaded Ollama models without launching real inference.", command: "bash", args: ["-lc", "ollama list && printf '\\n--- loaded models ---\\n' && ollama ps"] },
+    { id: "vibe-coder-cli", label: "Vibe-Coder CLI", group: "Future interfaces", kind: "placeholder", description: "Reserved launch surface for a future vibe-coder CLI interface.", cwd: spectraDir, disabledReason: "Not built yet. This card locks the intended cockpit slot without pretending it is available." },
+    { id: "prism-build", label: "Prism Build", group: "Future interfaces", kind: "placeholder", description: "Reserved launch surface for a future Prism Build interface.", cwd: spectraDir, disabledReason: "Not built yet. Next step is to define safe build presets and review gates." },
+    { id: "beam-session-log", label: "Beam Session Log", group: "Reference layer", kind: "one-shot", description: "Read-only Beam orientation snapshot. Does not write progress logs.", cwd: beamDir, command: "bash", args: ["-lc", "printf 'branch: '; git branch --show-current; git status --short; printf '\\nRecent progress markers:\\n'; grep -n \"Focus\\|Spectra\\|cockpit\" AI_PROGRESS_LOG.md | tail -20 || true"] },
   ];
 }
 
 function commandPreview(role: CockpitRole) {
   if (!role.command) return role.disabledReason ?? "No command configured.";
-  const env = role.env && Object.keys(role.env).length
-    ? Object.entries(role.env).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(" ") + " "
-    : "";
+  const env = role.env && Object.keys(role.env).length ? Object.entries(role.env).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(" ") + " " : "";
   return `${env}${[role.command, ...(role.args ?? [])].map(shellWord).join(" ")}`;
 }
 
@@ -1098,22 +826,13 @@ function shellWord(value: string) {
 export function parsePidOutput(raw: string): number[] {
   const trimmed = raw.trim();
   if (trimmed === "") return [];
-  return trimmed
-    .split(/\s+/)
-    .map(token => parseInt(token, 10))
-    .filter(n => Number.isInteger(n) && n > 0);
+  return trimmed.split(/\s+/).map(token => parseInt(token, 10)).filter(n => Number.isInteger(n) && n > 0);
 }
 
 async function listeningPids(port: number) {
   const result = await safeExec("lsof", ["-tiTCP:" + String(port), "-sTCP:LISTEN"], 2200);
   const pids = parsePidOutput(result.output);
-  return {
-    ok: result.ok || pids.length === 0,
-    port,
-    listening: pids.length > 0,
-    pids,
-    error: result.ok ? undefined : result.error,
-  };
+  return { ok: result.ok || pids.length === 0, port, listening: pids.length > 0, pids, error: result.ok ? undefined : result.error };
 }
 
 async function quickHealth(url: string, token: string) {
@@ -1123,11 +842,7 @@ async function quickHealth(url: string, token: string) {
     const headers: Record<string, string> = {};
     if (url.includes("/api/v1/")) headers["x-local-token"] = token;
     const response = await fetch(url, { headers, signal: controller.signal });
-    return {
-      ok: response.ok,
-      status: response.status,
-      statusText: response.statusText,
-    };
+    return { ok: response.ok, status: response.status, statusText: response.statusText };
   } catch (error) {
     return { ok: false, error: (error as Error).message };
   } finally {
@@ -1136,29 +851,17 @@ async function quickHealth(url: string, token: string) {
 }
 
 async function exists(targetPath: string) {
-  try {
-    await fs.access(targetPath);
-    return true;
-  } catch {
-    return false;
-  }
+  try { await fs.access(targetPath); return true; }
+  catch { return false; }
 }
 
 async function safeExec(command: string, args: string[], timeout = 3000) {
   try {
     const { stdout, stderr } = await execFileAsync(command, args, { timeout, maxBuffer: 512 * 1024 });
-    return {
-      ok: true,
-      output: String(stdout ?? "").trim(),
-      error: String(stderr ?? "").trim() || undefined,
-    };
+    return { ok: true, output: String(stdout ?? "").trim(), error: String(stderr ?? "").trim() || undefined };
   } catch (error) {
     const err = error as Error & { stdout?: string | Buffer; stderr?: string | Buffer; code?: string | number };
-    return {
-      ok: false,
-      output: String(err.stdout ?? "").trim(),
-      error: String(err.stderr ?? "").trim() || err.message || String(err.code ?? "command failed"),
-    };
+    return { ok: false, output: String(err.stdout ?? "").trim(), error: String(err.stderr ?? "").trim() || err.message || String(err.code ?? "command failed") };
   }
 }
 
