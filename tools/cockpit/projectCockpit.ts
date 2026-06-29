@@ -255,7 +255,8 @@ export function renderProjectCockpitHtml() {
       const canStart = !disabled && role.kind !== 'virtual' && !status.running && !externalPortOwner;
       const canStop = !disabled && status.running;
       const canRestart = !disabled && role.kind !== 'virtual' && !externalPortOwner;
-      const canKillPort = !disabled && role.allowKillPort && role.port && status.port && status.port.listening;
+      const canKillPort = !disabled && role.allowKillPort && role.port && status.port && status.port.listening && status.running;
+      const manualKill = role.port ? 'lsof -tiTCP:' + role.port + ' -sTCP:LISTEN | xargs -r kill' : '';
       const logs = (role.logs || []).slice(-80).map(line => '[' + line.at + '] ' + line.level + ': ' + line.line).join('\\n');
       return '<article class="card" data-role="' + escapeHtml(role.id) + '">' +
         '<h2>' + escapeHtml(role.label) + '</h2>' +
@@ -271,7 +272,7 @@ export function renderProjectCockpitHtml() {
         (role.cwd ? '<div class="small">cwd: ' + escapeHtml(role.cwd) + '</div>' : '') +
         (role.healthUrl ? '<div class="small">health: ' + escapeHtml(role.healthUrl) + '</div>' : '') +
         '<div class="cmd">' + escapeHtml(role.commandPreview || 'No command wired yet.') + '</div>' +
-        (externalPortOwner ? '<p class="warn">This port is already owned by an external process. Use Kill port first if you want the cockpit to own this role.</p>' : '') +
+        (externalPortOwner ? '<p class="warn">External process detected. The cockpit will not kill it from the browser. Run this manually if you want to free the port:</p><div class="cmd">' + escapeHtml(manualKill) + '</div>' : '') +
         (role.disabledReason ? '<p class="warn">' + escapeHtml(role.disabledReason) + '</p>' : '') +
         '<div class="actions">' +
           '<button class="primary" data-action="start" ' + (canStart ? '' : 'disabled') + '>Start / Run</button>' +
@@ -431,7 +432,7 @@ class ProjectCockpit {
       if (port.listening) {
         const owner = port.pids.length ? `pid(s): ${port.pids.join(", ")}` : "unknown pid";
         this.append(role.id, "error", `Port ${role.port} is already owned by an external process (${owner}).`);
-        return { ok: false, error: `Port ${role.port} is already in use by an external process. Use Kill port first if you want the cockpit to own this role.` };
+        return { ok: false, error: `Port ${role.port} is already in use by an external process. Free the port manually first if you want the cockpit to own this role.` };
       }
     }
 
@@ -489,9 +490,27 @@ class ProjectCockpit {
       return { ok: false, error: `${role.label} does not allow kill-port from the cockpit.` };
     }
 
+    const running = this.running.get(role.id);
+    const isManaged = Boolean(running && running.child.exitCode === null && !running.child.killed);
+    if (!isManaged) {
+      const manual = `lsof -tiTCP:${role.port} -sTCP:LISTEN | xargs -r kill`;
+      this.append(role.id, "error", `Refusing to kill externally-owned port ${role.port}. Manual command: ${manual}`);
+      return {
+        ok: false,
+        error: `Refusing to kill externally-owned port ${role.port} from the browser. Run manually: ${manual}`,
+      };
+    }
+
     const port = await listeningPids(role.port);
     if (!port.listening || port.pids.length === 0) {
       return { ok: true, id: role.id, killed: [], message: `No listener on port ${role.port}.` };
+    }
+
+    const childPid = running?.child.pid;
+    const unsafePids = port.pids.filter(pid => pid === process.pid || pid === process.ppid || pid !== childPid);
+    if (unsafePids.length > 0) {
+      this.append(role.id, "error", `Refusing to kill unexpected pid(s) on port ${role.port}: ${unsafePids.join(", ")}`);
+      return { ok: false, error: `Refusing to kill unexpected pid(s) on port ${role.port}: ${unsafePids.join(", ")}` };
     }
 
     const killed: number[] = [];
