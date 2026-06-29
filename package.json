@@ -17,7 +17,7 @@
     "test:setup": "npm run doctor && npm run typecheck && npm run build",
     "test:full": "node --import tsx test/run.ts && node --import tsx test/tier2b-routing.test.ts && node --import tsx test/tier3a-semantic-cache.test.ts && node --import tsx test/tier3b-route-cache.test.ts && node --import tsx test/tier3b-engine-route-hints.test.ts && node --import tsx test/tier3c-routing-hardening.test.ts",
     "test:ai-request": "node --import tsx test/ai-request.test.ts",
-    "test:cockpit": "tsx tools/check-cockpit-html.ts",
+    "test:cockpit": "node --import tsx test/cockpit-html.test.ts",
     "test:tier2b": "node --import tsx test/tier2b-routing.test.ts",
     "test:tier3a": "node --import tsx test/tier3a-semantic-cache.test.ts",
     "test:tier3b": "node --import tsx test/tier3b-route-cache.test.ts",
