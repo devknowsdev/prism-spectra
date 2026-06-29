@@ -125,7 +125,7 @@ export class ExecutionEngine {
     this.memory = new MemoryDB(opts.dbPath);
     this.ledger = new Ledger(this.memory);
     this.patternCache = new PatternCache(this.memory);
-    const semanticEnabled = opts.semanticCacheEnabled ?? Boolean(opts.semanticEmbeddingProvider) ?? !mockExecutors;
+    const semanticEnabled = opts.semanticCacheEnabled ?? (Boolean(opts.semanticEmbeddingProvider) || !mockExecutors);
     if (semanticEnabled) {
       this.embeddingProvider = opts.semanticEmbeddingProvider ?? new OllamaEmbeddingProvider();
       this.semanticPatternCache = new SemanticPatternCache({
