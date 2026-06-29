@@ -58,7 +58,7 @@ dev-local-token
 
 ### Validation
 
-- **Spectra Validation**: runs `npm run typecheck && npm run test:ai-request` in `~/Desktop/prism-spectra`.
+- **Spectra Validation**: runs `npm run typecheck && npm run test:ai-request && npm run test:cockpit` in `~/Desktop/prism-spectra`.
 - **Spectra Git State**: prints branch, short status, and recent commits for Spectra.
 - **Focus Git State**: prints branch, short status, and recent commits for Focus.
 
@@ -82,6 +82,18 @@ The cockpit currently runs only preset commands. It does not expose a free-form 
 This keeps the first version useful for the current workflow while avoiding accidental arbitrary shell execution from the browser.
 
 The Focus UI card includes a **Kill port** action for port `4173`, because that was the immediate source of local testing confusion. The running Spectra gateway card does not expose a kill-port action for port `3000`, because killing that port from the cockpit would kill the cockpit itself.
+
+## Browser notes
+
+If the page appears non-responsive, first check DevTools for errors starting with `cockpit:`. Errors from `contentscript.js`, `content_scripts.js`, or browser time-tracker/phishing/wallet extensions are extension noise, not Spectra cockpit source.
+
+The cockpit page has a regression test:
+
+```bash
+npm run test:cockpit
+```
+
+That test verifies the inline browser script parses as JavaScript, which protects against malformed generated HTML.
 
 ## Environment overrides
 
