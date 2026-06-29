@@ -230,6 +230,7 @@ export function renderProjectCockpitHtml() {
     }
 
     function stateClass(status) {
+      if (status.externalPortOwner) return 'warn';
       if (status.running || status.healthOk) return 'ok';
       if (status.disabled || status.kind === 'placeholder') return 'warn';
       if (status.port && status.port.listening) return 'warn';
@@ -239,6 +240,7 @@ export function renderProjectCockpitHtml() {
     function stateText(status) {
       if (status.disabled) return 'disabled';
       if (status.running) return 'running';
+      if (status.externalPortOwner) return status.healthOk ? 'external healthy' : 'external process';
       if (status.healthOk) return 'healthy';
       if (status.port && status.port.listening) return 'port occupied';
       if (status.lastExitCode !== undefined && status.lastExitCode !== null) return 'exited ' + status.lastExitCode;
@@ -249,9 +251,10 @@ export function renderProjectCockpitHtml() {
     function roleCard(role) {
       const status = role.status || {};
       const disabled = role.disabled || role.kind === 'placeholder';
-      const canStart = !disabled && role.kind !== 'virtual' && !status.running;
+      const externalPortOwner = Boolean(status.externalPortOwner);
+      const canStart = !disabled && role.kind !== 'virtual' && !status.running && !externalPortOwner;
       const canStop = !disabled && status.running;
-      const canRestart = !disabled && role.kind !== 'virtual';
+      const canRestart = !disabled && role.kind !== 'virtual' && !externalPortOwner;
       const canKillPort = !disabled && role.allowKillPort && role.port && status.port && status.port.listening;
       const logs = (role.logs || []).slice(-80).map(line => '[' + line.at + '] ' + line.level + ': ' + line.line).join('\\n');
       return '<article class="card" data-role="' + escapeHtml(role.id) + '">' +
@@ -262,11 +265,13 @@ export function renderProjectCockpitHtml() {
           '<span class="pill ' + stateClass(status) + '">' + stateText(status) + '</span>' +
           (role.port ? '<span class="pill">port ' + escapeHtml(role.port) + '</span>' : '') +
           (status.pid ? '<span class="pill">pid ' + escapeHtml(status.pid) + '</span>' : '') +
+          (externalPortOwner && status.port && status.port.pids && status.port.pids.length ? '<span class="pill warn">external pid(s) ' + escapeHtml(status.port.pids.join(', ')) + '</span>' : '') +
           (status.cwdExists === false ? '<span class="pill bad">cwd missing</span>' : '') +
         '</div>' +
         (role.cwd ? '<div class="small">cwd: ' + escapeHtml(role.cwd) + '</div>' : '') +
         (role.healthUrl ? '<div class="small">health: ' + escapeHtml(role.healthUrl) + '</div>' : '') +
         '<div class="cmd">' + escapeHtml(role.commandPreview || 'No command wired yet.') + '</div>' +
+        (externalPortOwner ? '<p class="warn">This port is already owned by an external process. Use Kill port first if you want the cockpit to own this role.</p>' : '') +
         (role.disabledReason ? '<p class="warn">' + escapeHtml(role.disabledReason) + '</p>' : '') +
         '<div class="actions">' +
           '<button class="primary" data-action="start" ' + (canStart ? '' : 'disabled') + '>Start / Run</button>' +
@@ -421,6 +426,15 @@ class ProjectCockpit {
       }
     }
 
+    if (role.port) {
+      const port = await listeningPids(role.port);
+      if (port.listening) {
+        const owner = port.pids.length ? `pid(s): ${port.pids.join(", ")}` : "unknown pid";
+        this.append(role.id, "error", `Port ${role.port} is already owned by an external process (${owner}).`);
+        return { ok: false, error: `Port ${role.port} is already in use by an external process. Use Kill port first if you want the cockpit to own this role.` };
+      }
+    }
+
     this.append(role.id, "system", `$ ${commandPreview(role)}`);
 
     const child = spawn(role.command, role.args ?? [], {
@@ -499,11 +513,13 @@ class ProjectCockpit {
     const port = role.port ? await listeningPids(role.port) : null;
     const cwdExists = role.cwd ? await exists(role.cwd) : undefined;
     const health = role.healthUrl ? await quickHealth(role.healthUrl, this.options.token) : null;
+    const externalPortOwner = role.kind !== "virtual" && !isRunning && Boolean(port?.listening);
 
     return {
       kind: role.kind,
       disabled: role.kind === "placeholder",
       running: isRunning,
+      externalPortOwner,
       pid: isRunning ? running?.child.pid : undefined,
       startedAt: running?.startedAt,
       lastExitCode: running?.lastExitCode,
