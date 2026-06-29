@@ -60,15 +60,6 @@ function focusMockReply(request: { prompt: string; context: Record<string, unkno
     : {};
   const openTaskCount = Number(currentFocusState.openTaskCount ?? currentFocusState.taskCount ?? 0);
 
-  if (/what can you do|help|capabilit/.test(prompt)) {
-    return {
-      reply: "I can help you choose a next task, break vague work into smaller steps, make a gentle plan for the next block of time, and reflect on messy notes. In mock mode I only return safe test proposals; nothing changes unless you apply it.",
-      proposedTasks: [],
-      proposedSchedule: [],
-      followUpQuestion: "",
-    };
-  }
-
   if (/overwhelm|too much|choose|prioriti[sz]e|pick one|which task/.test(prompt)) {
     const countText = openTaskCount > 0 ? `I can see ${openTaskCount} open task${openTaskCount === 1 ? "" : "s"}. ` : "";
     return {
@@ -109,6 +100,15 @@ function focusMockReply(request: { prompt: string; context: Record<string, unkno
         { start: "", end: "", text: "Short reset break", estimatedMins: 10, note: "Water, stretch, or step away." },
         { start: "", end: "", text: "Second gentle focus block", estimatedMins: 25, note: "Continue only if it still feels useful." },
       ],
+      followUpQuestion: "",
+    };
+  }
+
+  if (/what can you do|\bhelp\b|capabilit/.test(prompt)) {
+    return {
+      reply: "I can help you choose a next task, break vague work into smaller steps, make a gentle plan for the next block of time, and reflect on messy notes. In mock mode I only return safe test proposals; nothing changes unless you apply it.",
+      proposedTasks: [],
+      proposedSchedule: [],
       followUpQuestion: "",
     };
   }
