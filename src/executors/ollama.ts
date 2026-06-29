@@ -16,6 +16,8 @@ export const OLLAMA_CODER_MODEL = "qwen2.5-coder:7b";
 export const OLLAMA_GENERAL_MODEL = "qwen3.5:9b";
 export const DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434";
 
+export const MODEL_ROLES: readonly ModelRole[] = ["classifier", "coder", "planner", "reasoner", "fallback"] as const;
+
 /**
  * Role-tagged local model catalog for Track A.
  * Defaults target the recommended local stack for an M1 16GB machine.
@@ -50,7 +52,26 @@ export function selectModelForRole(role: ModelRole): string {
 
 const CODING_NODE_TYPES: ReadonlySet<NodeType> = new Set(["ui", "backend", "tests"]);
 
+export function normalizeModelRole(value: unknown): ModelRole | null {
+  return typeof value === "string" && MODEL_ROLES.includes(value as ModelRole) ? (value as ModelRole) : null;
+}
+
+export function modelRoleFromPacketContext(packet: TaskPacket): ModelRole | null {
+  const context = packet.context ?? {};
+  const routing = typeof context.routing === "object" && context.routing !== null ? (context.routing as Record<string, unknown>) : {};
+  const aiRequest = typeof context.aiRequest === "object" && context.aiRequest !== null ? (context.aiRequest as Record<string, unknown>) : {};
+  return (
+    normalizeModelRole(context.aiRole) ??
+    normalizeModelRole(routing.aiRole) ??
+    normalizeModelRole(routing.modelRole) ??
+    normalizeModelRole(aiRequest.aiRole)
+  );
+}
+
 export function selectModel(packet: TaskPacket, opts?: { coderModel?: string; generalModel?: string }): string {
+  const routedRole = modelRoleFromPacketContext(packet);
+  if (routedRole) return selectModelForRole(routedRole);
+
   // Legacy env var / opts compat — Focus and CLI set OLLAMA_CODER_MODEL / OLLAMA_GENERAL_MODEL.
   // If either legacy override is active, use the original binary selection so nothing breaks.
   const legacyCoder = opts?.coderModel ?? process.env.OLLAMA_CODER_MODEL;
@@ -71,8 +92,8 @@ export function selectModel(packet: TaskPacket, opts?: { coderModel?: string; ge
  * Returns null on any failure — callers must handle null gracefully and fall back
  * to selectModel() without pre-classification.
  *
- * NOT yet wired into OllamaExecutor.execute() — this is the primitive for Tier 2b.
- * When wired, it must go through the same ModelLock as the main execute() call.
+ * Tier 2b wiring must call this through LocalModelLock before execution because
+ * it changes the active Ollama model context.
  */
 export async function classifyIntent(
   intent: string,
@@ -99,9 +120,9 @@ export async function classifyIntent(
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return null;
     const parsed = JSON.parse(match[0]) as { role?: string; reasoning?: string };
-    const validRoles: ModelRole[] = ["coder", "planner", "reasoner", "fallback"];
-    if (!parsed.role || !validRoles.includes(parsed.role as ModelRole)) return null;
-    return { role: parsed.role as ModelRole, reasoning: parsed.reasoning ?? "" };
+    const role = normalizeModelRole(parsed.role);
+    if (!role || role === "classifier") return null;
+    return { role, reasoning: parsed.reasoning ?? "" };
   } catch {
     return null;
   }
