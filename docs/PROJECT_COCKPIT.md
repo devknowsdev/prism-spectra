@@ -100,7 +100,7 @@ That test verifies the inline browser script parses as JavaScript, which protect
 For the exact local retest sequence, see:
 
 ```text
-docs/COCKPIT_LOCAL_RETEST.md
+docs/COCKPIT_LOCAL_RETEST_20260629.md
 ```
 
 ## Environment overrides
