@@ -248,11 +248,12 @@ export function renderProjectCockpitHtml() {
 
     function roleCard(role) {
       const status = role.status || {};
-      const canStart = !role.disabled && role.kind !== 'virtual' && !status.running;
-      const canStop = !role.disabled && status.running;
-      const canRestart = !role.disabled && role.kind !== 'virtual';
-      const canKillPort = !role.disabled && role.allowKillPort && role.port && status.port && status.port.listening;
-      const logs = (role.logs || []).slice(-80).map(line => '[' + line.at + '] ' + line.level + ': ' + line.line).join('\n');
+      const disabled = role.disabled || role.kind === 'placeholder';
+      const canStart = !disabled && role.kind !== 'virtual' && !status.running;
+      const canStop = !disabled && status.running;
+      const canRestart = !disabled && role.kind !== 'virtual';
+      const canKillPort = !disabled && role.allowKillPort && role.port && status.port && status.port.listening;
+      const logs = (role.logs || []).slice(-80).map(line => '[' + line.at + '] ' + line.level + ': ' + line.line).join('\\n');
       return '<article class="card" data-role="' + escapeHtml(role.id) + '">' +
         '<h2>' + escapeHtml(role.label) + '</h2>' +
         '<p>' + escapeHtml(role.description) + '</p>' +
