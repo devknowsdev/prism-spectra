@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { applyProviderProbe } from "../src/config/providerProbe.js";
 import { ExecutionEngine, normalizeAiRequestBody } from "../src/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -63,6 +64,11 @@ async function main() {
     ollamaSwapDelayMs: 1,
   });
   await engine.init();
+
+  engine.ledger.setBudget("ollama", { rpmLimit: 0 });
+  assert.equal(engine.ledger.check("ollama").allowed, false);
+  applyProviderProbe(engine, [{ provider: "ollama", available: true }]);
+  assert.equal(engine.ledger.check("ollama").allowed, true, "available Ollama probe should clear stale rpmLimit=0 block");
 
   const result = await engine.runAiRequest(valid.request);
   assert.equal(result.ok, true);
