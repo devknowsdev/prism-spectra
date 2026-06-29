@@ -100,7 +100,6 @@ export interface FileEdit {
 export interface Patch {
   edits: FileEdit[];
 }
-
 export interface ExecutionResult {
   success: boolean;
   output: string;
@@ -112,6 +111,10 @@ export interface ExecutionResult {
   error?: string;
   /** True if served from the global pattern cache — no executor was actually called. */
   cacheHit?: boolean;
+  /** Tier 2b routing quality-gate score. Null/undefined means not scored. */
+  confidenceScore?: number | null;
+  /** Human-readable reason a result was escalated or considered for fallback. */
+  fallbackReason?: string;
   /** Present when the executor is proposing file changes. The engine applies
    *  this to workDir BEFORE checkpointing (see executionEngine.ts) — applying
    *  is what creates the working-tree state the checkpoint commit captures. */
