@@ -81,16 +81,23 @@ function nodeTypeSignal(nodeType: NodeType): { taskClass: TaskClass; score: numb
       return { taskClass: "reasoning", score: 0.45, signal: "node_type:terminal" };
     case "docs":
     default:
-      return { taskClass: "general", score: 0.25, signal: `node_type:${nodeType}` };
+      return { taskClass: "general", score: 0.16, signal: `node_type:${nodeType}` };
   }
 }
 
-function patternScore(text: string, patterns: RegExp[], signalPrefix: string): { score: number; signals: string[] } {
+function patternScore(
+  text: string,
+  patterns: RegExp[],
+  signalPrefix: string,
+  opts: { perSignal?: number; max?: number } = {}
+): { score: number; signals: string[] } {
   const signals: string[] = [];
   for (const pattern of patterns) {
     if (pattern.test(text)) signals.push(`${signalPrefix}:${pattern.source}`);
   }
-  return { score: Math.min(0.6, signals.length * 0.18), signals };
+  const perSignal = opts.perSignal ?? 0.18;
+  const max = opts.max ?? 0.6;
+  return { score: Math.min(max, signals.length * perSignal), signals };
 }
 
 export function classifyTaskHeuristic(packet: TaskPacket): L1Classification {
@@ -108,7 +115,7 @@ export function classifyTaskHeuristic(packet: TaskPacket): L1Classification {
   scores[node.taskClass] += node.score;
   signals.push(node.signal);
 
-  const code = patternScore(text, CODE_PATTERNS, "code");
+  const code = patternScore(text, CODE_PATTERNS, "code", { perSignal: 0.22, max: 0.7 });
   scores.code += code.score;
   signals.push(...code.signals);
 
@@ -116,15 +123,23 @@ export function classifyTaskHeuristic(packet: TaskPacket): L1Classification {
   scores.reasoning += reasoning.score;
   signals.push(...reasoning.signals);
 
-  const creative = patternScore(text, CREATIVE_PATTERNS, "creative");
+  const creative = patternScore(text, CREATIVE_PATTERNS, "creative", { perSignal: 0.14, max: 0.42 });
   scores.creative += creative.score;
   signals.push(...creative.signals);
 
-  const data = patternScore(text, DATA_PATTERNS, "data");
+  const data = patternScore(text, DATA_PATTERNS, "data", { perSignal: 0.12, max: 0.36 });
   scores.general += data.score;
   if (data.signals.length > 0) {
-    scores.reasoning += 0.12;
+    scores.reasoning += 0.08;
     signals.push(...data.signals);
+  }
+
+  // Mixed data/code requests such as "write a TypeScript function to parse CSV"
+  // should route to the coder model. Data words describe the domain, while
+  // code-shaped words describe the operation Spectra must perform.
+  if (code.signals.length >= 2 && data.signals.length > 0) {
+    scores.code += 0.12;
+    signals.push("boost:code-over-data-domain");
   }
 
   const tokenEstimate = Math.ceil(text.split(/\s+/).filter(Boolean).length * 0.75);
