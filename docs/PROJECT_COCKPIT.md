@@ -85,6 +85,8 @@ This keeps the first version useful for the current workflow while avoiding acci
 
 The Focus UI card includes a **Kill port** action for port `4173`, because that was the immediate source of local testing confusion. The running Spectra gateway card does not expose a kill-port action for port `3000`, because killing that port from the cockpit would kill the cockpit itself.
 
+If a role's port is already owned by a process the cockpit did not start, the card shows an external-process warning, disables **Start / Run** and **Restart**, and leaves **Kill port** available when that action is allowed. Use **Kill port** first when you want the cockpit to take ownership of that role.
+
 ## Browser notes
 
 If the page appears non-responsive, first check DevTools for errors starting with `cockpit:`. Errors from `contentscript.js`, `content_scripts.js`, or browser time-tracker/phishing/wallet extensions are extension noise, not Spectra cockpit source.
