@@ -12,6 +12,72 @@ type RoleKind = "managed-process" | "one-shot" | "virtual" | "placeholder";
 
 type LogLevel = "info" | "stdout" | "stderr" | "error" | "system";
 
+type ChecklistStatus = "done" | "pending" | "running" | "warn" | "blocked";
+
+interface ChecklistItem {
+  id: string;
+  label: string;
+  status: ChecklistStatus;
+  note?: string;
+}
+
+type CockpitActionKind =
+  | "refresh-status"
+  | "start-role"
+  | "stop-owned-role"
+  | "restart-owned-role"
+  | "run-one-shot"
+  | "show-logs"
+  | "open-linked-app"
+  | "acknowledge-external";
+
+interface CockpitActionPacket {
+  workflow: string;
+  role?: string;
+  action: CockpitActionKind;
+  requiresApproval: boolean;
+  risk: "none" | "low" | "medium";
+  reason: string;
+  commandPreview?: string;
+  expectedOutcome?: string;
+  failureRecovery?: string;
+  requiresTerminal?: boolean;
+  terminalHint?: string;
+}
+
+interface CockpitGuidance {
+  workflow: string;
+  modeLabel: string;
+  missionStatement: string;
+  stateSummary: string;
+  nextAction: CockpitActionPacket | null;
+  checklist: ChecklistItem[];
+}
+
+interface CockpitGatewayProfile {
+  host: string;
+  port: number;
+  mode: "mock" | "real";
+  mockExecutors: boolean;
+  dbPath: string;
+  workDir: string;
+}
+
+interface CockpitProfileRole extends CockpitRole {
+  commandPreview?: string;
+  status?: Record<string, any>;
+  logs?: LogEntry[];
+}
+
+interface CockpitProfile {
+  ok: boolean;
+  name: string;
+  generatedAt: string;
+  gateway: CockpitGatewayProfile;
+  roles: CockpitProfileRole[];
+  guidance?: CockpitGuidance;
+}
+
 interface CockpitRole {
   id: string;
   label: string;
@@ -50,6 +116,154 @@ interface CockpitOptions {
   workDir: string;
 }
 
+export function deriveCockpitGuidance(profile: CockpitProfile): CockpitGuidance {
+  const modeLabel = profile.gateway.mockExecutors ? "mock mode" : "real mode";
+  const missionStatement = "Focus ↔ Spectra bridge validation";
+
+  const gatewayRole = profile.roles.find(role => role.id === "spectra-gateway-current");
+  const focusRole = profile.roles.find(role => role.id === "focus-ui");
+  const validationRole = profile.roles.find(role => role.id === "spectra-validation");
+
+  const gatewayOk = Boolean(gatewayRole?.status?.healthOk || gatewayRole?.status?.running);
+  const focusRunning = Boolean(focusRole?.status?.running);
+  const focusExternal = Boolean(focusRole?.status?.externalPortOwner);
+  const focusOwned = focusRunning && !focusExternal;
+  const focusExited = Boolean(
+    focusRole?.status?.lastExitCode !== undefined &&
+    focusRole?.status?.lastExitCode !== null &&
+    !focusRunning
+  );
+  const validationRunning = Boolean(validationRole?.status?.running);
+  const validationLastExit = validationRole?.status?.lastExitCode;
+  const validationPassed = validationLastExit === 0;
+  const validationFailed = typeof validationLastExit === "number" && validationLastExit !== 0;
+  const validationRun = validationLastExit !== undefined && validationLastExit !== null;
+
+  const checklist: ChecklistItem[] = [
+    {
+      id: "gateway",
+      label: "Spectra gateway running" + (modeLabel ? ` (${modeLabel})` : ""),
+      status: gatewayOk ? "done" : "blocked",
+    },
+    {
+      id: "focus",
+      label: "Focus UI running and cockpit-owned",
+      status: focusOwned ? "done" : focusExternal ? "warn" : focusExited ? "warn" : "pending",
+      note: focusExternal ? "External process detected — cockpit does not own this" : undefined,
+    },
+    {
+      id: "validation",
+      label: "Spectra validation passed",
+      status: validationPassed ? "done" : validationFailed ? "blocked" : validationRunning ? "running" : "pending",
+    },
+    {
+      id: "bridge",
+      label: "Bridge test ready to run",
+      status: validationPassed && focusOwned ? "pending" : "pending",
+    },
+  ];
+
+  let stateSummary: string;
+  let nextAction: CockpitActionPacket | null = null;
+
+  if (!gatewayOk) {
+    stateSummary = "Gateway unavailable";
+    nextAction = {
+      workflow: "focus-spectra-bridge",
+      action: "refresh-status",
+      requiresApproval: false,
+      risk: "none",
+      reason: "Cockpit cannot reach the Spectra gateway. Restart it from Terminal.",
+      requiresTerminal: true,
+      terminalHint: "AI_FORGE_AI_GATEWAY_TOKEN=\"dev-local-token\" AI_FORGE_MOCK_EXECUTORS=1 npm run cockpit",
+    };
+  } else if (focusExited) {
+    stateSummary = `Gateway running (${modeLabel}) · Focus exited`;
+    nextAction = {
+      workflow: "focus-spectra-bridge",
+      role: "focus-ui",
+      action: "restart-owned-role",
+      requiresApproval: true,
+      risk: "low",
+      reason: "Focus stopped unexpectedly. Restart it to continue the bridge validation.",
+      commandPreview: focusRole?.commandPreview,
+      expectedOutcome: "Focus UI is reachable at http://127.0.0.1:4173/ and cockpit-owned.",
+      failureRecovery: "Check that ~/Desktop/prism-focus exists and port 4173 is free.",
+    };
+  } else if (focusExternal) {
+    stateSummary = `Gateway running (${modeLabel}) · Focus: external process`;
+    nextAction = {
+      workflow: "focus-spectra-bridge",
+      role: "focus-ui",
+      action: "acknowledge-external",
+      requiresApproval: false,
+      risk: "none",
+      reason: "Focus is already running outside the cockpit. You can use it as-is, or stop it in Terminal first if you want the cockpit to take ownership.",
+      requiresTerminal: false,
+      terminalHint: "lsof -tiTCP:4173 -sTCP:LISTEN | xargs kill",
+    };
+  } else if (!focusOwned) {
+    stateSummary = `Gateway running (${modeLabel}) · Focus: not running`;
+    nextAction = {
+      workflow: "focus-spectra-bridge",
+      role: "focus-ui",
+      action: "start-role",
+      requiresApproval: true,
+      risk: "low",
+      reason: "Focus is not running. The bridge test requires the browser app on port 4173.",
+      commandPreview: focusRole?.commandPreview,
+      expectedOutcome: "Focus UI is reachable at http://127.0.0.1:4173/ and cockpit-owned.",
+      failureRecovery: "Check that ~/Desktop/prism-focus exists and port 4173 is free.",
+    };
+  } else if (validationRunning) {
+    stateSummary = `Gateway running (${modeLabel}) · Focus owned · Validation running…`;
+    nextAction = null;
+  } else if (validationFailed) {
+    stateSummary = `Gateway running (${modeLabel}) · Focus owned · Validation failed`;
+    nextAction = {
+      workflow: "focus-spectra-bridge",
+      role: "spectra-validation",
+      action: "show-logs",
+      requiresApproval: false,
+      risk: "none",
+      reason: "Validation found issues. Open the Spectra Validation logs to see what failed, then fix and re-run.",
+    };
+  } else if (!validationRun || !validationPassed) {
+    stateSummary = `Gateway running (${modeLabel}) · Focus owned · Validation not run`;
+    nextAction = {
+      workflow: "focus-spectra-bridge",
+      role: "spectra-validation",
+      action: "run-one-shot",
+      requiresApproval: true,
+      risk: "none",
+      reason: "Gateway and Focus are ready. Run validation to confirm the bridge is clean.",
+      commandPreview: validationRole?.commandPreview,
+      expectedOutcome: "All checks exit 0. Log appears in the Spectra Validation card below.",
+      failureRecovery: "Open Spectra Validation logs to identify the failing check.",
+    };
+  } else {
+    stateSummary = `Gateway running (${modeLabel}) · Focus owned · Validation passed`;
+    checklist[3].status = "pending";
+    nextAction = {
+      workflow: "focus-spectra-bridge",
+      action: "open-linked-app",
+      requiresApproval: false,
+      risk: "none",
+      reason: "Everything is ready. Open Focus and test Settings → AI → Test Spectra.",
+      expectedOutcome: "Focus shows a response from Spectra. The bridge is working.",
+    };
+  }
+
+  return {
+    workflow: "focus-spectra-bridge",
+    modeLabel,
+    missionStatement,
+    stateSummary,
+    nextAction,
+    checklist,
+  };
+}
+
 export function renderProjectCockpitHtml() {
   return `<!doctype html>
 <html lang="en">
@@ -70,6 +284,15 @@ export function renderProjectCockpitHtml() {
       --warn: #ffd37a;
       --bad: #ff8d8d;
       --focus: #b7a8ff;
+      --guided-bg: rgba(28,32,46,0.97);
+      --guided-border: #3a4260;
+      --action-bg: #1a2035;
+      --action-border: #3d5291;
+      --checklist-done: var(--good);
+      --checklist-pending: #606880;
+      --checklist-warn: var(--warn);
+      --checklist-blocked: var(--bad);
+      --checklist-running: var(--focus);
     }
     * { box-sizing: border-box; }
     body {
@@ -175,6 +398,59 @@ export function renderProjectCockpitHtml() {
       text-transform: uppercase;
       letter-spacing: 0.1em;
     }
+    .guided-panel {
+      background: var(--guided-bg);
+      border: 1px solid var(--guided-border);
+      border-radius: 18px;
+      padding: 20px 24px;
+      margin-bottom: 18px;
+    }
+    .mission { font-size: 13px; color: var(--muted); margin: 0 0 2px; }
+    .state-summary { font-size: 15px; font-weight: 600; margin: 0 0 16px; }
+    .action-card {
+      background: var(--action-bg);
+      border: 1px solid var(--action-border);
+      border-radius: 14px;
+      padding: 14px 16px;
+      margin-bottom: 14px;
+    }
+    .action-label { font-size: 13px; color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.08em; margin: 0 0 6px; }
+    .action-title { font-size: 17px; font-weight: 600; margin: 0 0 6px; }
+    .action-reason { font-size: 13px; color: var(--muted); margin: 0 0 10px; }
+    .action-preview { margin: 8px 0; }
+    .action-row { display: flex; gap: 8px; margin-top: 12px; align-items: center; }
+    .approve-btn {
+      background: #2b3b5f; border: 1px solid #485e91;
+      color: var(--text); border-radius: 10px;
+      padding: 9px 16px; cursor: pointer; font-size: 14px;
+    }
+    .approve-btn:hover:not(:disabled) { border-color: var(--focus); }
+    .approve-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .terminal-hint { background: #0d1016; border: 1px solid var(--line);
+      border-radius: 10px; padding: 8px 10px; font-family: ui-monospace,
+      SFMono-Regular, Menlo, monospace; font-size: 12px; color: #dbe7ff;
+      margin-top: 8px; white-space: pre-wrap; word-break: break-word; }
+    .waiting-state { color: var(--focus); font-size: 14px; font-style: italic; }
+    .checklist { list-style: none; margin: 0; padding: 0; display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px; }
+    .checklist li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+    .check-icon { width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center; font-size: 10px; }
+    .check-done   { background: var(--checklist-done);    color: #000; }
+    .check-pending { background: transparent; border: 1.5px solid var(--checklist-pending); }
+    .check-running { background: var(--checklist-running); color: #000; }
+    .check-warn   { background: var(--checklist-warn);    color: #000; }
+    .check-blocked { background: var(--checklist-blocked); color: #000; }
+    .check-note   { flex-basis: 100%; font-size: 11px; color: var(--muted); margin-left: 24px; }
+    .advanced-toggle {
+      width: 100%; text-align: left; background: transparent; border: none;
+      border-bottom: 1px solid var(--line); padding: 10px 0; color: var(--muted);
+      font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px;
+    }
+    .advanced-toggle:hover { color: var(--text); }
+    .advanced-section { display: none; }
+    .advanced-section.open { display: block; }
   </style>
 </head>
 <body>
@@ -292,20 +568,149 @@ export function renderProjectCockpitHtml() {
       '</article>';
     }
 
+    function checkIcon(status) {
+      var icons = { done: '✓', pending: '', running: '…', warn: '!', blocked: '✗' };
+      return '<span class="check-icon check-' + status + '">' + (icons[status] || '') + '</span>';
+    }
+
+    function renderChecklist(items) {
+      return '<ul class="checklist">' + items.map(function(item) {
+        return '<li>' + checkIcon(item.status) +
+          '<span class="check-label">' + escapeHtml(item.label) + '</span>' +
+          (item.note ? '<span class="check-note">' + escapeHtml(item.note) + '</span>' : '') +
+          '</li>';
+      }).join('') + '</ul>';
+    }
+
+    function roleLabelById(profile, roleId) {
+      var role = (profile.roles || []).find(function(r) { return r.id === roleId; });
+      return role ? role.label : roleId;
+    }
+
+    function encodeGuidedAction(action) {
+      return encodeURIComponent(JSON.stringify(action));
+    }
+
+    function renderNextAction(action, profile) {
+      if (!action) return '';
+      if (action.action === 'refresh-status' && !action.requiresApproval) {
+        return '<div class="action-card">' +
+          '<div class="action-label">Next action</div>' +
+          '<div class="action-title">' + escapeHtml(action.reason) + '</div>' +
+          (action.terminalHint ? '<div class="terminal-hint">' + escapeHtml(action.terminalHint) + '</div>' : '') +
+          '</div>';
+      }
+      if (!action.requiresApproval) {
+        return '<div class="action-card">' +
+          '<div class="action-label">Status</div>' +
+          '<div class="action-title">' + escapeHtml(action.reason) + '</div>' +
+          (action.terminalHint ? '<div class="terminal-hint">' + escapeHtml(action.terminalHint) + '</div>' : '') +
+          '</div>';
+      }
+      var actionTitle = {
+        'start-role': 'Start ' + (action.role ? roleLabelById(profile, action.role) : 'role'),
+        'restart-owned-role': 'Restart ' + (action.role ? roleLabelById(profile, action.role) : 'role'),
+        'run-one-shot': 'Run ' + (action.role ? roleLabelById(profile, action.role) : 'check'),
+        'show-logs': 'Open logs — ' + (action.role ? roleLabelById(profile, action.role) : '')
+      }[action.action] || action.action;
+
+      return '<div class="action-card">' +
+        '<div class="action-label">Next safe action</div>' +
+        '<div class="action-title">▶  ' + escapeHtml(actionTitle) + '</div>' +
+        '<div class="action-reason">' + escapeHtml(action.reason) + '</div>' +
+        (action.commandPreview ? '<div class="cmd action-preview">' + escapeHtml(action.commandPreview) + '</div>' : '') +
+        '<div class="action-row">' +
+          '<button class="approve-btn" data-guided-action="' + encodeGuidedAction(action) + '">' +
+            'Approve — ' + escapeHtml(actionTitle) +
+          '</button>' +
+          (action.risk !== 'none' ? '<span class="small">Risk: ' + escapeHtml(action.risk) + '</span>' : '') +
+        '</div>' +
+        '</div>';
+    }
+
+    async function approveAction(action) {
+      try {
+        if (action.action === 'show-logs') {
+          var card = document.querySelector('[data-role="' + action.role + '"]');
+          if (card) {
+            var section = document.querySelector('.advanced-section');
+            var toggle = document.querySelector('.advanced-toggle');
+            if (section) section.classList.add('open');
+            if (toggle) toggle.textContent = '▲ Hide advanced process controls';
+            card.querySelector('.logs').classList.add('open');
+            card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+          return;
+        }
+        if (action.action === 'open-linked-app') {
+          window.open('http://127.0.0.1:4173/', '_blank');
+          return;
+        }
+        var apiAction = { 'start-role': 'start', 'restart-owned-role': 'restart', 'run-one-shot': 'start' }[action.action];
+        if (apiAction && action.role) {
+          await api('/api/v1/cockpit/processes/' + encodeURIComponent(action.role) + '/' + apiAction, { method: 'POST' });
+          await loadProfile();
+        }
+      } catch (error) {
+        alert(error.message || String(error));
+      }
+    }
+
+    function renderGuidedPanel(profile) {
+      var g = profile.guidance;
+      if (!g) return '';
+      return '<div class="guided-panel">' +
+        '<div class="mission">' + escapeHtml(g.missionStatement) + ' · ' + escapeHtml(g.modeLabel) + '</div>' +
+        '<div class="state-summary">' + escapeHtml(g.stateSummary) + '</div>' +
+        (g.nextAction ? renderNextAction(g.nextAction, profile) :
+          '<div class="waiting-state">Waiting for validation to complete…</div>') +
+        '<div class="section-title" style="margin-top:14px">Readiness checklist</div>' +
+        renderChecklist(g.checklist) +
+        '</div>';
+    }
+
+    function toggleAdvanced(btn) {
+      var section = btn.nextElementSibling;
+      var open = section.classList.toggle('open');
+      btn.textContent = (open ? '▲ Hide' : '▼ Show') + ' advanced process controls';
+    }
+
     function render(profile) {
-      summary.textContent = 'Gateway mode: ' + profile.gateway.mode + ' · host: ' + profile.gateway.host + ':' + profile.gateway.port;
-      const groups = [];
-      for (const role of profile.roles) {
+      summary.textContent = 'Gateway mode: ' + profile.gateway.mode +
+        ' · host: ' + profile.gateway.host + ':' + profile.gateway.port;
+
+      var groups = [];
+      for (var role of profile.roles) {
         if (!groups.includes(role.group)) groups.push(role.group);
       }
-      content.innerHTML = groups.map(group => {
-        const cards = profile.roles.filter(role => role.group === group).map(roleCard).join('');
-        return '<div class="section-title">' + escapeHtml(group) + '</div><div class="grid">' + cards + '</div>';
+      var cardsHtml = groups.map(function(group) {
+        var cards = profile.roles.filter(function(r) { return r.group === group; }).map(roleCard).join('');
+        return '<div class="section-title">' + escapeHtml(group) + '</div>' +
+               '<div class="grid">' + cards + '</div>';
       }).join('');
-      content.querySelectorAll('.card').forEach(card => {
-        card.querySelectorAll('button').forEach(button => {
-          const action = button.getAttribute('data-action');
-          button.onclick = () => runAction(card.getAttribute('data-role'), action, card);
+
+      content.innerHTML =
+        renderGuidedPanel(profile) +
+        '<button class="advanced-toggle">▼ Show advanced process controls</button>' +
+        '<div class="advanced-section">' + cardsHtml + '</div>';
+
+      var advancedToggle = content.querySelector('.advanced-toggle');
+      if (advancedToggle) {
+        advancedToggle.onclick = function() { toggleAdvanced(advancedToggle); };
+      }
+
+      content.querySelectorAll('[data-guided-action]').forEach(function(button) {
+        button.onclick = function() {
+          var raw = button.getAttribute('data-guided-action') || '';
+          approveAction(JSON.parse(decodeURIComponent(raw)));
+        };
+      });
+
+      content.querySelectorAll('.card').forEach(function(card) {
+        card.querySelectorAll('button').forEach(function(button) {
+          var action = button.getAttribute('data-action');
+          if (!action) return;
+          button.onclick = function() { runAction(card.getAttribute('data-role'), action, card); };
         });
       });
     }
@@ -384,8 +789,9 @@ class ProjectCockpit {
     for (const role of this.roles) this.logs.set(role.id, []);
   }
 
-  async profile() {
-    return {
+  async profile(): Promise<CockpitProfile> {
+    const roles = await this.rolesWithStatus();
+    const base: CockpitProfile = {
       ok: true,
       name: "Focus ↔ Spectra Bridge",
       generatedAt: new Date().toISOString(),
@@ -397,11 +803,12 @@ class ProjectCockpit {
         dbPath: this.options.dbPath,
         workDir: this.options.workDir,
       },
-      roles: await this.rolesWithStatus(),
+      roles,
     };
+    return { ...base, guidance: deriveCockpitGuidance(base) };
   }
 
-  async rolesWithStatus() {
+  async rolesWithStatus(): Promise<CockpitProfileRole[]> {
     return Promise.all(this.roles.map(async role => ({
       ...role,
       commandPreview: commandPreview(role),
