@@ -151,6 +151,7 @@ export class OllamaExecutor implements Executor {
     const model = selectModel(packet);
     const requestedFiles = collectTargetFiles(packet);
     const prompt = buildTaskPrompt(packet, requestedFiles);
+    const maxOutputTokens = outputTokenCapFromPacketContext(packet);
 
     try {
       const response = await fetch(`${host}/api/chat`, {
@@ -160,6 +161,7 @@ export class OllamaExecutor implements Executor {
           model,
           messages: [{ role: "user", content: prompt }],
           stream: false,
+          ...(maxOutputTokens ? { options: { num_predict: maxOutputTokens } } : {}),
         }),
         signal: AbortSignal.timeout(300_000),
       });
@@ -219,6 +221,15 @@ export class OllamaExecutor implements Executor {
       return fail(start, `Ollama call failed: ${(err as Error).message}`);
     }
   }
+}
+
+function outputTokenCapFromPacketContext(packet: TaskPacket): number | undefined {
+  const context = packet.context ?? {};
+  const aiRequest = typeof context.aiRequest === "object" && context.aiRequest !== null ? (context.aiRequest as Record<string, unknown>) : {};
+  const raw = aiRequest.maxOutputTokens ?? aiRequest.outputTokens ?? context.maxOutputTokens;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return Math.max(1, Math.min(4096, Math.round(n)));
 }
 
 function fail(start: number, error: string): ExecutionResult {
