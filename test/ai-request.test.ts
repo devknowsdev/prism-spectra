@@ -21,6 +21,15 @@ async function main() {
   assert.equal(invalid.ok, false);
   if (!invalid.ok) assert.match(invalid.error, /riskClass=read-only/);
 
+  const invalidRole = normalizeAiRequestBody({
+    sourceApp: "prism-focus",
+    intent: "Bad role smoke",
+    riskClass: "read-only",
+    aiRole: "ui",
+  });
+  assert.equal(invalidRole.ok, false);
+  if (!invalidRole.ok) assert.match(invalidRole.error, /aiRole/);
+
   const valid = normalizeAiRequestBody({
     sourceApp: "prism-focus",
     intent: "Suggest a calm daily plan",
@@ -30,6 +39,22 @@ async function main() {
   });
   assert.equal(valid.ok, true);
   if (!valid.ok) throw new Error("expected valid request");
+
+  const classifierSmoke = normalizeAiRequestBody({
+    sourceApp: "prism-focus",
+    intent: "Tiny Settings smoke test",
+    riskClass: "read-only",
+    aiRole: "classifier",
+    maxOutputTokens: 80,
+    record: false,
+    input: { prompt: "Reply with one sentence." },
+    context: { appSurface: "settings" },
+  });
+  assert.equal(classifierSmoke.ok, true);
+  if (!classifierSmoke.ok) throw new Error("expected classifier smoke request");
+  assert.equal(classifierSmoke.request.aiRole, "classifier");
+  assert.equal(classifierSmoke.request.maxOutputTokens, 80);
+  assert.equal(classifierSmoke.request.record, false);
 
   const engine = new ExecutionEngine({
     dbPath: path.join(ROOT, "gateway.db"),
@@ -51,6 +76,12 @@ async function main() {
   assert.equal(result.provenance.recorded, true);
   assert.ok(result.usage.tokensIn > 0);
   assert.ok(result.usage.tokensOut > 0);
+
+  const smokeResult = await engine.runAiRequest(classifierSmoke.request);
+  assert.equal(smokeResult.ok, true);
+  assert.equal(smokeResult.provider, "ollama");
+  assert.equal(smokeResult.model, "qwen3:1.7b");
+  assert.equal(smokeResult.provenance.recorded, false);
 
   const summary = engine.taskHistory
     .dataBoundarySummary("ai-request:prism-focus")
