@@ -286,11 +286,11 @@ export function renderProjectCockpitHtml() {
     .pill { border:1px solid var(--line); border-radius:999px; padding:3px 8px; color:var(--muted); background:rgba(255,255,255,0.03); font-size:12px; }
     .ok { color:var(--good); } .warn { color:var(--warn); } .bad { color:var(--bad); }
     .cmd, pre { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; white-space:pre-wrap; word-break:break-word; background:#0d1016; border:1px solid var(--line); border-radius:12px; padding:10px; color:#dbe7ff; }
-    .cmd { margin:10px 0; }
+    .cmd { margin:0; }
     .actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
-    .logs { margin-top:10px; max-height:230px; overflow:auto; display:none; }
+    .logs { margin-top:0; max-height:230px; overflow:auto; display:none; }
     .logs.open { display:block; }
-    .guided-log { display:block; max-height:260px; margin:10px 0 0; }
+    .guided-log { display:block; max-height:260px; overflow:auto; margin:0; }
     .small { font-size:12px; color:var(--muted); }
     .section-title { margin:22px 0 10px; font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em; }
     .guided-panel { background:var(--guided-bg); border:1px solid var(--guided-border); border-radius:18px; padding:20px 24px; margin-bottom:18px; }
@@ -300,11 +300,11 @@ export function renderProjectCockpitHtml() {
     .action-label { font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:0.08em; margin:0 0 6px; }
     .action-title { font-size:17px; font-weight:600; margin:0 0 6px; }
     .action-reason { font-size:13px; color:var(--muted); margin:0 0 10px; }
-    .action-preview { margin:8px 0; }
+    .action-preview { margin:0; }
     .action-row { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; align-items:center; }
     .approve-btn { background:#2b3b5f; border:1px solid #485e91; color:var(--text); border-radius:10px; padding:9px 16px; cursor:pointer; font-size:14px; }
     .approve-btn:hover:not(:disabled) { border-color:var(--focus); }
-    .terminal-hint { background:#0d1016; border:1px solid var(--line); border-radius:10px; padding:8px 10px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; color:#dbe7ff; margin-top:8px; white-space:pre-wrap; word-break:break-word; }
+    .terminal-hint { background:#0d1016; border:1px solid var(--line); border-radius:10px; padding:8px 10px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; color:#dbe7ff; margin:0; white-space:pre-wrap; word-break:break-word; }
     .waiting-state { color:var(--focus); font-size:14px; font-style:italic; }
     .checklist { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:6px; }
     .checklist li { display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:13px; }
@@ -315,6 +315,11 @@ export function renderProjectCockpitHtml() {
     .advanced-toggle:hover { color:var(--text); }
     .advanced-section { display:none; }
     .advanced-section.open { display:block; }
+    .text-window { margin:10px 0; border:1px solid var(--line); border-radius:12px; background:#0d1016; overflow:hidden; }
+    .text-window pre, .text-window .cmd, .text-window .terminal-hint { border:0; border-radius:0; }
+    .text-toolbar { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:6px 8px; border-bottom:1px solid var(--line); background:rgba(255,255,255,0.03); }
+    .text-title { color:var(--muted); font-size:12px; }
+    .copy-btn { padding:5px 8px; font-size:12px; }
   </style>
 </head>
 <body>
@@ -363,6 +368,38 @@ export function renderProjectCockpitHtml() {
       return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' })[ch]);
     }
 
+    function textWindow(label, text, blockClass) {
+      return '<div class="text-window">' +
+        '<div class="text-toolbar"><span class="text-title">' + escapeHtml(label) + '</span><button class="copy-btn" data-copy-nearest="pre,.cmd,.terminal-hint">Copy</button></div>' +
+        '<pre class="' + escapeHtml(blockClass || '') + '">' + escapeHtml(text) + '</pre>' +
+        '</div>';
+    }
+
+    async function copyTextWindow(button) {
+      var box = button.closest('.text-window');
+      var target = box ? box.querySelector('pre,.cmd,.terminal-hint') : null;
+      var text = target ? target.innerText : '';
+      try {
+        if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(text);
+        else {
+          var area = document.createElement('textarea');
+          area.value = text;
+          area.style.position = 'fixed';
+          area.style.opacity = '0';
+          document.body.appendChild(area);
+          area.focus();
+          area.select();
+          document.execCommand('copy');
+          area.remove();
+        }
+        var old = button.textContent;
+        button.textContent = 'Copied';
+        setTimeout(function() { button.textContent = old || 'Copy'; }, 1200);
+      } catch (error) {
+        alert('Copy failed: ' + (error.message || String(error)));
+      }
+    }
+
     function stateClass(status) {
       if (status.externalPortOwner) return 'warn';
       if (status.running || status.healthOk) return 'ok';
@@ -391,7 +428,7 @@ export function renderProjectCockpitHtml() {
       const canRestart = !disabled && role.kind !== 'virtual' && !externalPortOwner;
       const canKillPort = !disabled && role.allowKillPort && role.port && status.port && status.port.listening && status.running;
       const manualKill = role.port ? 'lsof -tiTCP:' + role.port + ' -sTCP:LISTEN | xargs kill' : '';
-      const logs = (role.logs || []).slice(-80).map(line => '[' + line.at + '] ' + line.level + ': ' + line.line).join('\\n');
+      const logs = (role.logs || []).slice(-80).map(line => '[' + line.at + '] ' + line.level + ': ' + line.line).join('\n');
       return '<article class="card" data-role="' + escapeHtml(role.id) + '">' +
         '<h2>' + escapeHtml(role.label) + '</h2>' +
         '<p>' + escapeHtml(role.description) + '</p>' +
@@ -405,8 +442,8 @@ export function renderProjectCockpitHtml() {
         '</div>' +
         (role.cwd ? '<div class="small">cwd: ' + escapeHtml(role.cwd) + '</div>' : '') +
         (role.healthUrl ? '<div class="small">health: ' + escapeHtml(role.healthUrl) + '</div>' : '') +
-        '<div class="cmd">' + escapeHtml(role.commandPreview || 'No command wired yet.') + '</div>' +
-        (externalPortOwner ? '<p class="warn">External process detected. The cockpit will not kill it from the browser. Run this manually if you want to free the port:</p><div class="cmd">' + escapeHtml(manualKill) + '</div>' : '') +
+        textWindow('Command', role.commandPreview || 'No command wired yet.', 'cmd') +
+        (externalPortOwner ? '<p class="warn">External process detected. The cockpit will not kill it from the browser. Run this manually if you want to free the port:</p>' + textWindow('Manual terminal command', manualKill, 'cmd') : '') +
         (role.disabledReason ? '<p class="warn">' + escapeHtml(role.disabledReason) + '</p>' : '') +
         '<div class="actions">' +
           '<button class="primary" data-action="start" ' + (canStart ? '' : 'disabled') + '>Start / Run</button>' +
@@ -415,7 +452,7 @@ export function renderProjectCockpitHtml() {
           '<button class="danger" data-action="kill-port" ' + (canKillPort ? '' : 'disabled') + '>Kill port</button>' +
           '<button data-action="toggle-logs">Logs</button>' +
         '</div>' +
-        '<pre class="logs">' + escapeHtml(logs || 'No logs yet.') + '</pre>' +
+        textWindow('Logs', logs || 'No logs yet.', 'logs') +
       '</article>';
     }
 
@@ -447,10 +484,10 @@ export function renderProjectCockpitHtml() {
       var role = (profile.roles || []).find(function(r) { return r.id === 'spectra-validation'; });
       var lines = (role && role.logs ? role.logs : []).slice(-40).map(function(line) {
         return '[' + line.at + '] ' + line.level + ': ' + line.line;
-      }).join('\\n');
+      }).join('\n');
       return '<div class="action-card">' +
         '<div class="action-label">Validation output</div>' +
-        '<pre class="guided-log">' + escapeHtml(lines || 'No validation output is available yet. Run validation again to capture fresh output here.') + '</pre>' +
+        textWindow('Validation output', lines || 'No validation output is available yet. Run validation again to capture fresh output here.', 'guided-log') +
         '</div>';
     }
 
@@ -484,7 +521,7 @@ export function renderProjectCockpitHtml() {
         return '<div class="action-card">' +
           '<div class="action-label">Status</div>' +
           '<div class="action-title">' + escapeHtml(action.reason) + '</div>' +
-          (action.terminalHint ? '<div class="terminal-hint">' + escapeHtml(action.terminalHint) + '</div>' : '') +
+          (action.terminalHint ? textWindow('Terminal hint', action.terminalHint, 'terminal-hint') : '') +
           '</div>';
       }
       var actionTitle = {
@@ -496,7 +533,7 @@ export function renderProjectCockpitHtml() {
         '<div class="action-label">Next safe action</div>' +
         '<div class="action-title">▶  ' + escapeHtml(actionTitle) + '</div>' +
         '<div class="action-reason">' + escapeHtml(action.reason) + '</div>' +
-        (action.commandPreview ? '<div class="cmd action-preview">' + escapeHtml(action.commandPreview) + '</div>' : '') +
+        (action.commandPreview ? textWindow('Command preview', action.commandPreview, 'cmd action-preview') : '') +
         '<div class="action-row">' + guidedButton(action, 'Approve — ' + actionTitle) + (action.risk !== 'none' ? '<span class="small">Risk: ' + escapeHtml(action.risk) + '</span>' : '') + '</div>' +
         '</div>';
     }
@@ -572,6 +609,10 @@ export function renderProjectCockpitHtml() {
         };
       });
 
+      content.querySelectorAll('[data-copy-nearest]').forEach(function(button) {
+        button.onclick = function() { copyTextWindow(button); };
+      });
+
       content.querySelectorAll('.card').forEach(function(card) {
         var roleId = card.getAttribute('data-role');
         var logsEl = card.querySelector('.logs');
@@ -606,7 +647,10 @@ export function renderProjectCockpitHtml() {
         const profile = await api('/api/v1/cockpit/profile');
         render(profile);
       } catch (error) {
-        content.innerHTML = '<pre class="bad">Cockpit API error: ' + escapeHtml(error.message || String(error)) + '</pre>';
+        content.innerHTML = textWindow('Cockpit API error', 'Cockpit API error: ' + (error.message || String(error)), 'bad');
+        content.querySelectorAll('[data-copy-nearest]').forEach(function(button) {
+          button.onclick = function() { copyTextWindow(button); };
+        });
       }
     }
 
@@ -831,10 +875,10 @@ function buildRoles(options: CockpitOptions): CockpitRole[] {
     { id: "spectra-validation", label: "Spectra Validation", group: "Validation", kind: "one-shot", description: "Runs the current low-noise Spectra checks for this bridge slice.", cwd: spectraDir, command: "bash", args: ["-lc", "npm run typecheck && npm run test:ai-request && npm run test:cockpit"] },
     { id: "spectra-git-state", label: "Spectra Git State", group: "Validation", kind: "one-shot", description: "Shows current Spectra branch, local status, and recent commits.", cwd: spectraDir, command: "bash", args: ["-lc", "printf 'branch: '; git branch --show-current; git status --short; git log --oneline -5"] },
     { id: "focus-git-state", label: "Focus Git State", group: "Validation", kind: "one-shot", description: "Shows current Focus branch, local status, and recent commits.", cwd: focusDir, command: "bash", args: ["-lc", "printf 'branch: '; git branch --show-current; git status --short; git log --oneline -5"] },
-    { id: "ollama-status", label: "Ollama Status", group: "Local models", kind: "one-shot", description: "Lists installed and currently loaded Ollama models without launching real inference.", command: "bash", args: ["-lc", "ollama list && printf '\\n--- loaded models ---\\n' && ollama ps"] },
+    { id: "ollama-status", label: "Ollama Status", group: "Local models", kind: "one-shot", description: "Lists installed and currently loaded Ollama models without launching real inference.", command: "bash", args: ["-lc", "ollama list && printf '\n--- loaded models ---\n' && ollama ps"] },
     { id: "vibe-coder-cli", label: "Vibe-Coder CLI", group: "Future interfaces", kind: "placeholder", description: "Reserved launch surface for a future vibe-coder CLI interface.", cwd: spectraDir, disabledReason: "Not built yet. This card locks the intended cockpit slot without pretending it is available." },
     { id: "prism-build", label: "Prism Build", group: "Future interfaces", kind: "placeholder", description: "Reserved launch surface for a future Prism Build interface.", cwd: spectraDir, disabledReason: "Not built yet. Next step is to define safe build presets and review gates." },
-    { id: "beam-session-log", label: "Beam Session Log", group: "Reference layer", kind: "one-shot", description: "Read-only Beam orientation snapshot. Does not write progress logs.", cwd: beamDir, command: "bash", args: ["-lc", "printf 'branch: '; git branch --show-current; git status --short; printf '\\nRecent progress markers:\\n'; grep -n \"Focus\\|Spectra\\|cockpit\" AI_PROGRESS_LOG.md | tail -20 || true"] },
+    { id: "beam-session-log", label: "Beam Session Log", group: "Reference layer", kind: "one-shot", description: "Read-only Beam orientation snapshot. Does not write progress logs.", cwd: beamDir, command: "bash", args: ["-lc", "printf 'branch: '; git branch --show-current; git status --short; printf '\nRecent progress markers:\n'; grep -n \"Focus\|Spectra\|cockpit\" AI_PROGRESS_LOG.md | tail -20 || true"] },
   ];
 }
 
