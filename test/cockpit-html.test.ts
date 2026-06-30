@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { deriveCockpitGuidance, parsePidOutput, renderProjectCockpitHtml } from "../tools/cockpit/projectCockpit.js";
+import { InMemoryApprovalQueue } from "../src/approvals/index.js";
+import { InMemoryPrismEventLedger } from "../src/events/index.js";
+import {
+  deriveCockpitGuidance,
+  handleApproveGuidedAction,
+  parsePidOutput,
+  renderProjectCockpitHtml,
+} from "../tools/cockpit/projectCockpit.js";
 
 function mockProfile(overrides: Record<string, unknown> = {}) {
   return {
@@ -54,6 +61,8 @@ function run() {
   const g1 = deriveCockpitGuidance(mockProfile());
   assert.equal(g1.nextAction?.action, "start-role");
   assert.equal(g1.nextAction?.role, "focus-ui");
+  assert.equal(g1.nextAction?.approvalClass, "write");
+  assert.equal(g1.nextAction?.checkpointPolicy, "before_write");
   assert.equal(g1.checklist.find(c => c.id === "gateway")?.status, "done");
   assert.equal(g1.checklist.find(c => c.id === "focus")?.status, "pending");
 
@@ -93,8 +102,40 @@ function run() {
   }));
   assert.equal(g5.nextAction?.action, "show-logs");
   assert.equal(g5.nextAction?.role, "spectra-validation");
-  assert.equal(g5.nextAction?.requiresApproval, false);
+  assert.equal(g5.nextAction?.approvalClass, "observe");
+  assert.equal(g5.nextAction?.checkpointPolicy, "none");
   assert.match(g5.nextAction?.reason ?? "", /Review the failed validation output below/);
+
+  const ledger = new InMemoryPrismEventLedger();
+  const approvalQueue = new InMemoryApprovalQueue(ledger);
+  const writeResult = handleApproveGuidedAction(
+    { approvalQueue },
+    { nextAction: g1.nextAction }
+  );
+  assert.equal(writeResult.ok, true);
+  assert.ok("approvalId" in writeResult);
+  const approvals = approvalQueue.listApprovals();
+  assert.equal(approvals.length, 1);
+  assert.equal(approvals[0].status, "approved");
+  assert.equal(approvals[0].title, "Start Focus UI");
+  assert.equal(approvals[0].approvalClass, "write");
+  assert.equal(approvals[0].checkpointPolicy, "before_write");
+  assert.equal(approvals[0].cliEquivalent, "python3 -m http.server 4173");
+  assert.equal(approvals[0].localRemoteBoundary, "local-only");
+  assert.equal(approvals[0].requestedBy, "dave-cockpit");
+  const approvalEvents = ledger.list();
+  assert.equal(approvalEvents.length, 2);
+  assert.deepEqual(
+    new Set(approvalEvents.map(event => event.type)),
+    new Set(["approval.requested", "approval.resolved"])
+  );
+
+  const observeResult = handleApproveGuidedAction(
+    { approvalQueue },
+    { nextAction: g5.nextAction }
+  );
+  assert.deepEqual(observeResult, { ok: true, approvalSkipped: true });
+  assert.equal(approvalQueue.listApprovals().length, 1, "observe actions must not create approvals");
 
   const html = renderProjectCockpitHtml();
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]);
@@ -107,7 +148,15 @@ function run() {
 
   assert.match(html, /guided-panel/, "cockpit should render the guided panel scaffold");
   assert.match(html, /advanced-section/, "cockpit should keep advanced process controls behind a section");
-  assert.match(html, /data-guided-action/, "guided approve buttons should use structured action packets");
+  assert.match(html, /data-guided-action/, "guided approve buttons should use structured actions");
+  assert.match(html, /\/api\/v1\/cockpit\/actions\/approve/, "write actions should record approval before execution");
+  const approveActionStart = html.indexOf("async function approveAction");
+  const approvalCall = html.indexOf("/api/v1/cockpit/actions/approve", approveActionStart);
+  const guidedProcessCall = html.indexOf("/api/v1/cockpit/processes/", approveActionStart);
+  assert.ok(
+    approvalCall > approveActionStart && approvalCall < guidedProcessCall,
+    "guided actions should record approval before process execution"
+  );
   assert.match(html, /What to do now/, "failed validation should become a guided next-step card");
   assert.match(html, /Validation output/, "failed validation should show inline output in the guided panel");
   assert.match(html, /Run validation again/, "failed validation should expose a rerun action in the guided panel");
