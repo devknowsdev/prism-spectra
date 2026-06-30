@@ -13,15 +13,35 @@ export function collectTargetFiles(packet: TaskPacket): string[] {
 }
 
 export function buildTaskPrompt(packet: TaskPacket, requestedFiles: string[]): string {
-  const lines = [`Task type: ${packet.node_type}`, `Intent: ${packet.intent}`];
+  const expectsJson = packet.context.expectsJson === true;
+  const aiRequest =
+    typeof packet.context.aiRequest === "object" && packet.context.aiRequest !== null
+      ? (packet.context.aiRequest as Record<string, unknown>)
+      : undefined;
+  const aiRequestInput =
+    typeof aiRequest?.input === "object" && aiRequest.input !== null
+      ? (aiRequest.input as Record<string, unknown>)
+      : undefined;
+  const instruction = typeof aiRequestInput?.instruction === "string" ? aiRequestInput.instruction : undefined;
+  const lines = [
+    ...(expectsJson && instruction ? [`Instruction:\n${instruction}`] : []),
+    `Task type: ${packet.node_type}`,
+    `Intent: ${packet.intent}`,
+  ];
   if (packet.constraints.length) lines.push(`Constraints: ${packet.constraints.join("; ")}`);
   const context = { ...packet.context };
+  delete context.expectsJson;
   delete context.targetFile;
   delete context.targetFiles;
   delete context.simulateFailure;
   delete context.cwd;
   delete context.command;
   delete context.validate;
+  if (expectsJson && aiRequest && aiRequestInput) {
+    const input = { ...aiRequestInput };
+    delete input.instruction;
+    context.aiRequest = { ...aiRequest, input };
+  }
   if (Object.keys(context).length) lines.push(`Context: ${JSON.stringify(context)}`);
 
   if (requestedFiles.length > 0) {
@@ -33,7 +53,7 @@ export function buildTaskPrompt(packet: TaskPacket, requestedFiles: string[]): s
       "<full file content>",
       "```"
     );
-  } else {
+  } else if (!expectsJson) {
     lines.push("Respond concisely with the result only.");
   }
   return lines.join("\n");

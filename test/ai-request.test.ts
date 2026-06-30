@@ -6,6 +6,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyProviderProbe } from "../src/config/providerProbe.js";
 import { ExecutionEngine, normalizeAiRequestBody } from "../src/index.js";
+import { buildTaskPrompt } from "../src/executors/aiPrompt.js";
+import { FOCUS_CHAT_RESPONSE_SCHEMA, OllamaExecutor } from "../src/executors/ollama.js";
+import type { TaskPacket } from "../src/types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..", ".test-tmp", "ai-request");
@@ -141,6 +144,61 @@ async function main() {
   const scheduleResult = await engine.runAiRequest(focusChatRequest("Plan the next 90 minutes gently."));
   assert.equal(scheduleResult.ok, true);
   assert.ok((scheduleResult.structuredResponse as any).proposedSchedule.length >= 2);
+
+  const focusInstruction =
+    "Return ONLY valid JSON with this shape: { reply, proposedTasks, proposedSchedule, followUpQuestion }";
+  const focusPacket: TaskPacket = {
+    intent: "Read-only Prism AI request for Focus chat",
+    node_type: "docs",
+    dependencies: [],
+    constraints: ["read-only", "no-app-mutation", "no-file-write"],
+    context: {
+      expectsJson: true,
+      aiRequest: {
+        sourceApp: "prism-focus",
+        intent: "focus-chat-message",
+        input: { prompt: "Help me choose one task.", instruction: focusInstruction },
+        context: { feature: "focus-chat", appSurface: "chat-modal" },
+      },
+    },
+  };
+  const focusPrompt = buildTaskPrompt(focusPacket, []);
+  assert.match(focusPrompt, new RegExp(focusInstruction.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.doesNotMatch(focusPrompt, /Respond concisely with the result only/);
+  assert.doesNotMatch(focusPrompt, /"instruction":/);
+
+  const originalFetch = globalThis.fetch;
+  let ollamaRequestBody: Record<string, unknown> | undefined;
+  try {
+    globalThis.fetch = async (_input, init) => {
+      ollamaRequestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(
+        JSON.stringify({
+          message: {
+            content: JSON.stringify({
+              reply: "Choose the easiest task to start.",
+              proposedTasks: [],
+              proposedSchedule: [],
+              followUpQuestion: "",
+            }),
+          },
+          prompt_eval_count: 12,
+          eval_count: 8,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    };
+    const realExecutorResult = await new OllamaExecutor().execute(focusPacket);
+    assert.equal(realExecutorResult.success, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.deepEqual(ollamaRequestBody?.format, FOCUS_CHAT_RESPONSE_SCHEMA);
+  assert.equal(ollamaRequestBody?.think, false);
+  assert.match(
+    String((ollamaRequestBody?.messages as Array<{ content?: string }> | undefined)?.[0]?.content),
+    new RegExp(focusInstruction.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+  );
 
   const summary = engine.taskHistory
     .dataBoundarySummary("ai-request:prism-focus")

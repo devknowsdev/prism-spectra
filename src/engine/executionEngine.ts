@@ -180,6 +180,7 @@ export class ExecutionEngine {
       dependencies: [],
       constraints: ["read-only", "no-app-mutation", "no-file-write"],
       context: {
+        expectsJson: request.context?.feature === "focus-chat" || request.input?.instruction != null,
         aiRequest: {
           sourceApp,
           intent: request.intent,
