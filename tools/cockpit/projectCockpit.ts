@@ -428,7 +428,7 @@ export function renderProjectCockpitHtml() {
       const canRestart = !disabled && role.kind !== 'virtual' && !externalPortOwner;
       const canKillPort = !disabled && role.allowKillPort && role.port && status.port && status.port.listening && status.running;
       const manualKill = role.port ? 'lsof -tiTCP:' + role.port + ' -sTCP:LISTEN | xargs kill' : '';
-      const logs = (role.logs || []).slice(-80).map(line => '[' + line.at + '] ' + line.level + ': ' + line.line).join('\n');
+      const logs = (role.logs || []).slice(-80).map(line => '[' + line.at + '] ' + line.level + ': ' + line.line).join(String.fromCharCode(10));
       return '<article class="card" data-role="' + escapeHtml(role.id) + '">' +
         '<h2>' + escapeHtml(role.label) + '</h2>' +
         '<p>' + escapeHtml(role.description) + '</p>' +
@@ -484,7 +484,7 @@ export function renderProjectCockpitHtml() {
       var role = (profile.roles || []).find(function(r) { return r.id === 'spectra-validation'; });
       var lines = (role && role.logs ? role.logs : []).slice(-40).map(function(line) {
         return '[' + line.at + '] ' + line.level + ': ' + line.line;
-      }).join('\n');
+      }).join(String.fromCharCode(10));
       return '<div class="action-card">' +
         '<div class="action-label">Validation output</div>' +
         textWindow('Validation output', lines || 'No validation output is available yet. Run validation again to capture fresh output here.', 'guided-log') +
