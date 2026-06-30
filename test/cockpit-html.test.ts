@@ -116,7 +116,7 @@ function run() {
   assert.match(html, /openLogRoles/, "open log cards should survive auto-refresh renders");
   assert.match(html, /copyTextWindow/, "text windows should have copy support");
   assert.match(html, /data-copy-nearest/, "text windows should expose copy buttons");
-  assert.match(html, /join\('\\n'\)/, "cockpit logs should join with an escaped newline literal");
+  assert.match(html, /String\.fromCharCode\(10\)/, "cockpit logs should join without embedding newline string literals in inline JS");
   assert.doesNotMatch(html, /join\('\n'\)/, "cockpit logs must not render a real line break inside a string");
   assert.doesNotMatch(html, /external pid\(s\).*status\.port\.pids\.join/, "external pid display should filter real positive PIDs before rendering");
 
