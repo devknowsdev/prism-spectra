@@ -1,5 +1,5 @@
 import type { ChainAttempt } from "../routing/router.js";
-import type { DataBoundary, ExecutorName, NodeType } from "../types.js";
+import type { CacheHitKind, DataBoundary, ExecutorName, NodeType } from "../types.js";
 import type { ModelRole } from "../executors/ollama.js";
 
 export const AI_REQUEST_RISK_CLASSES = ["read-only"] as const;
@@ -39,6 +39,10 @@ export interface AiRequestSuccess {
     nodeId: string;
     recorded: boolean;
     chainTried: ChainAttempt[];
+    cacheHit?: boolean;
+    cacheHitKind?: CacheHitKind;
+    routeCacheHit?: boolean;
+    routeCacheSimilarity?: number;
   };
   usage: {
     tokensIn: number;
@@ -64,6 +68,10 @@ export interface AiRequestFailure {
     nodeId: string;
     recorded: boolean;
     chainTried: ChainAttempt[];
+    cacheHit?: boolean;
+    cacheHitKind?: CacheHitKind;
+    routeCacheHit?: boolean;
+    routeCacheSimilarity?: number;
   };
   usage?: {
     tokensIn: number;

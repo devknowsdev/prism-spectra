@@ -34,7 +34,7 @@ import { PatternCache, type CacheLookup } from "../memory/patternCache.js";
 import { SemanticPatternCache } from "../memory/semanticPatternCache.js";
 import { TaskHistory } from "../memory/taskHistory.js";
 import { LearningLoop } from "../intelligence/learningLoop.js";
-import { Router, type RouteDecision } from "../routing/router.js";
+import { Router, type ChainAttempt, type RouteDecision } from "../routing/router.js";
 import { RouteDecisionCache } from "../routing/routeDecisionCache.js";
 import { classifyTaskHeuristic, type L1Classification } from "../routing/l1Classifier.js";
 import { buildExecutorRegistry } from "../executors/index.js";
@@ -101,7 +101,30 @@ export interface NodeRunLog {
   error?: string;
   confidenceScore?: number | null;
   fallbackReason?: string;
-  ledgerChainTried?: { provider: ExecutorName; allowed: boolean; reason?: string }[];
+  ledgerChainTried?: ChainAttempt[];
+}
+
+interface CascadeExecution {
+  result: ExecutionResult;
+  executor: ExecutorName | null;
+  chainTried: ChainAttempt[];
+  routeCacheHit?: boolean;
+  routeCacheSimilarity?: number;
+  cacheHit: boolean;
+}
+
+class CascadeExecutorError extends Error {
+  constructor(
+    cause: unknown,
+    readonly executor: ExecutorName,
+    readonly chainTried: ChainAttempt[],
+    readonly routeCacheHit?: boolean,
+    readonly routeCacheSimilarity?: number
+  ) {
+    super((cause as Error).message);
+    this.name = "CascadeExecutorError";
+    this.cause = cause;
+  }
 }
 
 export class ExecutionEngine {
@@ -188,12 +211,41 @@ export class ExecutionEngine {
           input: request.input ?? {},
           context: request.context ?? {},
           preferredMode,
+          ...(request.aiRole ? { aiRole: request.aiRole } : {}),
+          ...(request.maxOutputTokens ? { maxOutputTokens: request.maxOutputTokens } : {}),
         },
         ...(request.conversationId == null ? {} : { conversationId: request.conversationId }),
       },
     };
 
-    const decision = await this.route(packet);
+    let execution: CascadeExecution;
+    try {
+      execution = await this.executeWithCascade(packet, { cacheable: true });
+    } catch (error) {
+      const cascadeError = error instanceof CascadeExecutorError ? error : null;
+      const provider = cascadeError?.executor ?? null;
+      return {
+        ok: false,
+        provider,
+        model: provider === "ollama" ? selectOllamaModel(packet) : null,
+        ...(provider ? { dataBoundary: dataBoundaryFor(provider) } : {}),
+        response: "",
+        error: (error as Error).message,
+        provenance: {
+          routedBy: "prism-spectra",
+          sourceApp,
+          riskClass,
+          preferredMode,
+          graphId,
+          nodeId,
+          recorded: false,
+          chainTried: cascadeError?.chainTried ?? [],
+          routeCacheHit: cascadeError?.routeCacheHit,
+          routeCacheSimilarity: cascadeError?.routeCacheSimilarity,
+        },
+      };
+    }
+
     const provenanceBase = {
       routedBy: "prism-spectra" as const,
       sourceApp,
@@ -202,39 +254,25 @@ export class ExecutionEngine {
       graphId,
       nodeId,
       recorded: false,
-      chainTried: decision.chainTried,
-      routeCacheHit: decision.routeCacheHit,
-      routeCacheSimilarity: decision.routeCacheSimilarity,
+      chainTried: execution.chainTried,
+      cacheHit: execution.cacheHit,
+      cacheHitKind: execution.result.cacheHitKind,
+      routeCacheHit: execution.routeCacheHit,
+      routeCacheSimilarity: execution.routeCacheSimilarity,
     };
 
-    if (!decision.executor) {
+    if (!execution.executor) {
       return {
         ok: false,
         provider: null,
         model: null,
         response: "",
-        error: `no executor within budget; tried: ${JSON.stringify(decision.chainTried)}`,
+        error: execution.result.error ?? `no executor within budget; tried: ${JSON.stringify(execution.chainTried)}`,
         provenance: provenanceBase,
       };
     }
 
-    let result: ExecutionResult;
-    try {
-      result = await this.executeViaRoute(packet, decision.executor);
-    } catch (error) {
-      return {
-        ok: false,
-        provider: decision.executor,
-        model: decision.executor === "ollama" ? selectOllamaModel(packet) : null,
-        dataBoundary: dataBoundaryFor(decision.executor),
-        response: "",
-        error: (error as Error).message,
-        provenance: provenanceBase,
-      };
-    }
-
-    const safeResult: ExecutionResult = { ...result, patch: undefined };
-    this.ledger.recordUsage(safeResult.provider, { cost: safeResult.cost });
+    const safeResult: ExecutionResult = { ...execution.result, patch: undefined };
 
     const outcome: NodeOutcome = {
       projectId: `ai-request:${sourceApp}`,
@@ -250,15 +288,29 @@ export class ExecutionEngine {
     const shouldRecord = request.record !== false;
     if (shouldRecord) {
       this.taskHistory.recordOutcome(outcome);
-      this.learningLoop.recordOutcome(outcome);
+      if (!safeResult.cacheHit) {
+        this.learningLoop.recordOutcome(outcome);
+      }
       this.recordConversationMessage(packet, outcome, safeResult);
-      if (safeResult.success) await this.rememberRoute(packet, safeResult.provider);
+      if (safeResult.success && !safeResult.cacheHit) {
+        const validation = await validate(packet, safeResult, this.workDir);
+        if (validation.passed) {
+          this.patternCache.set(packet, safeResult.output, safeResult.provider, safeResult.tokensIn, safeResult.tokensOut);
+          await this.semanticPatternCache?.set(
+            packet,
+            safeResult.output,
+            safeResult.provider,
+            safeResult.tokensIn,
+            safeResult.tokensOut
+          );
+        }
+        await this.rememberRoute(packet, safeResult.provider);
+      }
     }
 
     const provenance = {
       ...provenanceBase,
       recorded: shouldRecord,
-      chainTried: decision.chainTried,
     };
     const usage = {
       tokensIn: safeResult.tokensIn,
@@ -323,74 +375,9 @@ export class ExecutionEngine {
 
     const release = await this.fileLocks.acquire(packet.filePaths);
     try {
-      let result: ExecutionResult;
-      let chainTried: NodeRunLog["ledgerChainTried"];
-      let routeCacheHit: boolean | undefined;
-      let routeCacheSimilarity: number | undefined;
-
       const cacheable = packet.node_type !== "terminal";
-      const cacheLookup = cacheable ? await this.lookupCache(packet) : { hit: false as const };
-
-      if (cacheLookup.hit) {
-        result = {
-          success: true,
-          output: cacheLookup.output!,
-          provider: cacheLookup.originProvider!,
-          tokensIn: cacheLookup.originTokensIn ?? 0,
-          tokensOut: cacheLookup.originTokensOut ?? 0,
-          cost: 0,
-          latencyMs: 0,
-          cacheHit: true,
-          cacheHitKind: cacheLookup.semantic ? "semantic" : "exact",
-          patch: cacheLookup.originPatch,
-        };
-      } else {
-        let decision = await this.route(packet);
-        chainTried = decision.chainTried;
-        routeCacheHit = decision.routeCacheHit;
-        routeCacheSimilarity = decision.routeCacheSimilarity;
-
-        if (!decision.executor) {
-          result = {
-            success: false,
-            output: "",
-            provider: "ollama",
-            tokensIn: 0,
-            tokensOut: 0,
-            cost: 0,
-            latencyMs: 0,
-            error: `no executor within budget; tried: ${JSON.stringify(decision.chainTried)}`,
-          };
-        } else {
-          const tried: ExecutorName[] = [];
-          result = await this.executeViaRoute(packet, decision.executor);
-
-          while (this.fallbackOnFailure && decision.executor) {
-            const lowConfidenceReason = this.lowConfidenceFallbackReason(result);
-            if (result.success && !lowConfidenceReason) break;
-
-            const previousError = result.error;
-            if (lowConfidenceReason) {
-              result = { ...result, fallbackReason: lowConfidenceReason };
-            }
-
-            tried.push(decision.executor);
-            decision = await this.route(packet, tried);
-            chainTried = [...(chainTried ?? []), ...decision.chainTried];
-            routeCacheHit = routeCacheHit || decision.routeCacheHit;
-            routeCacheSimilarity = routeCacheSimilarity ?? decision.routeCacheSimilarity;
-            if (!decision.executor) break;
-            const retry = await this.executeViaRoute(packet, decision.executor);
-            result = {
-              ...retry,
-              fallbackReason: lowConfidenceReason ?? retry.fallbackReason,
-              error: previousError && !lowConfidenceReason ? `${previousError}; then ${retry.error ?? "failed"}` : retry.error,
-            };
-          }
-
-          this.ledger.recordUsage(result.provider, { cost: result.cost });
-        }
-      }
+      const execution = await this.executeWithCascade(packet, { cacheable });
+      let result = execution.result;
 
       // Diff-based patching (07): apply any proposed file edits to the
       // working tree BEFORE checkpointing — the checkpoint commit captures
@@ -466,14 +453,14 @@ export class ExecutionEngine {
         provider: result.provider,
         cacheHit: !!result.cacheHit,
         cacheHitKind: result.cacheHitKind,
-        routeCacheHit,
-        routeCacheSimilarity,
+        routeCacheHit: execution.routeCacheHit,
+        routeCacheSimilarity: execution.routeCacheSimilarity,
         cost: result.cost,
         latencyMs: result.latencyMs,
         error: result.error,
         confidenceScore: result.confidenceScore,
         fallbackReason: result.fallbackReason,
-        ledgerChainTried: chainTried,
+        ledgerChainTried: execution.chainTried,
       };
     } finally {
       release();
@@ -491,6 +478,118 @@ export class ExecutionEngine {
     if (exact.hit) return exact;
     const semantic = await this.semanticPatternCache?.get(packet);
     return semantic?.hit ? semantic : { hit: false };
+  }
+
+  private async executeWithCascade(
+    packet: TaskPacket,
+    opts: { cacheable: boolean }
+  ): Promise<CascadeExecution> {
+    const cacheLookup = opts.cacheable ? await this.lookupCache(packet) : { hit: false as const };
+    if (cacheLookup.hit) {
+      return {
+        result: {
+          success: true,
+          output: cacheLookup.output!,
+          provider: cacheLookup.originProvider!,
+          tokensIn: cacheLookup.originTokensIn ?? 0,
+          tokensOut: cacheLookup.originTokensOut ?? 0,
+          cost: 0,
+          latencyMs: 0,
+          cacheHit: true,
+          cacheHitKind: cacheLookup.semantic ? "semantic" : "exact",
+          patch: cacheLookup.originPatch,
+        },
+        executor: cacheLookup.originProvider!,
+        chainTried: [],
+        cacheHit: true,
+      };
+    }
+
+    let decision = await this.route(packet);
+    let chainTried: ChainAttempt[] = decision.chainTried;
+    let routeCacheHit = decision.routeCacheHit;
+    let routeCacheSimilarity = decision.routeCacheSimilarity;
+    if (!decision.executor) {
+      return {
+        result: {
+          success: false,
+          output: "",
+          provider: "ollama",
+          tokensIn: 0,
+          tokensOut: 0,
+          cost: 0,
+          latencyMs: 0,
+          error: `no executor within budget; tried: ${JSON.stringify(decision.chainTried)}`,
+        },
+        executor: null,
+        chainTried,
+        routeCacheHit,
+        routeCacheSimilarity,
+        cacheHit: false,
+      };
+    }
+
+    const tried: ExecutorName[] = [];
+    let result = await this.executeRouteOrThrow(
+      packet,
+      decision.executor,
+      chainTried,
+      routeCacheHit,
+      routeCacheSimilarity
+    );
+
+    while (this.fallbackOnFailure && decision.executor) {
+      const lowConfidenceReason = this.lowConfidenceFallbackReason(result);
+      if (result.success && !lowConfidenceReason) break;
+
+      const previousError = result.error;
+      if (lowConfidenceReason) {
+        result = { ...result, fallbackReason: lowConfidenceReason };
+      }
+
+      tried.push(decision.executor);
+      decision = await this.route(packet, tried);
+      chainTried = [...chainTried, ...decision.chainTried];
+      routeCacheHit = routeCacheHit || decision.routeCacheHit;
+      routeCacheSimilarity = routeCacheSimilarity ?? decision.routeCacheSimilarity;
+      if (!decision.executor) break;
+      const retry = await this.executeRouteOrThrow(
+        packet,
+        decision.executor,
+        chainTried,
+        routeCacheHit,
+        routeCacheSimilarity
+      );
+      result = {
+        ...retry,
+        fallbackReason: lowConfidenceReason ?? retry.fallbackReason,
+        error: previousError && !lowConfidenceReason ? `${previousError}; then ${retry.error ?? "failed"}` : retry.error,
+      };
+    }
+
+    this.ledger.recordUsage(result.provider, { cost: result.cost });
+    return {
+      result,
+      executor: result.provider,
+      chainTried,
+      routeCacheHit,
+      routeCacheSimilarity,
+      cacheHit: false,
+    };
+  }
+
+  private async executeRouteOrThrow(
+    packet: TaskPacket,
+    executor: ExecutorName,
+    chainTried: ChainAttempt[],
+    routeCacheHit?: boolean,
+    routeCacheSimilarity?: number
+  ): Promise<ExecutionResult> {
+    try {
+      return await this.executeViaRoute(packet, executor);
+    } catch (error) {
+      throw new CascadeExecutorError(error, executor, chainTried, routeCacheHit, routeCacheSimilarity);
+    }
   }
 
   private async route(packet: TaskPacket, exclude: ExecutorName[] = []): Promise<RouteDecision> {

@@ -8,7 +8,7 @@ import { applyProviderProbe } from "../src/config/providerProbe.js";
 import { ExecutionEngine, normalizeAiRequestBody } from "../src/index.js";
 import { buildTaskPrompt } from "../src/executors/aiPrompt.js";
 import { FOCUS_CHAT_RESPONSE_SCHEMA, OllamaExecutor } from "../src/executors/ollama.js";
-import type { TaskPacket } from "../src/types.js";
+import type { ExecutionResult, TaskPacket } from "../src/types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..", ".test-tmp", "ai-request");
@@ -206,6 +206,110 @@ async function main() {
   assert.deepEqual(summary, [{ dataBoundary: "local", count: 1 }]);
 
   engine.close();
+
+  const cacheEngine = new ExecutionEngine({
+    dbPath: path.join(ROOT, "cache-gateway.db"),
+    workDir: path.join(ROOT, "cache-work"),
+    mockExecutors: true,
+    ollamaSwapDelayMs: 1,
+  });
+  await cacheEngine.init();
+  const cacheInternals = cacheEngine as unknown as {
+    executors: {
+      ollama: { execute: (packet: TaskPacket) => Promise<ExecutionResult> };
+    };
+    fileLocks: { acquire: (paths?: string[]) => Promise<() => void> };
+  };
+  cacheInternals.fileLocks.acquire = async () => {
+    throw new Error("runAiRequest must not acquire file locks");
+  };
+  let aiRequestExecutions = 0;
+  let capturedAiRequestPacket: TaskPacket | undefined;
+  cacheInternals.executors.ollama.execute = async (packet) => {
+    aiRequestExecutions += 1;
+    capturedAiRequestPacket = packet;
+    return {
+      success: true,
+      output: "A stable read-only response that is long enough for normal confidence scoring.",
+      provider: "ollama",
+      tokensIn: 12,
+      tokensOut: 18,
+      cost: 0,
+      latencyMs: 2,
+      patch: {
+        edits: [{ path: "must-not-be-written.txt", op: "write", content: "unsafe" }],
+      },
+    };
+  };
+  const cacheRequest = normalizeAiRequestBody({
+    sourceApp: "prism-cache-test",
+    intent: "repeatable-read-only-request",
+    riskClass: "read-only",
+    aiRole: "reasoner",
+    maxOutputTokens: 321,
+    record: true,
+    input: { prompt: "Give me the same read-only answer." },
+    context: { feature: "cache-contract" },
+  });
+  assert.equal(cacheRequest.ok, true);
+  if (!cacheRequest.ok) throw new Error("expected cache request");
+  const firstCacheResult = await cacheEngine.runAiRequest(cacheRequest.request);
+  const secondCacheResult = await cacheEngine.runAiRequest(cacheRequest.request);
+  assert.equal(firstCacheResult.ok, true);
+  assert.equal(secondCacheResult.ok, true);
+  assert.equal(aiRequestExecutions, 1, "second identical AI request should use the pattern cache");
+  assert.equal(firstCacheResult.provenance.cacheHit, false);
+  assert.equal(secondCacheResult.provenance.cacheHit, true);
+  assert.equal(secondCacheResult.provenance.cacheHitKind, "exact");
+  assert.equal(secondCacheResult.usage.latencyMs, 0);
+  assert.equal(fs.existsSync(path.join(ROOT, "cache-work", "must-not-be-written.txt")), false);
+  const capturedAiRequest =
+    capturedAiRequestPacket?.context.aiRequest as Record<string, unknown> | undefined;
+  assert.equal(capturedAiRequest?.aiRole, "reasoner");
+  assert.equal(capturedAiRequest?.maxOutputTokens, 321);
+  cacheEngine.close();
+
+  const fallbackEngine = new ExecutionEngine({
+    dbPath: path.join(ROOT, "fallback-gateway.db"),
+    workDir: path.join(ROOT, "fallback-work"),
+    mockExecutors: true,
+    ollamaSwapDelayMs: 1,
+    fallbackOnFailure: true,
+    confidenceThreshold: 0.4,
+  });
+  await fallbackEngine.init();
+  const fallbackInternals = fallbackEngine as unknown as {
+    executors: {
+      ollama: { execute: (packet: TaskPacket) => Promise<ExecutionResult> };
+    };
+  };
+  fallbackInternals.executors.ollama.execute = async () => ({
+    success: true,
+    output: "I don't know",
+    provider: "ollama",
+    tokensIn: 5,
+    tokensOut: 3,
+    cost: 0,
+    latencyMs: 1,
+  });
+  const fallbackRequest = normalizeAiRequestBody({
+    sourceApp: "prism-focus",
+    intent: "explain a complex failure",
+    riskClass: "read-only",
+    record: false,
+    input: { prompt: "Explain this failure." },
+  });
+  assert.equal(fallbackRequest.ok, true);
+  if (!fallbackRequest.ok) throw new Error("expected fallback request");
+  const fallbackResult = await fallbackEngine.runAiRequest(fallbackRequest.request);
+  assert.equal(fallbackResult.ok, true);
+  assert.equal(fallbackResult.provider, "free_tier");
+  assert.deepEqual(
+    fallbackResult.provenance.chainTried.map(attempt => attempt.provider),
+    ["ollama", "free_tier"]
+  );
+  fallbackEngine.close();
+
   console.log("  ok  - ai request gateway contract");
 }
 
