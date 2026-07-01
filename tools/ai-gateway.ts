@@ -9,6 +9,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { ExecutionEngine, normalizeAiRequestBody } from "../src/index.js";
 import { probeAllProviders, applyProviderProbe } from "../src/config/providerProbe.js";
+import { InMemoryApprovalQueue } from "../src/approvals/index.js";
+import { InMemoryPrismEventLedger } from "../src/events/index.js";
 import { createProjectCockpitRouter, renderProjectCockpitHtml } from "./cockpit/projectCockpit.js";
 
 const PORT = Number(process.env.AI_FORGE_AI_GATEWAY_PORT ?? process.env.AI_FORGE_DAEMON_PORT ?? 3000);
@@ -19,6 +21,8 @@ const DB_PATH = process.env.AI_FORGE_AI_GATEWAY_DB ?? ".demo/ai-gateway.db";
 const WORK_DIR = process.env.AI_FORGE_AI_GATEWAY_WORKDIR ?? path.join(".demo", "ai-gateway-work");
 const MOCK_EXECUTORS = process.env.AI_FORGE_MOCK_EXECUTORS === "1";
 const execFileAsync = promisify(execFile);
+const eventLedger = new InMemoryPrismEventLedger();
+const approvalQueue = new InMemoryApprovalQueue(eventLedger);
 
 function jsonResponse(res: http.ServerResponse, code: number, body: unknown) {
   const s = JSON.stringify(body, null, 2);
@@ -91,6 +95,8 @@ async function start() {
     mockExecutors: MOCK_EXECUTORS,
     dbPath: DB_PATH,
     workDir: WORK_DIR,
+    approvalQueue,
+    eventLedger,
   });
 
   const server = http.createServer(async (req, res) => {
