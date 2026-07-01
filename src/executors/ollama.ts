@@ -16,6 +16,46 @@ export const OLLAMA_CODER_MODEL = "qwen2.5-coder:7b";
 export const OLLAMA_GENERAL_MODEL = "qwen3.5:9b";
 export const DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434";
 
+export const FOCUS_CHAT_RESPONSE_SCHEMA = {
+  type: "object",
+  properties: {
+    reply: { type: "string" },
+    proposedTasks: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          text: { type: "string" },
+          ts: { type: "string" },
+          estimatedMins: { type: "number" },
+          note: { type: "string" },
+          taskScope: { type: "string", enum: ["day", "project"] },
+        },
+        required: ["text", "ts", "estimatedMins"],
+        additionalProperties: false,
+      },
+    },
+    proposedSchedule: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          start: { type: "string" },
+          end: { type: "string" },
+          text: { type: "string" },
+          estimatedMins: { type: "number" },
+          note: { type: "string" },
+        },
+        required: ["start", "end", "text", "estimatedMins"],
+        additionalProperties: false,
+      },
+    },
+    followUpQuestion: { type: "string" },
+  },
+  required: ["reply", "proposedTasks", "proposedSchedule", "followUpQuestion"],
+  additionalProperties: false,
+} as const;
+
 export const MODEL_ROLES: readonly ModelRole[] = ["classifier", "coder", "planner", "reasoner", "fallback"] as const;
 
 /**
@@ -64,7 +104,8 @@ export function modelRoleFromPacketContext(packet: TaskPacket): ModelRole | null
     normalizeModelRole(context.aiRole) ??
     normalizeModelRole(routing.aiRole) ??
     normalizeModelRole(routing.modelRole) ??
-    normalizeModelRole(aiRequest.aiRole)
+    normalizeModelRole(aiRequest.aiRole) ??
+    normalizeModelRole(aiRoleFromIntent(packet.intent))
   );
 }
 
@@ -151,6 +192,8 @@ export class OllamaExecutor implements Executor {
     const model = selectModel(packet);
     const requestedFiles = collectTargetFiles(packet);
     const prompt = buildTaskPrompt(packet, requestedFiles);
+    const maxOutputTokens = outputTokenCapFromPacketContext(packet);
+    const expectsJson = packet.context.expectsJson === true;
 
     try {
       const response = await fetch(`${host}/api/chat`, {
@@ -160,6 +203,8 @@ export class OllamaExecutor implements Executor {
           model,
           messages: [{ role: "user", content: prompt }],
           stream: false,
+          ...(expectsJson ? { format: FOCUS_CHAT_RESPONSE_SCHEMA, think: false } : {}),
+          ...(maxOutputTokens ? { options: { num_predict: maxOutputTokens } } : {}),
         }),
         signal: AbortSignal.timeout(300_000),
       });
@@ -219,6 +264,25 @@ export class OllamaExecutor implements Executor {
       return fail(start, `Ollama call failed: ${(err as Error).message}`);
     }
   }
+}
+
+function aiRoleFromIntent(intent: string): string | null {
+  const match = intent.match(/"aiRole"\s*:\s*"([^"]+)"/);
+  return match?.[1] ?? null;
+}
+
+function outputTokenCapFromPacketContext(packet: TaskPacket): number | undefined {
+  const context = packet.context ?? {};
+  const aiRequest = typeof context.aiRequest === "object" && context.aiRequest !== null ? (context.aiRequest as Record<string, unknown>) : {};
+  const raw = aiRequest.maxOutputTokens ?? aiRequest.outputTokens ?? context.maxOutputTokens ?? maxOutputTokensFromIntent(packet.intent);
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return Math.max(1, Math.min(4096, Math.round(n)));
+}
+
+function maxOutputTokensFromIntent(intent: string): number | null {
+  const match = intent.match(/"maxOutputTokens"\s*:\s*(\d+)/);
+  return match ? Number(match[1]) : null;
 }
 
 function fail(start: number, error: string): ExecutionResult {

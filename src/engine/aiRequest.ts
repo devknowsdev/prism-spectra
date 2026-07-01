@@ -1,8 +1,11 @@
 import type { ChainAttempt } from "../routing/router.js";
 import type { DataBoundary, ExecutorName, NodeType } from "../types.js";
+import type { ModelRole } from "../executors/ollama.js";
 
 export const AI_REQUEST_RISK_CLASSES = ["read-only"] as const;
 export type AiRequestRiskClass = (typeof AI_REQUEST_RISK_CLASSES)[number];
+
+const AI_REQUEST_MODEL_ROLES = ["classifier", "coder", "planner", "reasoner", "fallback"] as const;
 
 export interface AiRequestInput {
   sourceApp: string;
@@ -12,6 +15,10 @@ export interface AiRequestInput {
   context?: Record<string, unknown>;
   preferredMode?: "local-first" | "local-only" | "balanced";
   nodeType?: Exclude<NodeType, "terminal">;
+  /** Advisory model role for local routing; Spectra still owns final routing. */
+  aiRole?: ModelRole;
+  /** Optional per-request Ollama output cap for small smoke tests. */
+  maxOutputTokens?: number;
   conversationId?: number | string | null;
   record?: boolean;
 }
@@ -96,6 +103,17 @@ export function normalizeAiRequestBody(body: unknown): AiRequestValidation {
     return { ok: false, error: "nodeType must be one of ui, backend, tests, docs" };
   }
 
+  const aiRole = normalizeAiRole(raw.aiRole);
+  if (!aiRole.ok) return aiRole;
+
+  const maxOutputTokens = normalizeOptionalInt(
+    raw.maxOutputTokens ?? raw.outputTokens ?? raw.outputTokenCap,
+    "maxOutputTokens",
+    1,
+    4096
+  );
+  if (!maxOutputTokens.ok) return maxOutputTokens;
+
   const input = optionalRecord(raw.input, "input");
   if (!input.ok) return input;
   const context = optionalRecord(raw.context, "context");
@@ -111,6 +129,8 @@ export function normalizeAiRequestBody(body: unknown): AiRequestValidation {
       context: context.value,
       preferredMode: normalizePreferredMode(raw.preferredMode),
       nodeType: (nodeType as AiRequestInput["nodeType"]) ?? "docs",
+      aiRole: aiRole.value,
+      maxOutputTokens: maxOutputTokens.value,
       conversationId: raw.conversationId as AiRequestInput["conversationId"],
       record: raw.record === false ? false : true,
     },
@@ -124,6 +144,8 @@ export function buildAiRequestIntent(request: AiRequestInput): string {
     input: request.input ?? {},
     context: request.context ?? {},
     preferredMode: request.preferredMode ?? "local-first",
+    ...(request.aiRole ? { aiRole: request.aiRole } : {}),
+    ...(request.maxOutputTokens ? { maxOutputTokens: request.maxOutputTokens } : {}),
   };
   return `Read-only Prism AI request:\n${JSON.stringify(payload, null, 2)}`;
 }
@@ -170,4 +192,26 @@ function optionalRecord(value: unknown, field: string): { ok: true; value: Recor
 function normalizePreferredMode(value: unknown): AiRequestInput["preferredMode"] {
   if (value === "local-only" || value === "balanced") return value;
   return "local-first";
+}
+
+function normalizeAiRole(value: unknown): { ok: true; value?: ModelRole } | { ok: false; error: string } {
+  if (value == null || value === "") return { ok: true };
+  if (typeof value === "string" && AI_REQUEST_MODEL_ROLES.includes(value as ModelRole)) {
+    return { ok: true, value: value as ModelRole };
+  }
+  return { ok: false, error: "aiRole must be one of classifier, coder, planner, reasoner, fallback" };
+}
+
+function normalizeOptionalInt(
+  value: unknown,
+  field: string,
+  min: number,
+  max: number
+): { ok: true; value?: number } | { ok: false; error: string } {
+  if (value == null || value === "") return { ok: true };
+  const n = Number(value);
+  if (!Number.isFinite(n)) return { ok: false, error: `${field} must be a number when provided` };
+  const rounded = Math.round(n);
+  if (rounded < min || rounded > max) return { ok: false, error: `${field} must be between ${min} and ${max}` };
+  return { ok: true, value: rounded };
 }

@@ -13,7 +13,7 @@ export interface ProviderStatus {
 }
 
 interface ProbeAwareEngine {
-  ledger: { setBudget: (p: ExecutorName, b: { rpmLimit: number }) => void };
+  ledger: { setBudget: (p: ExecutorName, b: { rpmLimit: number | null }) => void };
   router?: { setProviderAvailability?: (provider: ExecutorName, status: { available: boolean; reason?: string }) => void };
 }
 
@@ -34,13 +34,13 @@ export async function probeAllProviders(): Promise<ProviderStatus[]> {
   ];
 }
 
-/** Mark unavailable AI tiers as budget-exhausted so routing skips them cleanly. */
+/** Mark unavailable AI tiers as budget-exhausted so routing skips them cleanly.
+ *  When a provider becomes available again, clear the startup-probe RPM block so
+ *  a previous unavailable run does not poison the persisted gateway ledger. */
 export function applyProviderProbe(engine: ProbeAwareEngine, statuses: ProviderStatus[]): void {
   for (const status of statuses) {
     engine.router?.setProviderAvailability?.(status.provider, { available: status.available, reason: status.reason });
     if (status.provider === "terminal") continue;
-    if (!status.available) {
-      engine.ledger.setBudget(status.provider, { rpmLimit: 0 });
-    }
+    engine.ledger.setBudget(status.provider, { rpmLimit: status.available ? null : 0 });
   }
 }
