@@ -2,13 +2,14 @@
 
 **Status:** Accepted
 **Date:** 2026-06-29
+**Last verified:** 2026-07-01
 **Track:** Track A
 
 ## Context
 
 Spectra has a functional multi-tier router (`src/routing/router.ts`) that selects
 models in cost-ascending order: Ollama → free_tier → paid (GPT/Claude). As of
-Tier 2a:
+Tier 2a, when this ADR was written:
 
 - `classifyIntent()` exists in `src/executors/ollama.ts` as a standalone
   primitive but is **not wired** into the execution path.
@@ -22,6 +23,35 @@ The result is that routing is cost-ascending but not task-aware. A complex
 reasoning query and a simple code completion are treated identically at the
 router layer. This ADR establishes the architecture for task-aware routing
 intelligence built on top of the existing tier chain.
+
+## Implementation status — 2026-07-01
+
+The architecture below remains the accepted direction, but source has advanced
+substantially since the original context was recorded:
+
+- **Tier 2b is live** via PR #25: L1 task classification, probe-backed provider
+  availability, model-role selection, local confidence scoring, and
+  confidence-gated fallback are implemented.
+- **Tier 3a is live** via PR #26: exact cache remains Layer A; Ollama
+  embedding-backed semantic cache and keepalive provide Layer B and fail soft.
+- **Tier 3b route hints are live** via PRs #27 and #28: derived route-decision
+  hints are cached and consumed by the engine without bypassing availability or
+  budget checks.
+- **Tier 3c export/telemetry hardening is live** via PR #29.
+- **The read-only AI request path now uses the same intelligence** via PR #33:
+  `runAiRequest()` shares cache lookup, routing, confidence fallback, and route
+  metadata with graph execution. Its `aiRole` and `maxOutputTokens` hints are
+  structural rather than parsed back out of prompt text.
+
+Implementation details differ from some early proposals below. Source is
+canonical: semantic caching lives in `SemanticPatternCache`; embeddings use the
+current native Ollama endpoint; confidence currently uses deterministic output
+heuristics plus L1 confidence rather than mean log probability.
+
+Still future work from this ADR includes full utterance-centroid L2
+classification, provider circuit breakers, warm-routing eviction policy, cache
+TTL by task class, full model capability profiles, and a dedicated persisted
+routing-telemetry dataset.
 
 ## Critical mental model
 
@@ -227,20 +257,22 @@ the seed. Extend it to include the full profile fields above.
 
 ## Build order
 
-1. **Tier 2b — cascade quality-gate + L1 heuristic classification + `localTierAvailable()` real implementation.**
+1. **Tier 2b — delivered in PR #25; AI-request parity completed in PR #33.**
    Wire `classifyIntent()` through `ModelLock`. Add confidence scoring.
    Add L1 string classifier. This is one PR. No new dependencies.
 
-2. **Tier 3a — semantic cache Layer B + embedding keepalive.**
+2. **Tier 3a — delivered in PR #26.**
    Extend `PatternCache` with vector similarity layer using Ollama embeddings.
    One PR. No new npm dependencies — Ollama `/api/embeddings` is already
    available via the existing Ollama client.
 
-3. **Tier 3b — L2 embedding classification + route decision cache.**
+3. **Tier 3b — route-decision cache delivered in PRs #27–#28; full L2
+   utterance-centroid classification remains future work.**
    Add utterance-based route matching. Add metadata routing cache.
    One PR.
 
-4. **Tier 4 — telemetry + model capability profiles.**
+4. **Tier 3c/Tier 4 — export hardening delivered in PR #29; the full telemetry
+   dataset and model capability profiles remain future work.**
    Structured event logging per request. Full profile record for every model.
    One PR.
 
