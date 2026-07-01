@@ -4,6 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { promisify } from "node:util";
+import type { ApprovalQueue, ApprovalRequestInput } from "../../src/approvals/index.js";
+import type { CapabilityApprovalClass, CapabilityCheckpointPolicy } from "../../src/capabilities/manifest.js";
+import type { PrismEventLedger } from "../../src/events/index.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_LOG_LINES = 500;
@@ -29,12 +32,13 @@ interface ChecklistItem {
   note?: string;
 }
 
-interface CockpitActionPacket {
+interface CockpitGuidedAction {
+  title: string;
   workflow: string;
   role?: string;
   action: CockpitActionKind;
-  requiresApproval: boolean;
-  risk: "none" | "low" | "medium";
+  approvalClass: CapabilityApprovalClass;
+  checkpointPolicy: CapabilityCheckpointPolicy;
   reason: string;
   commandPreview?: string;
   expectedOutcome?: string;
@@ -48,7 +52,7 @@ interface CockpitGuidance {
   modeLabel: string;
   missionStatement: string;
   stateSummary: string;
-  nextAction: CockpitActionPacket | null;
+  nextAction: CockpitGuidedAction | null;
   checklist: ChecklistItem[];
 }
 
@@ -112,6 +116,44 @@ interface CockpitOptions {
   mockExecutors: boolean;
   dbPath: string;
   workDir: string;
+  approvalQueue: ApprovalQueue;
+  eventLedger: PrismEventLedger;
+}
+
+const APPROVAL_CLASS_BY_ACTION: Record<CockpitActionKind, CapabilityApprovalClass> = {
+  "refresh-status": "observe",
+  "start-role": "write",
+  "stop-owned-role": "write",
+  "restart-owned-role": "write",
+  "run-one-shot": "write",
+  "show-logs": "observe",
+  "open-linked-app": "observe",
+  "acknowledge-external": "observe",
+};
+
+const CHECKPOINT_POLICY_BY_ACTION: Record<CockpitActionKind, CapabilityCheckpointPolicy> = {
+  "refresh-status": "none",
+  "start-role": "before_write",
+  "stop-owned-role": "before_write",
+  "restart-owned-role": "before_write",
+  "run-one-shot": "before_write",
+  "show-logs": "none",
+  "open-linked-app": "none",
+  "acknowledge-external": "none",
+};
+
+function guidedAction(
+  input: Omit<CockpitGuidedAction, "approvalClass" | "checkpointPolicy">
+): CockpitGuidedAction {
+  return {
+    ...input,
+    approvalClass: APPROVAL_CLASS_BY_ACTION[input.action],
+    checkpointPolicy: CHECKPOINT_POLICY_BY_ACTION[input.action],
+  };
+}
+
+function isApprovalRequired(action: CockpitActionKind): boolean {
+  return APPROVAL_CLASS_BY_ACTION[action] === "write";
 }
 
 export function deriveCockpitGuidance(profile: CockpitProfile): CockpitGuidance {
@@ -162,95 +204,88 @@ export function deriveCockpitGuidance(profile: CockpitProfile): CockpitGuidance 
   ];
 
   let stateSummary: string;
-  let nextAction: CockpitActionPacket | null = null;
+  let nextAction: CockpitGuidedAction | null = null;
 
   if (!gatewayOk) {
     stateSummary = "Gateway unavailable";
-    nextAction = {
+    nextAction = guidedAction({
+      title: "Refresh Spectra gateway status",
       workflow: "focus-spectra-bridge",
       action: "refresh-status",
-      requiresApproval: false,
-      risk: "none",
       reason: "Cockpit cannot reach the Spectra gateway. Restart it from Terminal.",
       requiresTerminal: true,
       terminalHint: "AI_FORGE_AI_GATEWAY_TOKEN=\"dev-local-token\" AI_FORGE_MOCK_EXECUTORS=1 npm run cockpit",
-    };
+    });
   } else if (focusExited) {
     stateSummary = `Gateway running (${modeLabel}) · Focus exited`;
-    nextAction = {
+    nextAction = guidedAction({
+      title: "Restart Focus UI",
       workflow: "focus-spectra-bridge",
       role: "focus-ui",
       action: "restart-owned-role",
-      requiresApproval: true,
-      risk: "low",
       reason: "Focus stopped unexpectedly. Restart it to continue the bridge validation.",
       commandPreview: focusRole?.commandPreview,
       expectedOutcome: "Focus UI is reachable at http://127.0.0.1:4173/ and cockpit-owned.",
       failureRecovery: "Check that ~/Desktop/prism-focus exists and port 4173 is free.",
-    };
+    });
   } else if (focusExternal) {
     stateSummary = `Gateway running (${modeLabel}) · Focus: external process`;
-    nextAction = {
+    nextAction = guidedAction({
+      title: "Use externally running Focus",
       workflow: "focus-spectra-bridge",
       role: "focus-ui",
       action: "acknowledge-external",
-      requiresApproval: false,
-      risk: "none",
       reason: "Focus is already running outside the cockpit. You can use it as-is, or stop it in Terminal first if you want the cockpit to take ownership.",
       requiresTerminal: false,
       terminalHint: "lsof -tiTCP:4173 -sTCP:LISTEN | xargs kill",
-    };
+    });
   } else if (!focusOwned) {
     stateSummary = `Gateway running (${modeLabel}) · Focus: not running`;
-    nextAction = {
+    nextAction = guidedAction({
+      title: "Start Focus UI",
       workflow: "focus-spectra-bridge",
       role: "focus-ui",
       action: "start-role",
-      requiresApproval: true,
-      risk: "low",
       reason: "Focus is not running. The bridge test requires the browser app on port 4173.",
       commandPreview: focusRole?.commandPreview,
       expectedOutcome: "Focus UI is reachable at http://127.0.0.1:4173/ and cockpit-owned.",
       failureRecovery: "Check that ~/Desktop/prism-focus exists and port 4173 is free.",
-    };
+    });
   } else if (validationRunning) {
     stateSummary = `Gateway running (${modeLabel}) · Focus owned · Validation running…`;
     nextAction = null;
   } else if (validationFailed) {
     stateSummary = `Gateway running (${modeLabel}) · Focus owned · Validation failed`;
-    nextAction = {
+    nextAction = guidedAction({
+      title: "Review Spectra Validation logs",
       workflow: "focus-spectra-bridge",
       role: "spectra-validation",
       action: "show-logs",
-      requiresApproval: false,
-      risk: "none",
       reason: "Review the failed validation output below, then rerun validation after fixing the issue.",
       commandPreview: validationRole?.commandPreview,
       failureRecovery: "Use the inline output first. Advanced process controls are optional.",
-    };
+    });
   } else if (!validationRun || !validationPassed) {
     stateSummary = `Gateway running (${modeLabel}) · Focus owned · Validation not run`;
-    nextAction = {
+    nextAction = guidedAction({
+      title: "Run Spectra Validation",
       workflow: "focus-spectra-bridge",
       role: "spectra-validation",
       action: "run-one-shot",
-      requiresApproval: true,
-      risk: "none",
       reason: "Gateway and Focus are ready. Run validation to confirm the bridge is clean.",
       commandPreview: validationRole?.commandPreview,
       expectedOutcome: "All checks exit 0. Log appears in the guided panel and the Spectra Validation card.",
       failureRecovery: "If it fails, read the inline output in this guided panel first.",
-    };
+    });
   } else {
     stateSummary = `Gateway running (${modeLabel}) · Focus owned · Validation passed`;
-    nextAction = {
+    nextAction = guidedAction({
+      title: "Open Focus",
       workflow: "focus-spectra-bridge",
       action: "open-linked-app",
-      requiresApproval: false,
-      risk: "none",
       reason: "Everything is ready. Open Focus and test Settings → AI → Test Spectra.",
       expectedOutcome: "Focus shows a response from Spectra. The bridge is working.",
-    };
+    });
   }
 
   return { workflow: "focus-spectra-bridge", modeLabel, missionStatement, stateSummary, nextAction, checklist };
@@ -495,11 +530,12 @@ export function renderProjectCockpitHtml() {
       if (!action) return '';
       if (action.action === 'show-logs') {
         var rerun = {
+          title: 'Run Spectra Validation',
           workflow: action.workflow,
           role: action.role,
           action: 'run-one-shot',
-          requiresApproval: true,
-          risk: 'none',
+          approvalClass: 'write',
+          checkpointPolicy: 'before_write',
           reason: 'Run validation again after reviewing the output.',
           commandPreview: action.commandPreview
         };
@@ -517,24 +553,24 @@ export function renderProjectCockpitHtml() {
           '<div class="action-row">' + guidedButton(action, 'Open Focus') + '</div>' +
           '</div>';
       }
-      if (!action.requiresApproval) {
+      if (action.approvalClass !== 'write') {
         return '<div class="action-card">' +
           '<div class="action-label">Status</div>' +
           '<div class="action-title">' + escapeHtml(action.reason) + '</div>' +
           (action.terminalHint ? textWindow('Terminal hint', action.terminalHint, 'terminal-hint') : '') +
           '</div>';
       }
-      var actionTitle = {
+      var actionTitle = action.title || ({
         'start-role': 'Start ' + (action.role ? roleLabelById(profile, action.role) : 'role'),
         'restart-owned-role': 'Restart ' + (action.role ? roleLabelById(profile, action.role) : 'role'),
         'run-one-shot': 'Run ' + (action.role ? roleLabelById(profile, action.role) : 'check')
-      }[action.action] || action.action;
+      }[action.action] || action.action);
       return '<div class="action-card">' +
         '<div class="action-label">Next safe action</div>' +
         '<div class="action-title">▶  ' + escapeHtml(actionTitle) + '</div>' +
         '<div class="action-reason">' + escapeHtml(action.reason) + '</div>' +
         (action.commandPreview ? textWindow('Command preview', action.commandPreview, 'cmd action-preview') : '') +
-        '<div class="action-row">' + guidedButton(action, 'Approve — ' + actionTitle) + (action.risk !== 'none' ? '<span class="small">Risk: ' + escapeHtml(action.risk) + '</span>' : '') + '</div>' +
+        '<div class="action-row">' + guidedButton(action, 'Approve — ' + actionTitle) + '</div>' +
         '</div>';
     }
 
@@ -558,6 +594,12 @@ export function renderProjectCockpitHtml() {
         if (action.action === 'open-linked-app') {
           window.open('http://127.0.0.1:4173/', '_blank');
           return;
+        }
+        if (action.approvalClass === 'write') {
+          await api('/api/v1/cockpit/actions/approve', {
+            method: 'POST',
+            body: { nextAction: action }
+          });
         }
         var apiAction = { 'start-role':'start', 'restart-owned-role':'restart', 'run-one-shot':'start' }[action.action];
         if (apiAction && action.role) {
@@ -666,6 +708,11 @@ export function createProjectCockpitRouter(options: CockpitOptions) {
   return async function handleProjectCockpitRequest(req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
     if (req.method === "GET" && url.pathname === "/api/v1/cockpit/profile") return jsonResponse(res, 200, await cockpit.profile());
     if (req.method === "GET" && url.pathname === "/api/v1/cockpit/processes") return jsonResponse(res, 200, { ok: true, roles: await cockpit.rolesWithStatus() });
+    if (url.pathname === "/api/v1/cockpit/actions/approve") {
+      if (req.method !== "POST") return jsonResponse(res, 405, { ok: false, error: "method not allowed" });
+      const body = await readJsonBody(req);
+      return jsonResponse(res, 200, handleApproveGuidedAction(options, body));
+    }
 
     const match = url.pathname.match(/^\/api\/v1\/cockpit\/processes\/([^/]+)\/(start|stop|restart|kill-port|logs)$/);
     if (!match) return false;
@@ -681,6 +728,56 @@ export function createProjectCockpitRouter(options: CockpitOptions) {
     if (action === "kill-port") return jsonResponse(res, 200, await cockpit.killPort(id));
     return false;
   };
+}
+
+export function handleApproveGuidedAction(
+  options: Pick<CockpitOptions, "approvalQueue">,
+  body: unknown
+) {
+  const raw =
+    body && typeof body === "object" && "nextAction" in body
+      ? (body as { nextAction?: unknown }).nextAction
+      : undefined;
+  if (!raw || typeof raw !== "object") {
+    throw new Error("nextAction must be an object");
+  }
+
+  const action = raw as Partial<CockpitGuidedAction>;
+  if (typeof action.action !== "string" || !Object.hasOwn(APPROVAL_CLASS_BY_ACTION, action.action)) {
+    throw new Error("unknown cockpit action");
+  }
+  const kind = action.action as CockpitActionKind;
+  if (!isApprovalRequired(kind)) {
+    return { ok: true, approvalSkipped: true };
+  }
+  if (typeof action.role !== "string" || action.role.trim() === "") {
+    throw new Error("write-class cockpit actions require a role");
+  }
+  if (typeof action.reason !== "string" || action.reason.trim() === "") {
+    throw new Error("write-class cockpit actions require a reason");
+  }
+
+  const input: ApprovalRequestInput = {
+    title: typeof action.title === "string" && action.title.trim() ? action.title : kind,
+    summary: action.reason,
+    approvalClass: APPROVAL_CLASS_BY_ACTION[kind],
+    checkpointPolicy: CHECKPOINT_POLICY_BY_ACTION[kind],
+    relatedArtifactIds: [],
+    relatedFilePaths: [],
+    previewAvailable: Boolean(action.commandPreview),
+    previewSummary: action.expectedOutcome,
+    cliEquivalent: action.commandPreview,
+    riskNotes: action.failureRecovery ? [action.failureRecovery] : [],
+    localRemoteBoundary: "local-only",
+    requestedBy: "dave-cockpit",
+  };
+  const approval = options.approvalQueue.requestApproval(input);
+  const resolved = options.approvalQueue.resolveApproval(approval.id, {
+    status: "approved",
+    decidedAt: new Date().toISOString(),
+    decidedBy: "dave-cockpit",
+  });
+  return { ok: true, approvalId: resolved.id };
 }
 
 class ProjectCockpit {
@@ -933,6 +1030,21 @@ async function safeExec(command: string, args: string[], timeout = 3000) {
     const err = error as Error & { stdout?: string | Buffer; stderr?: string | Buffer; code?: string | number };
     return { ok: false, output: String(err.stdout ?? "").trim(), error: String(err.stderr ?? "").trim() || err.message || String(err.code ?? "command failed") };
   }
+}
+
+async function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    req.on("data", chunk => (data += chunk));
+    req.on("end", () => {
+      try {
+        resolve(data ? JSON.parse(data) : {});
+      } catch (error) {
+        reject(error);
+      }
+    });
+    req.on("error", reject);
+  });
 }
 
 function resolveHome(input: string) {
