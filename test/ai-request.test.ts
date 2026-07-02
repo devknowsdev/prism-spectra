@@ -5,13 +5,113 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyProviderProbe } from "../src/config/providerProbe.js";
-import { ExecutionEngine, normalizeAiRequestBody } from "../src/index.js";
+import { buildAiRequestIntent, ExecutionEngine, normalizeAiRequestBody } from "../src/index.js";
 import { buildTaskPrompt } from "../src/executors/aiPrompt.js";
 import { FOCUS_CHAT_RESPONSE_SCHEMA, OllamaExecutor } from "../src/executors/ollama.js";
 import type { ExecutionResult, TaskPacket } from "../src/types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..", ".test-tmp", "ai-request");
+
+const EPK_REQUEST_FIXTURES = [
+  {
+    name: "Biography refinement",
+    body: {
+      sourceApp: "EPK",
+      intent: "career.refine_epk_copy",
+      riskClass: "read-only",
+      preferredMode: "local-first",
+      input: {
+        text: "Short artist biography.",
+        instruction: "Refine this EPK copy for clarity and flow. Preserve factual claims, names, and meaning. Do not invent details. Return only the revised copy.",
+      },
+      context: { appSurface: "publisher", field: "bio.short" },
+    },
+  },
+  {
+    name: "Offering description refinement",
+    body: {
+      sourceApp: "EPK",
+      intent: "career.refine_epk_copy",
+      riskClass: "read-only",
+      preferredMode: "local-first",
+      input: {
+        text: "A live-looping performance for venues.",
+        instruction: "Refine this EPK copy for clarity and flow. Preserve factual claims, names, and meaning. Do not invent details. Return only the revised copy.",
+      },
+      context: { appSurface: "publisher", field: "offerings[0].description" },
+    },
+  },
+  {
+    name: "Copy consistency checker",
+    body: {
+      sourceApp: "EPK",
+      intent: "career.check_epk_copy_consistency",
+      riskClass: "read-only",
+      preferredMode: "local-first",
+      input: {
+        copy: {
+          bio: { short: "Short bio" },
+          offerings: [{ title: "Live-looping set", description: "Performance description", tags: ["booker"] }],
+          credits: [{
+            title: "Children's television score",
+            role: "Composer",
+            year: "2024",
+            description: "Original music",
+            tags: ["screen"],
+          }],
+        },
+        instruction: "Review this EPK copy for internal consistency. Do not rewrite the copy. Do not invent facts. Return findings only.",
+      },
+      context: { appSurface: "publisher", reviewType: "copy-consistency" },
+    },
+  },
+  {
+    name: "Promo Kit refinement",
+    body: {
+      sourceApp: "EPK",
+      intent: "career.refine_epk_promo_copy",
+      riskClass: "read-only",
+      preferredMode: "local-first",
+      input: {
+        text: "# Promo Kit\nGenerated Markdown brief.",
+        instruction: "Refine this EPK promo copy for clarity, flow, and usefulness to presenters, venues, press, or collaborators. Preserve factual claims, names, dates, roles, and meaning. Do not invent details. Return only the revised copy.",
+      },
+      context: { appSurface: "publisher", field: "brief-text" },
+    },
+  },
+  {
+    name: "Route-tag recommendations",
+    body: {
+      sourceApp: "EPK",
+      intent: "career.suggest_epk_route_tags",
+      riskClass: "read-only",
+      preferredMode: "local-first",
+      input: {
+        route: {
+          id: "booker",
+          label: "Booker",
+          audience: "For venues and presenters",
+          sections: ["bio", "offerings", "contact"],
+          offeringTags: ["booker"],
+        },
+        content: {
+          bio: { short: "Short bio" },
+          offerings: [{ title: "Live-looping set", description: "Performance description", tags: ["booker"] }],
+          credits: [{
+            title: "Screen score",
+            role: "Composer",
+            year: "2024",
+            description: "Original score",
+            tags: ["screen"],
+          }],
+        },
+        instruction: "Review this EPK route/page context and existing EPK content. Suggest which existing tags, offerings, credits, or biography angles best fit this audience route. Do not invent facts. Do not rewrite copy. Do not apply tags. Return recommendations only.",
+      },
+      context: { appSurface: "publisher", reviewType: "route-tag-recommendations" },
+    },
+  },
+] satisfies Array<{ name: string; body: Record<string, unknown> }>;
 
 function focusChatRequest(prompt: string, extraInput: Record<string, unknown> = {}) {
   const request = normalizeAiRequestBody({
@@ -40,6 +140,47 @@ function focusChatRequest(prompt: string, extraInput: Record<string, unknown> = 
 async function main() {
   fs.rmSync(ROOT, { recursive: true, force: true });
   fs.mkdirSync(ROOT, { recursive: true });
+
+  const epkRequests = EPK_REQUEST_FIXTURES.map(({ name, body }) => {
+    const normalized = normalizeAiRequestBody(body);
+    assert.equal(normalized.ok, true, `${name} should normalize`);
+    if (!normalized.ok) throw new Error(`expected valid EPK request: ${name}`);
+    assert.equal(normalized.request.sourceApp, "EPK");
+    assert.equal(normalized.request.riskClass, "read-only");
+    assert.equal(normalized.request.preferredMode, "local-first");
+    assert.equal(normalized.request.nodeType, "docs");
+
+    const built = buildAiRequestIntent(normalized.request);
+    const builtPayload = JSON.parse(built.slice(built.indexOf("\n") + 1)) as Record<string, unknown>;
+    assert.equal(builtPayload.sourceApp, "EPK");
+    assert.equal(builtPayload.intent, body.intent);
+    assert.deepEqual(builtPayload.input, body.input);
+    assert.deepEqual(builtPayload.context, body.context);
+    assert.equal(builtPayload.preferredMode, "local-first");
+    return { name, request: normalized.request };
+  });
+
+  const { riskClass: _riskClass, preferredMode: _preferredMode, ...epkDefaultsBody } =
+    EPK_REQUEST_FIXTURES[0].body;
+  const epkDefaults = normalizeAiRequestBody(epkDefaultsBody);
+  assert.equal(epkDefaults.ok, true);
+  if (!epkDefaults.ok) throw new Error("expected valid defaulted EPK request");
+  assert.equal(epkDefaults.request.riskClass, "read-only");
+  assert.equal(epkDefaults.request.preferredMode, "local-first");
+  assert.equal(epkDefaults.request.nodeType, "docs");
+
+  for (const invalidField of [
+    { riskClass: "local-write" },
+    { riskClass: "external-write" },
+    { nodeType: "terminal" },
+  ]) {
+    const invalidEpk = normalizeAiRequestBody({
+      sourceApp: "EPK",
+      intent: "career.refine_epk_copy",
+      ...invalidField,
+    });
+    assert.equal(invalidEpk.ok, false, `EPK request should reject ${JSON.stringify(invalidField)}`);
+  }
 
   const invalid = normalizeAiRequestBody({
     sourceApp: "prism-focus",
@@ -206,6 +347,62 @@ async function main() {
   assert.deepEqual(summary, [{ dataBoundary: "local", count: 1 }]);
 
   engine.close();
+
+  const epkWorkDir = path.join(ROOT, "epk-work");
+  const epkEngine = new ExecutionEngine({
+    dbPath: path.join(ROOT, "epk-gateway.db"),
+    workDir: epkWorkDir,
+    mockExecutors: true,
+    ollamaSwapDelayMs: 1,
+  });
+  await epkEngine.init();
+  const epkInternals = epkEngine as unknown as {
+    executors: {
+      ollama: { execute: (packet: TaskPacket) => Promise<ExecutionResult> };
+    };
+  };
+  const epkPackets: TaskPacket[] = [];
+  epkInternals.executors.ollama.execute = async (packet) => {
+    epkPackets.push(packet);
+    return {
+      success: true,
+      output: "A read-only EPK response that is long enough for normal confidence scoring.",
+      provider: "ollama",
+      tokensIn: 12,
+      tokensOut: 16,
+      cost: 0,
+      latencyMs: 2,
+      patch: {
+        edits: [{ path: "must-not-be-written.txt", op: "write", content: "unsafe" }],
+      },
+    };
+  };
+
+  for (const { name, request } of epkRequests) {
+    const epkResult = await epkEngine.runAiRequest(request);
+    assert.equal(epkResult.ok, true, `${name} should execute`);
+    assert.equal(epkResult.provenance.routedBy, "prism-spectra");
+    assert.equal(epkResult.provenance.sourceApp, "EPK");
+    assert.equal(epkResult.provenance.riskClass, "read-only");
+    assert.equal(epkResult.provenance.preferredMode, "local-first");
+  }
+
+  assert.equal(epkPackets.length, EPK_REQUEST_FIXTURES.length);
+  for (const [index, packet] of epkPackets.entries()) {
+    const fixture = EPK_REQUEST_FIXTURES[index];
+    assert.equal(packet.node_type, "docs");
+    assert.deepEqual(packet.constraints, ["read-only", "no-app-mutation", "no-file-write"]);
+    assert.deepEqual(packet.context.aiRequest, {
+      sourceApp: "EPK",
+      intent: fixture.body.intent,
+      riskClass: "read-only",
+      input: fixture.body.input,
+      context: fixture.body.context,
+      preferredMode: "local-first",
+    });
+  }
+  assert.equal(fs.existsSync(path.join(epkWorkDir, "must-not-be-written.txt")), false);
+  epkEngine.close();
 
   const cacheEngine = new ExecutionEngine({
     dbPath: path.join(ROOT, "cache-gateway.db"),
