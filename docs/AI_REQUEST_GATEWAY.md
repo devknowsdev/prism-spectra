@@ -117,6 +117,9 @@ Non-read-only requests are rejected by the validator. This keeps the first
 Spectra AI gateway safe for Focus/EPK suggestion flows before any mutation,
 import, publish, file-write, or execution path is connected.
 
+The currently implemented EPK request shapes and boundaries are recorded in
+[`EPK_AI_INTENTS_CONTRACT_20260701.md`](./EPK_AI_INTENTS_CONTRACT_20260701.md).
+
 ## Response shape
 
 ```json
