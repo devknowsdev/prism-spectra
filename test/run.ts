@@ -81,6 +81,12 @@ import { spawn } from "node:child_process";
 import os from "node:os";
 import type { TaskPacket } from "../src/types.js";
 import {
+  createWorkbenchWatcher,
+  subscribeWorkbenchReloadSse,
+  WorkbenchReloadHub,
+  WORKBENCH_RELOAD_SSE_EVENT,
+} from "../src/workbench/liveReload.js";
+import {
   SANDBOX_DIR,
   SANDBOX_FIXTURES_DIR,
   SANDBOX_TMP_DIR,
@@ -3100,6 +3106,43 @@ async function main() {
     db.close();
   });
 
+  await test("workbench watcher emits one debounced reload for scoped UI changes", async () => {
+    const workbenchDir = path.join(ROOT, "live-reload", "ui", "workbench");
+    fs.mkdirSync(path.join(workbenchDir, "js"), { recursive: true });
+    fs.mkdirSync(path.join(workbenchDir, "vendor-shims"), { recursive: true });
+    const indexPath = path.join(workbenchDir, "index.html");
+    const modulePath = path.join(workbenchDir, "js", "feature.js");
+    const shimPath = path.join(workbenchDir, "vendor-shims", "feature.js");
+    const ignoredPath = path.join(workbenchDir, "ignored.txt");
+    fs.writeFileSync(indexPath, "<main>one</main>");
+
+    const hub = new WorkbenchReloadHub();
+    const reloadEvents: string[] = [];
+    const unsubscribe = subscribeWorkbenchReloadSse(hub, (event) => {
+      reloadEvents.push(event);
+    });
+    const watcher = createWorkbenchWatcher({
+      workbenchDir,
+      debounceMs: 150,
+      onReload: () => hub.emitReload(),
+    });
+
+    try {
+      fs.writeFileSync(indexPath, "<main>two</main>");
+      fs.writeFileSync(modulePath, "export const feature = true;");
+      fs.writeFileSync(shimPath, "export const shim = true;");
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      assert.deepEqual(reloadEvents, [WORKBENCH_RELOAD_SSE_EVENT]);
+
+      fs.writeFileSync(ignoredPath, "outside the scoped paths");
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      assert.deepEqual(reloadEvents, [WORKBENCH_RELOAD_SSE_EVENT]);
+    } finally {
+      unsubscribe();
+      watcher.close();
+    }
+  });
+
   await test("workbench project memory projections surface conversations and attachments", async () => {
     const db = freshMemoryDB("workbench-memory");
     db.db.prepare(
@@ -3386,9 +3429,17 @@ async function main() {
     assert.match(workbenchHtml, /Preview/);
     assert.match(workbenchHtml, /Load waveform preview/);
     assert.match(workbenchHtml, /workbench-shims\/js\/approvals\.js/);
+    assert.match(workbenchHtml, /workbench-shims\/js\/livereload\.js/);
     const approvalsModuleResponse = await fetch(`http://127.0.0.1:${port}/workbench-shims/js/approvals.js`);
     assert.equal(approvalsModuleResponse.ok, true);
     assert.match(await approvalsModuleResponse.text(), /data-approval-action/);
+    const liveReloadModuleResponse = await fetch(`http://127.0.0.1:${port}/workbench-shims/js/livereload.js`);
+    assert.equal(liveReloadModuleResponse.ok, true);
+    assert.doesNotMatch(await liveReloadModuleResponse.text(), /console\./);
+    const disabledLiveReloadResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/live`);
+    assert.equal(disabledLiveReloadResponse.status, 404);
+    const disabledLiveReloadHeadResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/live`, { method: "HEAD" });
+    assert.equal(disabledLiveReloadHeadResponse.status, 404);
     const attachmentsSectionStart = workbenchHtml.indexOf('<section class="view" data-section="attachments"');
     const attachmentsSectionEnd = workbenchHtml.indexOf('<section class="view" data-section="approvals"');
     const attachmentsSection = attachmentsSectionStart >= 0 && attachmentsSectionEnd > attachmentsSectionStart

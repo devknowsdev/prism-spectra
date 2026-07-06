@@ -29,16 +29,23 @@ import {
 } from "../src/index.js";
 import { TaskGraph } from "../src/taskGraph/graph.js";
 import { probeAllProviders, applyProviderProbe } from "../src/config/providerProbe.js";
+import {
+  createWorkbenchWatcher,
+  subscribeWorkbenchReloadSse,
+  WorkbenchReloadHub,
+} from "../src/workbench/liveReload.js";
 
 const PORT = Number(process.env.AI_FORGE_DAEMON_PORT ?? 3000);
 const HOST = process.env.AI_FORGE_DAEMON_HOST ?? "127.0.0.1";
 const ENV_TOKEN = process.env.AI_FORGE_DAEMON_TOKEN ?? process.env.LOCAL_AI_TOKEN;
 const TOKEN = ENV_TOKEN || randomBytes(18).toString("hex");
 const DAEMON_DIR = path.dirname(fileURLToPath(import.meta.url));
-const WORKBENCH_HTML_PATH = path.resolve(DAEMON_DIR, "../ui/workbench/index.html");
-const WORKBENCH_SHIM_DIR = path.resolve(DAEMON_DIR, "../ui/workbench/vendor-shims");
-const WORKBENCH_JS_DIR = path.resolve(DAEMON_DIR, "../ui/workbench/js");
+const WORKBENCH_DIR = path.resolve(DAEMON_DIR, "../ui/workbench");
+const WORKBENCH_HTML_PATH = path.join(WORKBENCH_DIR, "index.html");
+const WORKBENCH_SHIM_DIR = path.join(WORKBENCH_DIR, "vendor-shims");
+const WORKBENCH_JS_DIR = path.join(WORKBENCH_DIR, "js");
 const NODE_MODULES_DIR = path.resolve(DAEMON_DIR, "../node_modules");
+const WORKBENCH_WATCH_ENABLED = process.env.AI_FORGE_WORKBENCH_WATCH === "1";
 
 async function initEngine() {
   const engine = new ExecutionEngine({ dbPath: ".demo/daemon.db", workDir: ".demo/work", mockExecutors: process.env.AI_FORGE_MOCK_EXECUTORS === "1", fallbackOnFailure: false });
@@ -850,6 +857,13 @@ async function start() {
   const eventLedger = new InMemoryPrismEventLedger();
   const approvalQueue = new InMemoryApprovalQueue(eventLedger);
   seedMockApprovalFixtures(approvalQueue);
+  const workbenchReloadHub = new WorkbenchReloadHub();
+  const workbenchWatcher = WORKBENCH_WATCH_ENABLED
+    ? createWorkbenchWatcher({
+        workbenchDir: WORKBENCH_DIR,
+        onReload: () => workbenchReloadHub.emitReload(),
+      })
+    : null;
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -880,6 +894,33 @@ async function start() {
           count: events.length,
           totalCount,
         });
+      }
+
+      if (url.pathname === "/api/v1/workbench/live") {
+        if (!WORKBENCH_WATCH_ENABLED) {
+          return jsonResponse(res, 404, { error: "not found" });
+        }
+        if (req.method === "HEAD") {
+          res.writeHead(204, {
+            "Cache-Control": "no-store",
+            "Access-Control-Allow-Origin": "*",
+          });
+          return res.end();
+        }
+        if (req.method === "GET") {
+          res.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache, no-store",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+          });
+          res.write(": connected\n\n");
+          const unsubscribe = subscribeWorkbenchReloadSse(workbenchReloadHub, (event) => {
+            res.write(event);
+          });
+          req.once("close", unsubscribe);
+          return;
+        }
       }
 
       if (req.method === "GET" && url.pathname === "/api/v1/approvals") {
@@ -1541,6 +1582,9 @@ async function start() {
       console.error("daemon error:", err);
       return jsonResponse(res, 500, { error: err?.message ?? String(err) });
     }
+  });
+  server.once("close", () => {
+    workbenchWatcher?.close();
   });
 
   server.listen(PORT, HOST, () => {
