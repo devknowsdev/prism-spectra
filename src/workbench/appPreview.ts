@@ -1,12 +1,22 @@
 import fs from "node:fs";
 import path from "node:path";
-import { WorkbenchReloadHub, type WorkbenchWatcher } from "./liveReload.js";
+import {
+  createScopedDirectoryWatcher,
+  WorkbenchReloadHub,
+  type WorkbenchWatcher,
+} from "./liveReload.js";
 
 export const APP_PREVIEW_NAMES = ["focus", "epk"] as const;
 export type AppPreviewName = (typeof APP_PREVIEW_NAMES)[number];
 
 export const APP_PREVIEW_LIVERELOAD_TAG =
   '<script src="/preview/js/livereload.js"></script>';
+export const APP_PREVIEW_IGNORED_DIRECTORIES = new Set([
+  ".git",
+  "node_modules",
+  "build",
+  "dist",
+]);
 
 export interface AppPreview {
   app: AppPreviewName;
@@ -66,29 +76,12 @@ export function createAppPreviewWatcher(options: {
   onReload: () => void;
   debounceMs?: number;
 }): WorkbenchWatcher {
-  const debounceMs = options.debounceMs ?? 150;
-  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
-  const watcher = fs.watch(
-    options.appDir,
-    { recursive: true },
-    () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        debounceTimer = undefined;
-        options.onReload();
-      }, debounceMs);
-    },
-  );
-
-  return {
-    close() {
-      if (debounceTimer) {
-        clearTimeout(debounceTimer);
-        debounceTimer = undefined;
-      }
-      watcher.close();
-    },
-  };
+  return createScopedDirectoryWatcher({
+    rootDir: options.appDir,
+    ignoredDirectoryNames: APP_PREVIEW_IGNORED_DIRECTORIES,
+    onReload: options.onReload,
+    debounceMs: options.debounceMs,
+  });
 }
 
 export function createAppPreviews(

@@ -87,6 +87,7 @@ import {
   WORKBENCH_RELOAD_SSE_EVENT,
 } from "../src/workbench/liveReload.js";
 import {
+  APP_PREVIEW_IGNORED_DIRECTORIES,
   APP_PREVIEW_LIVERELOAD_TAG,
   createAppPreviewWatcher,
   injectAppPreviewLiveReload,
@@ -3155,6 +3156,10 @@ async function main() {
     const focusDir = path.join(previewRoot, "focus");
     const epkDir = path.join(previewRoot, "epk-public");
     fs.mkdirSync(path.join(focusDir, "assets"), { recursive: true });
+    for (const ignoredDirectory of APP_PREVIEW_IGNORED_DIRECTORIES) {
+      fs.mkdirSync(path.join(focusDir, ignoredDirectory, "nested"), { recursive: true });
+      fs.writeFileSync(path.join(focusDir, ignoredDirectory, "nested", "ignored.txt"), "initial");
+    }
     fs.mkdirSync(epkDir, { recursive: true });
     const focusHtmlPath = path.join(focusDir, "index.html");
     const originalHtml = "<!doctype html><body><main>Focus</main></body>";
@@ -3190,6 +3195,15 @@ async function main() {
       fs.writeFileSync(path.join(focusDir, "assets", "app.css"), "body { color: blue; }");
       fs.writeFileSync(path.join(focusDir, "assets", "app.js"), "window.changed = true;");
       await new Promise((resolve) => setTimeout(resolve, 400));
+      assert.deepEqual(reloadEvents, [WORKBENCH_RELOAD_SSE_EVENT]);
+
+      for (const ignoredDirectory of APP_PREVIEW_IGNORED_DIRECTORIES) {
+        fs.writeFileSync(
+          path.join(focusDir, ignoredDirectory, "nested", "ignored.txt"),
+          "ignored change",
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
       assert.deepEqual(reloadEvents, [WORKBENCH_RELOAD_SSE_EVENT]);
 
       fs.writeFileSync(path.join(epkDir, "index.html"), "<body>EPK changed</body>");
