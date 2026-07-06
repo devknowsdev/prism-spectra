@@ -3426,7 +3426,7 @@ async function main() {
     assert.equal(missingMimePreview.safeToRenderInline, false);
   });
 
-  await test("e2e: configured app preview serves injected HTML and emits reload", async () => {
+  await test("e2e: per-app preview origins load root-absolute assets and emit reload", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "aiforge-preview-e2e-"));
     const focusDir = path.join(tmp, "focus");
     const epkDir = path.join(tmp, "epk-public");
@@ -3435,13 +3435,23 @@ async function main() {
     const focusHtmlPath = path.join(focusDir, "index.html");
     const originalHtml = "<!doctype html><html><body><h1>Focus preview</h1></body></html>";
     fs.writeFileSync(focusHtmlPath, originalHtml);
-    fs.writeFileSync(path.join(epkDir, "index.html"), "<body>EPK preview</body>");
+    fs.mkdirSync(path.join(epkDir, "data"), { recursive: true });
+    fs.writeFileSync(
+      path.join(epkDir, "index.html"),
+      '<body>EPK preview<script src="/app.js"></script></body>',
+    );
+    fs.writeFileSync(path.join(epkDir, "app.js"), 'fetch("/data/epk.json");');
+    fs.writeFileSync(
+      path.join(epkDir, "data", "epk.json"),
+      JSON.stringify({ artist: "Preview Artist" }),
+    );
     const configPath = path.join(tmp, "spectra.preview.local.json");
     fs.writeFileSync(configPath, JSON.stringify({ focus: "./focus", epk: "./epk-public" }));
 
     const daemonScript = path.join(__dirname, "..", "tools", "daemon.ts");
     const tsxLoader = path.join(__dirname, "..", "node_modules", "tsx", "dist", "loader.mjs");
     const port = 34000 + Math.floor(Math.random() * 1000);
+    const previewBasePort = 36000 + Math.floor(Math.random() * 1000);
     const daemon = spawn(process.execPath, ["--import", pathToFileURL(tsxLoader).href, daemonScript], {
       cwd: tmp,
       env: {
@@ -3451,6 +3461,7 @@ async function main() {
         AI_FORGE_MOCK_EXECUTORS: "1",
         AI_FORGE_APP_PREVIEW: "1",
         AI_FORGE_APP_PREVIEW_CONFIG: configPath,
+        AI_FORGE_APP_PREVIEW_BASE_PORT: String(previewBasePort),
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -3479,23 +3490,48 @@ async function main() {
         throw new Error(`preview daemon did not start: ${daemonOutput.slice(0, 2000)}`);
       }
 
-      const previewResponse = await fetch(`http://127.0.0.1:${port}/preview/focus/`);
+      const focusOrigin = `http://127.0.0.1:${previewBasePort}`;
+      const epkOrigin = `http://127.0.0.1:${previewBasePort + 1}`;
+      const appsResponse = await fetch(`http://127.0.0.1:${port}/api/v1/preview/apps`);
+      assert.equal(appsResponse.ok, true);
+      assert.deepEqual(await appsResponse.json(), {
+        apps: [
+          { app: "focus", url: `${focusOrigin}/` },
+          { app: "epk", url: `${epkOrigin}/` },
+        ],
+      });
+
+      const previewResponse = await fetch(`${focusOrigin}/`);
       assert.equal(previewResponse.ok, true);
       const previewHtml = await previewResponse.text();
       assert.equal(previewHtml.split(APP_PREVIEW_LIVERELOAD_TAG).length - 1, 1);
       assert.ok(previewHtml.indexOf(APP_PREVIEW_LIVERELOAD_TAG) < previewHtml.indexOf("</body>"));
       assert.equal(fs.readFileSync(focusHtmlPath, "utf-8"), originalHtml);
 
-      const clientResponse = await fetch(`http://127.0.0.1:${port}/preview/js/livereload.js`);
+      const epkHtmlResponse = await fetch(`${epkOrigin}/`);
+      assert.equal(epkHtmlResponse.ok, true);
+      assert.match(await epkHtmlResponse.text(), /src="\/app\.js"/);
+      const epkAppResponse = await fetch(`${epkOrigin}/app.js`);
+      assert.equal(epkAppResponse.ok, true);
+      assert.match(await epkAppResponse.text(), /\/data\/epk\.json/);
+      const rootAbsoluteAssetResponse = await fetch(`${epkOrigin}/data/epk.json`);
+      assert.equal(rootAbsoluteAssetResponse.ok, true);
+      assert.deepEqual(await rootAbsoluteAssetResponse.json(), { artist: "Preview Artist" });
+
+      const clientResponse = await fetch(`${focusOrigin}/preview/js/livereload.js`);
       assert.equal(clientResponse.ok, true);
       assert.match(await clientResponse.text(), /api\/v1\/preview/);
 
-      const liveHead = await fetch(`http://127.0.0.1:${port}/api/v1/preview/focus/live`, {
+      const liveHead = await fetch(`${focusOrigin}/api/v1/preview/live`, {
         method: "HEAD",
       });
       assert.equal(liveHead.status, 204);
+      const epkLiveHead = await fetch(`${epkOrigin}/api/v1/preview/live`, {
+        method: "HEAD",
+      });
+      assert.equal(epkLiveHead.status, 204);
 
-      const liveResponse = await fetch(`http://127.0.0.1:${port}/api/v1/preview/focus/live`);
+      const liveResponse = await fetch(`${focusOrigin}/api/v1/preview/live`);
       assert.equal(liveResponse.ok, true);
       const reader = liveResponse.body!.getReader();
       const decoder = new TextDecoder();
@@ -3603,6 +3639,8 @@ async function main() {
     assert.match(workbenchHtml, /Related conversation/);
     assert.match(workbenchHtml, /Preview/);
     assert.match(workbenchHtml, /Load waveform preview/);
+    assert.match(workbenchHtml, /Real app previews/);
+    assert.match(workbenchHtml, /\/api\/v1\/preview\/apps/);
     assert.match(workbenchHtml, /workbench-shims\/js\/approvals\.js/);
     assert.match(workbenchHtml, /workbench-shims\/js\/livereload\.js/);
     const approvalsModuleResponse = await fetch(`http://127.0.0.1:${port}/workbench-shims/js/approvals.js`);
@@ -3625,6 +3663,8 @@ async function main() {
     assert.equal(disabledFocusLiveResponse.status, 404);
     const disabledFocusLiveHeadResponse = await fetch(`http://127.0.0.1:${port}/api/v1/preview/focus/live`, { method: "HEAD" });
     assert.equal(disabledFocusLiveHeadResponse.status, 404);
+    const disabledPreviewAppsResponse = await fetch(`http://127.0.0.1:${port}/api/v1/preview/apps`);
+    assert.equal(disabledPreviewAppsResponse.status, 404);
     const attachmentsSectionStart = workbenchHtml.indexOf('<section class="view" data-section="attachments"');
     const attachmentsSectionEnd = workbenchHtml.indexOf('<section class="view" data-section="approvals"');
     const attachmentsSection = attachmentsSectionStart >= 0 && attachmentsSectionEnd > attachmentsSectionStart

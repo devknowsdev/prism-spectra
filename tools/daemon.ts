@@ -39,6 +39,7 @@ import {
   injectAppPreviewLiveReload,
   loadAppPreviewDirectories,
   resolveAppPreviewFile,
+  type AppPreview,
   type AppPreviewName,
 } from "../src/workbench/appPreview.js";
 
@@ -55,6 +56,9 @@ const APP_PREVIEW_JS_DIR = path.resolve(DAEMON_DIR, "../ui/preview/js");
 const NODE_MODULES_DIR = path.resolve(DAEMON_DIR, "../node_modules");
 const WORKBENCH_WATCH_ENABLED = process.env.AI_FORGE_WORKBENCH_WATCH === "1";
 const APP_PREVIEW_ENABLED = process.env.AI_FORGE_APP_PREVIEW === "1";
+const APP_PREVIEW_BASE_PORT = Number(
+  process.env.AI_FORGE_APP_PREVIEW_BASE_PORT ?? PORT + 1,
+);
 const APP_PREVIEW_CONFIG_PATH = path.resolve(
   process.env.AI_FORGE_APP_PREVIEW_CONFIG ?? path.join(process.cwd(), "spectra.preview.local.json"),
 );
@@ -653,6 +657,91 @@ async function sendAppPreviewFile(
   }
 }
 
+interface RunningAppPreview {
+  preview: AppPreview;
+  port: number;
+  url: string;
+  server: http.Server;
+}
+
+function appPreviewPort(app: AppPreviewName): number {
+  return APP_PREVIEW_BASE_PORT + (app === "focus" ? 0 : 1);
+}
+
+async function startAppPreviewServers(
+  previews: ReadonlyMap<AppPreviewName, AppPreview>,
+): Promise<Map<AppPreviewName, RunningAppPreview>> {
+  if (
+    previews.size > 0
+    && (!Number.isInteger(APP_PREVIEW_BASE_PORT)
+      || APP_PREVIEW_BASE_PORT < 1
+      || APP_PREVIEW_BASE_PORT > 65534)
+  ) {
+    throw new Error("AI_FORGE_APP_PREVIEW_BASE_PORT must be an integer from 1 to 65534");
+  }
+
+  const running = new Map<AppPreviewName, RunningAppPreview>();
+  try {
+    for (const [app, preview] of previews) {
+      const port = appPreviewPort(app);
+      const previewServer = http.createServer(async (req, res) => {
+        try {
+          const url = new URL(req.url ?? "", `http://${req.headers.host}`);
+          if (req.method === "GET" && url.pathname === "/preview/js/livereload.js") {
+            return sendAppPreviewClient(res);
+          }
+          if (url.pathname === "/api/v1/preview/live") {
+            if (req.method === "HEAD") {
+              res.writeHead(204, { "Cache-Control": "no-store" });
+              return res.end();
+            }
+            if (req.method === "GET") {
+              res.writeHead(200, {
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache, no-store",
+                "Connection": "keep-alive",
+              });
+              res.write(": connected\n\n");
+              const unsubscribe = subscribeWorkbenchReloadSse(
+                preview.reloadHub,
+                (event) => res.write(event),
+              );
+              req.once("close", unsubscribe);
+              return;
+            }
+          }
+          if (req.method === "GET") {
+            return sendAppPreviewFile(res, preview.directory, url.pathname);
+          }
+          return jsonResponse(res, 404, { error: "not found" });
+        } catch (error) {
+          return jsonResponse(res, 500, {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        previewServer.once("error", reject);
+        previewServer.listen(port, "127.0.0.1", () => {
+          previewServer.off("error", reject);
+          resolve();
+        });
+      });
+      running.set(app, {
+        preview,
+        port,
+        url: `http://127.0.0.1:${port}/`,
+        server: previewServer,
+      });
+    }
+    return running;
+  } catch (error) {
+    for (const item of running.values()) item.server.close();
+    throw error;
+  }
+}
+
 function attachmentUploadsDir(): string {
   return process.env.AI_FORGE_UPLOADS_DIR || path.join(process.cwd(), "uploads");
 }
@@ -929,6 +1018,7 @@ async function start() {
     ? loadAppPreviewDirectories(APP_PREVIEW_CONFIG_PATH)
     : new Map<AppPreviewName, string>();
   const appPreviews = createAppPreviews(appPreviewDirectories);
+  const runningAppPreviews = await startAppPreviewServers(appPreviews);
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -942,24 +1032,20 @@ async function start() {
         return sendWorkbenchShimFile(res, url.pathname);
       }
 
-      if (
-        req.method === "GET"
-        && url.pathname === "/preview/js/livereload.js"
-        && appPreviews.size > 0
-      ) {
-        return sendAppPreviewClient(res);
-      }
-
-      const appPreviewFileMatch = url.pathname.match(/^\/preview\/(focus|epk)(?:\/(.*))?$/);
-      if (req.method === "GET" && appPreviewFileMatch) {
-        const app = appPreviewFileMatch[1] as AppPreviewName;
-        const preview = appPreviews.get(app);
-        if (!preview) return jsonResponse(res, 404, { error: "not found" });
-        return sendAppPreviewFile(res, preview.directory, appPreviewFileMatch[2] ?? "");
-      }
-
       if (req.method === "GET" && (url.pathname === "/workbench" || url.pathname === "/workbench/" || url.pathname === "/workbench/index.html")) {
         return sendHtml(res, await readWorkbenchHtml());
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/v1/preview/apps") {
+        if (runningAppPreviews.size === 0) {
+          return jsonResponse(res, 404, { error: "not found" });
+        }
+        return jsonResponse(res, 200, {
+          apps: [...runningAppPreviews].map(([app, item]) => ({
+            app,
+            url: item.url,
+          })),
+        });
       }
 
       if (req.method === "GET" && url.pathname === "/api/v1/capabilities/manifests") {
@@ -999,35 +1085,6 @@ async function start() {
           const unsubscribe = subscribeWorkbenchReloadSse(workbenchReloadHub, (event) => {
             res.write(event);
           });
-          req.once("close", unsubscribe);
-          return;
-        }
-      }
-
-      const appPreviewLiveMatch = url.pathname.match(
-        /^\/api\/v1\/preview\/(focus|epk)\/live$/,
-      );
-      if (appPreviewLiveMatch) {
-        const app = appPreviewLiveMatch[1] as AppPreviewName;
-        const preview = appPreviews.get(app);
-        if (!preview) return jsonResponse(res, 404, { error: "not found" });
-        if (req.method === "HEAD") {
-          res.writeHead(204, {
-            "Cache-Control": "no-store",
-          });
-          return res.end();
-        }
-        if (req.method === "GET") {
-          res.writeHead(200, {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache, no-store",
-            "Connection": "keep-alive",
-          });
-          res.write(": connected\n\n");
-          const unsubscribe = subscribeWorkbenchReloadSse(
-            preview.reloadHub,
-            (event) => res.write(event),
-          );
           req.once("close", unsubscribe);
           return;
         }
@@ -1695,6 +1752,7 @@ async function start() {
   });
   server.once("close", () => {
     workbenchWatcher?.close();
+    for (const item of runningAppPreviews.values()) item.server.close();
     for (const preview of appPreviews.values()) preview.watcher.close();
   });
 
@@ -1702,8 +1760,10 @@ async function start() {
     console.log(`AI-Forge POC daemon listening on http://${HOST}:${PORT}/api/v1`);
     console.log("Use header 'x-local-token' with token printed below to authenticate.");
     console.log("Token:", TOKEN);
-    if (appPreviews.size > 0) {
-      console.log(`App previews: ${[...appPreviews.keys()].join(", ")}`);
+    if (runningAppPreviews.size > 0) {
+      console.log(
+        `App previews: ${[...runningAppPreviews].map(([app, item]) => `${app}=${item.url}`).join(", ")}`,
+      );
     }
   });
 }

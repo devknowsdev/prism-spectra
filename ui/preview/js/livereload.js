@@ -1,8 +1,5 @@
 (() => {
-  const match = window.location.pathname.match(/^\/preview\/(focus|epk)(?:\/|$)/);
-  if (!match) return;
-
-  const liveUrl = `/api/v1/preview/${match[1]}/live`;
+  const liveUrl = "/api/v1/preview/live";
   fetch(liveUrl, { method: "HEAD", cache: "no-store" })
     .then((response) => {
       if (!response.ok) return;
