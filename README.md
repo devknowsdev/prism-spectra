@@ -95,10 +95,16 @@ Local Focus/EPK preview is off by default. To opt in, copy
 AI_FORGE_APP_PREVIEW=1 npm run workbench
 ```
 
-Spectra then serves the configured directories at `/preview/focus/` and
-`/preview/epk/`. It observes them read-only and injects its reload client only
-into local preview HTML responses; it never changes either app's files. Set
-`AI_FORGE_APP_PREVIEW_CONFIG` only when the local config lives somewhere else.
+Spectra then serves each configured app from its own loopback origin: Focus at
+`http://127.0.0.1:3001/` and EPK at `http://127.0.0.1:3002/` by default. This
+keeps root-absolute app URLs such as `/data/epk.json` on the correct preview
+origin. The Workbench Settings view links to every running preview.
+
+Set `AI_FORGE_APP_PREVIEW_BASE_PORT` to move the Focus port; EPK uses the next
+port. Set `AI_FORGE_APP_PREVIEW_CONFIG` only when the local config lives
+somewhere else. Spectra observes app directories read-only and injects its
+reload client only into local preview HTML responses; it never changes app
+files.
 
 Read-only AI gateway launch, only when intentionally testing suite AI request routing:
 

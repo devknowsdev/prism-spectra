@@ -1382,6 +1382,13 @@
               <div class="settings-list">
                 <div class="setting">
                   <div>
+                    <strong>Real app previews</strong>
+                    <span id="app-preview-status">Off unless local app preview is explicitly enabled.</span>
+                  </div>
+                  <div class="placeholder-line" id="app-preview-links"></div>
+                </div>
+                <div class="setting">
+                  <div>
                     <strong>Low-power mode</strong>
                     <span>Placeholder toggle for reduced background work and smaller jobs only.</span>
                   </div>
@@ -3136,6 +3143,42 @@
       }
     }
 
+    async function loadAppPreviews() {
+      const status = document.getElementById("app-preview-status");
+      const links = document.getElementById("app-preview-links");
+      try {
+        const response = await fetch("/api/v1/preview/apps");
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        const apps = Array.isArray(payload.apps) ? payload.apps : [];
+        links.replaceChildren();
+        for (const preview of apps) {
+          if (
+            !preview
+            || (preview.app !== "focus" && preview.app !== "epk")
+            || typeof preview.url !== "string"
+          ) {
+            continue;
+          }
+          if (links.childElementCount > 0) {
+            links.append(document.createTextNode(" · "));
+          }
+          const anchor = document.createElement("a");
+          anchor.href = preview.url;
+          anchor.target = "_blank";
+          anchor.rel = "noreferrer";
+          anchor.textContent = `Open ${preview.app === "epk" ? "EPK" : "Focus"}`;
+          links.append(anchor);
+        }
+        status.textContent = links.childElementCount > 0
+          ? "Each app runs on its own loopback origin so root-absolute assets work unchanged."
+          : "No app preview directories are configured.";
+      } catch {
+        links.replaceChildren();
+        status.textContent = "App previews are off.";
+      }
+    }
+
     const initialView = (location.hash || "#resume").slice(1);
     const validView = viewMeta[initialView] ? initialView : "resume";
     setView(validView);
@@ -3144,6 +3187,7 @@
     loadAttachments();
     loadChanges();
     loadManifests();
+    loadAppPreviews();
   </script>
   <script type="module" src="/workbench-shims/js/approvals.js"></script>
   <script type="module" src="/workbench-shims/js/livereload.js"></script>
