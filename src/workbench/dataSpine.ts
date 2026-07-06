@@ -5,7 +5,7 @@ import type { MemoryDB } from "../memory/db.js";
 import type { PrismEvent, PrismEventLedger } from "../events/index.js";
 
 export type WorkbenchDaemonStatus = "starting" | "healthy" | "degraded";
-export type WorkbenchMode = "read-only";
+export type WorkbenchMode = "read-only" | "approvals-enabled";
 
 export interface WorkbenchCheckpointSummary {
   id: number;
@@ -394,15 +394,15 @@ export function buildWorkbenchChanges(db: MemoryDB, options: BuildWorkbenchDataS
 }
 
 export function buildWorkbenchApprovals(options: BuildWorkbenchDataSpineOptions, limit = 25): WorkbenchApprovalsData {
-  const pending = options.approvalQueue?.listApprovals({ status: "pending", limit }) ?? [];
   const all = options.approvalQueue?.listApprovals({ limit }) ?? [];
+  const pendingCount = all.filter((approval) => approval.status === "pending").length;
 
   return {
-    count: pending.length,
-    pendingCount: pending.length,
+    count: all.length,
+    pendingCount,
     totalCount: all.length,
-    items: pending.map(approvalToItem),
-    emptyStateMessage: "No pending approvals are queued yet. Approval execution remains gated elsewhere.",
+    items: all.map(approvalToItem),
+    emptyStateMessage: "No approvals have been queued yet.",
   };
 }
 
