@@ -7,6 +7,12 @@ export type AppPreviewName = (typeof APP_PREVIEW_NAMES)[number];
 
 export const APP_PREVIEW_LIVERELOAD_TAG =
   '<script src="/preview/js/livereload.js"></script>';
+export const APP_PREVIEW_IGNORED_DIRECTORIES = new Set([
+  ".git",
+  "node_modules",
+  "build",
+  "dist",
+]);
 
 export interface AppPreview {
   app: AppPreviewName;
@@ -67,26 +73,71 @@ export function createAppPreviewWatcher(options: {
   debounceMs?: number;
 }): WorkbenchWatcher {
   const debounceMs = options.debounceMs ?? 150;
+  const watchers = new Map<string, fs.FSWatcher>();
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
-  const watcher = fs.watch(
-    options.appDir,
-    { recursive: true },
-    () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        debounceTimer = undefined;
-        options.onReload();
-      }, debounceMs);
-    },
-  );
+  let closed = false;
 
+  function collectDirectories(): Set<string> {
+    const directories = new Set<string>();
+    const pending = [options.appDir];
+    while (pending.length > 0) {
+      const directory = pending.pop()!;
+      directories.add(directory);
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(directory, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        if (entry.isDirectory() && !APP_PREVIEW_IGNORED_DIRECTORIES.has(entry.name)) {
+          pending.push(path.join(directory, entry.name));
+        }
+      }
+    }
+    return directories;
+  }
+
+  function syncWatchers(): void {
+    if (closed) return;
+    const nextDirectories = collectDirectories();
+    for (const [directory, watcher] of watchers) {
+      if (!nextDirectories.has(directory)) {
+        watcher.close();
+        watchers.delete(directory);
+      }
+    }
+    for (const directory of nextDirectories) {
+      if (watchers.has(directory)) continue;
+      const watcher = fs.watch(directory, (_eventType, filename) => {
+        const relativePath = filename == null
+          ? path.relative(options.appDir, directory)
+          : path.relative(options.appDir, path.join(directory, String(filename)));
+        if (
+          relativePath
+            .split(path.sep)
+            .some((segment) => APP_PREVIEW_IGNORED_DIRECTORIES.has(segment))
+        ) {
+          return;
+        }
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          debounceTimer = undefined;
+          syncWatchers();
+          options.onReload();
+        }, debounceMs);
+      });
+      watchers.set(directory, watcher);
+    }
+  }
+
+  syncWatchers();
   return {
     close() {
-      if (debounceTimer) {
-        clearTimeout(debounceTimer);
-        debounceTimer = undefined;
-      }
-      watcher.close();
+      closed = true;
+      if (debounceTimer) clearTimeout(debounceTimer);
+      for (const watcher of watchers.values()) watcher.close();
+      watchers.clear();
     },
   };
 }
