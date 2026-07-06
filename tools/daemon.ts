@@ -34,6 +34,13 @@ import {
   subscribeWorkbenchReloadSse,
   WorkbenchReloadHub,
 } from "../src/workbench/liveReload.js";
+import {
+  createAppPreviews,
+  injectAppPreviewLiveReload,
+  loadAppPreviewDirectories,
+  resolveAppPreviewFile,
+  type AppPreviewName,
+} from "../src/workbench/appPreview.js";
 
 const PORT = Number(process.env.AI_FORGE_DAEMON_PORT ?? 3000);
 const HOST = process.env.AI_FORGE_DAEMON_HOST ?? "127.0.0.1";
@@ -44,8 +51,13 @@ const WORKBENCH_DIR = path.resolve(DAEMON_DIR, "../ui/workbench");
 const WORKBENCH_HTML_PATH = path.join(WORKBENCH_DIR, "index.html");
 const WORKBENCH_SHIM_DIR = path.join(WORKBENCH_DIR, "vendor-shims");
 const WORKBENCH_JS_DIR = path.join(WORKBENCH_DIR, "js");
+const APP_PREVIEW_JS_DIR = path.resolve(DAEMON_DIR, "../ui/preview/js");
 const NODE_MODULES_DIR = path.resolve(DAEMON_DIR, "../node_modules");
 const WORKBENCH_WATCH_ENABLED = process.env.AI_FORGE_WORKBENCH_WATCH === "1";
+const APP_PREVIEW_ENABLED = process.env.AI_FORGE_APP_PREVIEW === "1";
+const APP_PREVIEW_CONFIG_PATH = path.resolve(
+  process.env.AI_FORGE_APP_PREVIEW_CONFIG ?? path.join(process.cwd(), "spectra.preview.local.json"),
+);
 
 async function initEngine() {
   const engine = new ExecutionEngine({ dbPath: ".demo/daemon.db", workDir: ".demo/work", mockExecutors: process.env.AI_FORGE_MOCK_EXECUTORS === "1", fallbackOnFailure: false });
@@ -105,6 +117,14 @@ function contentTypeForPath(filePath: string): string {
   if (ext === ".json") return "application/json; charset=utf-8";
   if (ext === ".map") return "application/json; charset=utf-8";
   if (ext === ".svg") return "image/svg+xml";
+  if (ext === ".png") return "image/png";
+  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+  if (ext === ".gif") return "image/gif";
+  if (ext === ".webp") return "image/webp";
+  if (ext === ".ico") return "image/x-icon";
+  if (ext === ".woff") return "font/woff";
+  if (ext === ".woff2") return "font/woff2";
+  if (ext === ".ttf") return "font/ttf";
   if (ext === ".wasm") return "application/wasm";
   if (ext === ".txt" || ext === ".md" || ext === ".yml" || ext === ".yaml") return "text/plain; charset=utf-8";
   return "application/octet-stream";
@@ -592,6 +612,47 @@ async function sendWorkbenchShimFile(res: http.ServerResponse, requestPath: stri
   }
 }
 
+async function sendAppPreviewClient(res: http.ServerResponse) {
+  const clientPath = path.join(APP_PREVIEW_JS_DIR, "livereload.js");
+  try {
+    const content = await fs.promises.readFile(clientPath);
+    res.writeHead(200, {
+      "Content-Type": "application/javascript; charset=utf-8",
+      "Content-Length": String(content.length),
+      "Cache-Control": "no-store",
+    });
+    return res.end(content);
+  } catch {
+    return jsonResponse(res, 404, { error: "not found" });
+  }
+}
+
+async function sendAppPreviewFile(
+  res: http.ServerResponse,
+  appDir: string,
+  requestRelativePath: string,
+) {
+  const filePath = await resolveAppPreviewFile(appDir, requestRelativePath);
+  if (!filePath) return jsonResponse(res, 404, { error: "not found" });
+
+  try {
+    if (path.extname(filePath).toLowerCase() === ".html") {
+      const source = await fs.promises.readFile(filePath, "utf-8");
+      return sendHtml(res, injectAppPreviewLiveReload(source));
+    }
+
+    const content = await fs.promises.readFile(filePath);
+    res.writeHead(200, {
+      "Content-Type": contentTypeForPath(filePath),
+      "Content-Length": String(content.length),
+      "Cache-Control": "no-store",
+    });
+    return res.end(content);
+  } catch {
+    return jsonResponse(res, 404, { error: "not found" });
+  }
+}
+
 function attachmentUploadsDir(): string {
   return process.env.AI_FORGE_UPLOADS_DIR || path.join(process.cwd(), "uploads");
 }
@@ -864,6 +925,10 @@ async function start() {
         onReload: () => workbenchReloadHub.emitReload(),
       })
     : null;
+  const appPreviewDirectories = APP_PREVIEW_ENABLED
+    ? loadAppPreviewDirectories(APP_PREVIEW_CONFIG_PATH)
+    : new Map<AppPreviewName, string>();
+  const appPreviews = createAppPreviews(appPreviewDirectories);
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -875,6 +940,22 @@ async function start() {
 
       if (req.method === "GET" && url.pathname.startsWith("/workbench-shims/")) {
         return sendWorkbenchShimFile(res, url.pathname);
+      }
+
+      if (
+        req.method === "GET"
+        && url.pathname === "/preview/js/livereload.js"
+        && appPreviews.size > 0
+      ) {
+        return sendAppPreviewClient(res);
+      }
+
+      const appPreviewFileMatch = url.pathname.match(/^\/preview\/(focus|epk)(?:\/(.*))?$/);
+      if (req.method === "GET" && appPreviewFileMatch) {
+        const app = appPreviewFileMatch[1] as AppPreviewName;
+        const preview = appPreviews.get(app);
+        if (!preview) return jsonResponse(res, 404, { error: "not found" });
+        return sendAppPreviewFile(res, preview.directory, appPreviewFileMatch[2] ?? "");
       }
 
       if (req.method === "GET" && (url.pathname === "/workbench" || url.pathname === "/workbench/" || url.pathname === "/workbench/index.html")) {
@@ -918,6 +999,35 @@ async function start() {
           const unsubscribe = subscribeWorkbenchReloadSse(workbenchReloadHub, (event) => {
             res.write(event);
           });
+          req.once("close", unsubscribe);
+          return;
+        }
+      }
+
+      const appPreviewLiveMatch = url.pathname.match(
+        /^\/api\/v1\/preview\/(focus|epk)\/live$/,
+      );
+      if (appPreviewLiveMatch) {
+        const app = appPreviewLiveMatch[1] as AppPreviewName;
+        const preview = appPreviews.get(app);
+        if (!preview) return jsonResponse(res, 404, { error: "not found" });
+        if (req.method === "HEAD") {
+          res.writeHead(204, {
+            "Cache-Control": "no-store",
+          });
+          return res.end();
+        }
+        if (req.method === "GET") {
+          res.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache, no-store",
+            "Connection": "keep-alive",
+          });
+          res.write(": connected\n\n");
+          const unsubscribe = subscribeWorkbenchReloadSse(
+            preview.reloadHub,
+            (event) => res.write(event),
+          );
           req.once("close", unsubscribe);
           return;
         }
@@ -1585,12 +1695,16 @@ async function start() {
   });
   server.once("close", () => {
     workbenchWatcher?.close();
+    for (const preview of appPreviews.values()) preview.watcher.close();
   });
 
   server.listen(PORT, HOST, () => {
     console.log(`AI-Forge POC daemon listening on http://${HOST}:${PORT}/api/v1`);
     console.log("Use header 'x-local-token' with token printed below to authenticate.");
     console.log("Token:", TOKEN);
+    if (appPreviews.size > 0) {
+      console.log(`App previews: ${[...appPreviews.keys()].join(", ")}`);
+    }
   });
 }
 

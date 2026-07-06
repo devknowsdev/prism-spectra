@@ -87,6 +87,19 @@ Workbench launch, only when ready for a long-running local daemon:
 npm run workbench
 ```
 
+Local Focus/EPK preview is off by default. To opt in, copy
+`spectra.preview.example.json` to the git-ignored
+`spectra.preview.local.json`, adjust the two directory paths, and run:
+
+```bash
+AI_FORGE_APP_PREVIEW=1 npm run workbench
+```
+
+Spectra then serves the configured directories at `/preview/focus/` and
+`/preview/epk/`. It observes them read-only and injects its reload client only
+into local preview HTML responses; it never changes either app's files. Set
+`AI_FORGE_APP_PREVIEW_CONFIG` only when the local config lives somewhere else.
+
 Read-only AI gateway launch, only when intentionally testing suite AI request routing:
 
 ```bash

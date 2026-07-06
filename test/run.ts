@@ -87,6 +87,13 @@ import {
   WORKBENCH_RELOAD_SSE_EVENT,
 } from "../src/workbench/liveReload.js";
 import {
+  APP_PREVIEW_LIVERELOAD_TAG,
+  createAppPreviewWatcher,
+  injectAppPreviewLiveReload,
+  loadAppPreviewDirectories,
+  resolveAppPreviewFile,
+} from "../src/workbench/appPreview.js";
+import {
   SANDBOX_DIR,
   SANDBOX_FIXTURES_DIR,
   SANDBOX_TMP_DIR,
@@ -3143,6 +3150,57 @@ async function main() {
     }
   });
 
+  await test("app preview config, HTML injection, and watcher stay local and app-scoped", async () => {
+    const previewRoot = path.join(ROOT, "app-preview");
+    const focusDir = path.join(previewRoot, "focus");
+    const epkDir = path.join(previewRoot, "epk-public");
+    fs.mkdirSync(path.join(focusDir, "assets"), { recursive: true });
+    fs.mkdirSync(epkDir, { recursive: true });
+    const focusHtmlPath = path.join(focusDir, "index.html");
+    const originalHtml = "<!doctype html><body><main>Focus</main></body>";
+    fs.writeFileSync(focusHtmlPath, originalHtml);
+    fs.writeFileSync(path.join(epkDir, "index.html"), "<body>EPK</body>");
+
+    const configPath = path.join(previewRoot, "spectra.preview.local.json");
+    fs.writeFileSync(configPath, JSON.stringify({
+      focus: "./focus",
+      epk: "./epk-public",
+    }));
+    const directories = loadAppPreviewDirectories(configPath);
+    assert.equal(directories.get("focus"), fs.realpathSync(focusDir));
+    assert.equal(directories.get("epk"), fs.realpathSync(epkDir));
+    assert.equal((await resolveAppPreviewFile(focusDir, "")), focusHtmlPath);
+    assert.equal(await resolveAppPreviewFile(focusDir, "../epk-public/index.html"), null);
+
+    const servedHtml = injectAppPreviewLiveReload(originalHtml);
+    assert.equal(servedHtml.split(APP_PREVIEW_LIVERELOAD_TAG).length - 1, 1);
+    assert.ok(servedHtml.indexOf(APP_PREVIEW_LIVERELOAD_TAG) < servedHtml.indexOf("</body>"));
+    assert.equal(fs.readFileSync(focusHtmlPath, "utf-8"), originalHtml);
+
+    const hub = new WorkbenchReloadHub();
+    const reloadEvents: string[] = [];
+    const unsubscribe = subscribeWorkbenchReloadSse(hub, (event) => reloadEvents.push(event));
+    const watcher = createAppPreviewWatcher({
+      appDir: focusDir,
+      debounceMs: 150,
+      onReload: () => hub.emitReload(),
+    });
+    try {
+      fs.writeFileSync(focusHtmlPath, "<body>Focus changed</body>");
+      fs.writeFileSync(path.join(focusDir, "assets", "app.css"), "body { color: blue; }");
+      fs.writeFileSync(path.join(focusDir, "assets", "app.js"), "window.changed = true;");
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      assert.deepEqual(reloadEvents, [WORKBENCH_RELOAD_SSE_EVENT]);
+
+      fs.writeFileSync(path.join(epkDir, "index.html"), "<body>EPK changed</body>");
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      assert.deepEqual(reloadEvents, [WORKBENCH_RELOAD_SSE_EVENT]);
+    } finally {
+      unsubscribe();
+      watcher.close();
+    }
+  });
+
   await test("workbench project memory projections surface conversations and attachments", async () => {
     const db = freshMemoryDB("workbench-memory");
     db.db.prepare(
@@ -3353,6 +3411,108 @@ async function main() {
     assert.equal(missingMimePreview.safeToRenderInline, false);
   });
 
+  await test("e2e: configured app preview serves injected HTML and emits reload", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "aiforge-preview-e2e-"));
+    const focusDir = path.join(tmp, "focus");
+    const epkDir = path.join(tmp, "epk-public");
+    fs.mkdirSync(focusDir, { recursive: true });
+    fs.mkdirSync(epkDir, { recursive: true });
+    const focusHtmlPath = path.join(focusDir, "index.html");
+    const originalHtml = "<!doctype html><html><body><h1>Focus preview</h1></body></html>";
+    fs.writeFileSync(focusHtmlPath, originalHtml);
+    fs.writeFileSync(path.join(epkDir, "index.html"), "<body>EPK preview</body>");
+    const configPath = path.join(tmp, "spectra.preview.local.json");
+    fs.writeFileSync(configPath, JSON.stringify({ focus: "./focus", epk: "./epk-public" }));
+
+    const daemonScript = path.join(__dirname, "..", "tools", "daemon.ts");
+    const tsxLoader = path.join(__dirname, "..", "node_modules", "tsx", "dist", "loader.mjs");
+    const port = 34000 + Math.floor(Math.random() * 1000);
+    const daemon = spawn(process.execPath, ["--import", pathToFileURL(tsxLoader).href, daemonScript], {
+      cwd: tmp,
+      env: {
+        ...process.env,
+        AI_FORGE_DAEMON_PORT: String(port),
+        AI_FORGE_DAEMON_TOKEN: "preview-e2e-token",
+        AI_FORGE_MOCK_EXECUTORS: "1",
+        AI_FORGE_APP_PREVIEW: "1",
+        AI_FORGE_APP_PREVIEW_CONFIG: configPath,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let started = false;
+    let daemonOutput = "";
+    daemon.stdout!.on("data", (chunk) => {
+      const text = String(chunk);
+      daemonOutput += text;
+      if (text.includes("AI-Forge POC daemon listening")) started = true;
+    });
+    daemon.stderr!.on("data", (chunk) => {
+      daemonOutput += String(chunk);
+    });
+
+    try {
+      const deadline = Date.now() + 8000;
+      while (!started && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      if (!started) {
+        if (daemonOutput.includes("listen EPERM") || daemonOutput.includes("operation not permitted")) {
+          console.log("  skip - configured app preview e2e (socket bind not permitted in this environment)");
+          return;
+        }
+        throw new Error(`preview daemon did not start: ${daemonOutput.slice(0, 2000)}`);
+      }
+
+      const previewResponse = await fetch(`http://127.0.0.1:${port}/preview/focus/`);
+      assert.equal(previewResponse.ok, true);
+      const previewHtml = await previewResponse.text();
+      assert.equal(previewHtml.split(APP_PREVIEW_LIVERELOAD_TAG).length - 1, 1);
+      assert.ok(previewHtml.indexOf(APP_PREVIEW_LIVERELOAD_TAG) < previewHtml.indexOf("</body>"));
+      assert.equal(fs.readFileSync(focusHtmlPath, "utf-8"), originalHtml);
+
+      const clientResponse = await fetch(`http://127.0.0.1:${port}/preview/js/livereload.js`);
+      assert.equal(clientResponse.ok, true);
+      assert.match(await clientResponse.text(), /api\/v1\/preview/);
+
+      const liveHead = await fetch(`http://127.0.0.1:${port}/api/v1/preview/focus/live`, {
+        method: "HEAD",
+      });
+      assert.equal(liveHead.status, 204);
+
+      const liveResponse = await fetch(`http://127.0.0.1:${port}/api/v1/preview/focus/live`);
+      assert.equal(liveResponse.ok, true);
+      const reader = liveResponse.body!.getReader();
+      const decoder = new TextDecoder();
+      await reader.read();
+      fs.writeFileSync(focusHtmlPath, "<body>Focus changed</body>");
+
+      let liveText = "";
+      const reloadDeadline = Date.now() + 2000;
+      while (!liveText.includes(WORKBENCH_RELOAD_SSE_EVENT) && Date.now() < reloadDeadline) {
+        const remaining = Math.max(1, reloadDeadline - Date.now());
+        const result = await Promise.race([
+          reader.read(),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error("timed out waiting for app preview reload")), remaining);
+          }),
+        ]);
+        if (result.done) break;
+        liveText += decoder.decode(result.value, { stream: true });
+      }
+      await reader.cancel();
+      assert.match(liveText, /event: reload\ndata:\n\n/);
+    } finally {
+      daemon.kill();
+      if (daemon.exitCode == null && daemon.signalCode == null) {
+        await new Promise<void>((resolve) => {
+          daemon.once("exit", () => resolve());
+        });
+      }
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   await test("e2e: daemon execute-graph and rollback via API", async () => {
     // spawn the daemon in a temporary cwd so it uses an isolated .demo/work
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "aiforge-e2e-"));
@@ -3440,6 +3600,16 @@ async function main() {
     assert.equal(disabledLiveReloadResponse.status, 404);
     const disabledLiveReloadHeadResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/live`, { method: "HEAD" });
     assert.equal(disabledLiveReloadHeadResponse.status, 404);
+    const disabledFocusPreviewResponse = await fetch(`http://127.0.0.1:${port}/preview/focus/`);
+    assert.equal(disabledFocusPreviewResponse.status, 404);
+    const disabledEpkPreviewResponse = await fetch(`http://127.0.0.1:${port}/preview/epk/`);
+    assert.equal(disabledEpkPreviewResponse.status, 404);
+    const disabledPreviewClientResponse = await fetch(`http://127.0.0.1:${port}/preview/js/livereload.js`);
+    assert.equal(disabledPreviewClientResponse.status, 404);
+    const disabledFocusLiveResponse = await fetch(`http://127.0.0.1:${port}/api/v1/preview/focus/live`);
+    assert.equal(disabledFocusLiveResponse.status, 404);
+    const disabledFocusLiveHeadResponse = await fetch(`http://127.0.0.1:${port}/api/v1/preview/focus/live`, { method: "HEAD" });
+    assert.equal(disabledFocusLiveHeadResponse.status, 404);
     const attachmentsSectionStart = workbenchHtml.indexOf('<section class="view" data-section="attachments"');
     const attachmentsSectionEnd = workbenchHtml.indexOf('<section class="view" data-section="approvals"');
     const attachmentsSection = attachmentsSectionStart >= 0 && attachmentsSectionEnd > attachmentsSectionStart
