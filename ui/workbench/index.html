@@ -838,6 +838,113 @@
       grid-template-columns: 150px minmax(0, 1fr);
     }
 
+    .approval-card {
+      position: relative;
+      border-left: 4px solid var(--line);
+    }
+
+    .approval-card[data-risk-tier="green"] { border-left-color: var(--good); }
+    .approval-card[data-risk-tier="amber"] { border-left-color: var(--warn); }
+    .approval-card[data-risk-tier="red"] { border-left-color: var(--bad); }
+
+    .approval-card:focus-visible,
+    .approval-action:focus-visible,
+    .approval-reason:focus-visible {
+      outline: 3px solid #93c5fd;
+      outline-offset: 3px;
+    }
+
+    .approval-tier {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 8px;
+      font-family: var(--mono);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .approval-preview {
+      margin-top: 12px;
+      border: 1px solid rgba(74, 222, 128, 0.28);
+      border-radius: 12px;
+      padding: 12px;
+      background: rgba(74, 222, 128, 0.06);
+    }
+
+    .approval-preview.no-preview {
+      border-color: rgba(251, 191, 36, 0.45);
+      background: rgba(251, 191, 36, 0.1);
+    }
+
+    .approval-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: end;
+      margin-top: 14px;
+    }
+
+    .approval-reason-wrap {
+      display: grid;
+      gap: 5px;
+      flex: 1 1 240px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .approval-reason {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px 10px;
+      color: var(--text);
+      background: var(--panel);
+    }
+
+    .approval-action {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px 12px;
+      color: var(--text);
+      background: var(--panel);
+      cursor: pointer;
+    }
+
+    .approval-action.approve {
+      border-color: rgba(74, 222, 128, 0.45);
+      background: rgba(74, 222, 128, 0.1);
+    }
+
+    .approval-action.deny {
+      border-color: rgba(248, 113, 113, 0.5);
+      background: rgba(248, 113, 113, 0.1);
+    }
+
+    .approval-action:disabled,
+    .approval-reason:disabled {
+      cursor: wait;
+      opacity: 0.6;
+    }
+
+    .approval-resolved {
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      background: rgba(148, 163, 184, 0.06);
+    }
+
+    .approval-error {
+      margin-top: 10px;
+      color: #fecaca;
+      line-height: 1.5;
+    }
+
     .sr-only {
       position: absolute;
       width: 1px;
@@ -3035,9 +3142,9 @@
     loadResume();
     loadConversations();
     loadAttachments();
-    loadApprovals();
     loadChanges();
     loadManifests();
   </script>
+  <script type="module" src="/workbench-shims/js/approvals.js"></script>
 </body>
 </html>

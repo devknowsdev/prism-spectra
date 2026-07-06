@@ -3038,6 +3038,23 @@ async function main() {
     assert.equal(approvals.pendingCount, 1);
     assert.equal(approvals.totalCount, 1);
     assert.equal(approvals.items[0].id, requested.id);
+    queue.resolveApproval(requested.id, {
+      status: "rejected",
+      decidedAt: "2026-06-24T13:00:00.000Z",
+      decidedBy: "workbench-reviewer",
+      reason: "Needs a narrower target.",
+    });
+    const resolvedApprovals = buildWorkbenchApprovals({ approvalQueue: queue });
+    assert.equal(resolvedApprovals.count, 1);
+    assert.equal(resolvedApprovals.pendingCount, 0);
+    assert.equal(resolvedApprovals.totalCount, 1);
+    assert.equal(resolvedApprovals.items[0].status, "rejected");
+    assert.deepEqual(resolvedApprovals.items[0].decision, {
+      status: "rejected",
+      decidedAt: "2026-06-24T13:00:00.000Z",
+      decidedBy: "workbench-reviewer",
+      reason: "Needs a narrower target.",
+    });
 
     const changes = buildWorkbenchChanges(db, { approvalQueue: queue, eventLedger: ledger });
     assert.ok(changes.ledgerCount >= 2);
@@ -3051,10 +3068,10 @@ async function main() {
       approvalQueue: queue,
       eventLedger: ledger,
     });
-    assert.equal(resume.pendingApprovalsCount, 1);
-    assert.equal(resume.recentEventCount, 2);
+    assert.equal(resume.pendingApprovalsCount, 0);
+    assert.equal(resume.recentEventCount, 3);
     assert.equal(resume.lastEventSummary, "Manual ledger note");
-    assert.equal(resume.nextSafeAction, "Review pending approvals");
+    assert.equal(resume.nextSafeAction, "Review recent project memory");
     db.close();
   });
 
@@ -3303,7 +3320,13 @@ async function main() {
 
     const daemon = spawn(process.execPath, ["--import", pathToFileURL(tsxLoader).href, daemonScript], {
       cwd: tmp,
-      env: { ...process.env, AI_FORGE_DAEMON_PORT: String(port), AI_FORGE_DAEMON_TOKEN: token },
+      env: {
+        ...process.env,
+        AI_FORGE_DAEMON_PORT: String(port),
+        AI_FORGE_DAEMON_TOKEN: token,
+        AI_FORGE_MOCK_EXECUTORS: "1",
+        AI_FORGE_SEED_APPROVALS: "1",
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -3362,6 +3385,10 @@ async function main() {
     assert.match(workbenchHtml, /Related conversation/);
     assert.match(workbenchHtml, /Preview/);
     assert.match(workbenchHtml, /Load waveform preview/);
+    assert.match(workbenchHtml, /workbench-shims\/js\/approvals\.js/);
+    const approvalsModuleResponse = await fetch(`http://127.0.0.1:${port}/workbench-shims/js/approvals.js`);
+    assert.equal(approvalsModuleResponse.ok, true);
+    assert.match(await approvalsModuleResponse.text(), /data-approval-action/);
     const attachmentsSectionStart = workbenchHtml.indexOf('<section class="view" data-section="attachments"');
     const attachmentsSectionEnd = workbenchHtml.indexOf('<section class="view" data-section="approvals"');
     const attachmentsSection = attachmentsSectionStart >= 0 && attachmentsSectionEnd > attachmentsSectionStart
@@ -3378,15 +3405,15 @@ async function main() {
     const resumePayload = await resumeResponse.json();
     assert.ok(resumePayload.resume);
     assert.equal(resumePayload.resume.daemonStatus, "healthy");
-    assert.equal(resumePayload.resume.mode, "read-only");
+    assert.equal(resumePayload.resume.mode, "approvals-enabled");
     assert.equal(typeof resumePayload.resume.projectLabel, "string");
     assert.equal(typeof resumePayload.resume.workDirLabel, "string");
     assert.ok(Array.isArray(resumePayload.resume.recentCheckpoints));
     assert.ok(Array.isArray(resumePayload.resume.recentConversations));
     assert.ok(Array.isArray(resumePayload.resume.recentAttachments));
-    assert.equal(resumePayload.resume.pendingApprovalsCount, 0);
-    assert.equal(resumePayload.resume.recentEventCount, 0);
-    assert.equal(resumePayload.resume.lastEventSummary, "No events recorded yet.");
+    assert.equal(resumePayload.resume.pendingApprovalsCount, 2);
+    assert.equal(resumePayload.resume.recentEventCount, 2);
+    assert.match(resumePayload.resume.lastEventSummary, /Approval requested/);
 
     const createConversationResponse = await fetch(`http://127.0.0.1:${port}/api/v1/conversations`, {
       method: "POST",
@@ -3694,18 +3721,70 @@ async function main() {
     assert.equal(resumeAfterMemoryPayload.resume.recentConversationCount >= 1, true);
     assert.equal(resumeAfterMemoryPayload.resume.recentAttachmentCount >= 2, true);
     assert.equal(resumeAfterMemoryPayload.resume.latestAttachmentSummary, "preview.wav");
-    assert.equal(resumeAfterMemoryPayload.resume.nextSafeAction, "Review recent project memory");
+    assert.equal(resumeAfterMemoryPayload.resume.nextSafeAction, "Review pending approvals");
     assert.match(resumeAfterMemoryPayload.resume.lastEventSummary, /local attachment|preview/i);
 
     const approvalsResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/approvals`);
     assert.equal(approvalsResponse.ok, true);
     const approvalsPayload = await approvalsResponse.json();
     assert.ok(approvalsPayload.approvals);
-    assert.equal(approvalsPayload.approvals.count, 0);
-    assert.equal(approvalsPayload.approvals.pendingCount, 0);
-    assert.equal(approvalsPayload.approvals.totalCount, 0);
-    assert.deepEqual(approvalsPayload.approvals.items, []);
+    assert.equal(approvalsPayload.approvals.count, 2);
+    assert.equal(approvalsPayload.approvals.pendingCount, 2);
+    assert.equal(approvalsPayload.approvals.totalCount, 2);
+    assert.equal(approvalsPayload.approvals.items.length, 2);
     assert.ok(String(approvalsPayload.approvals.emptyStateMessage).length > 0);
+
+    const approveResponse = await fetch(`http://127.0.0.1:${port}/api/v1/approvals/mock-approval-preview/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "approved", decidedBy: "contract-test", reason: "Preview reviewed." }),
+    });
+    assert.equal(approveResponse.status, 200);
+    const approvePayload = await approveResponse.json();
+    assert.equal(approvePayload.approval.status, "approved");
+    assert.deepEqual(approvePayload.approval.decision, {
+      status: "approved",
+      decidedAt: approvePayload.approval.decision.decidedAt,
+      decidedBy: "contract-test",
+      reason: "Preview reviewed.",
+    });
+
+    const rejectResponse = await fetch(`http://127.0.0.1:${port}/api/v1/approvals/mock-approval-no-preview/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "rejected", decidedBy: "contract-test", reason: "No preview supplied." }),
+    });
+    assert.equal(rejectResponse.status, 200);
+    const rejectPayload = await rejectResponse.json();
+    assert.equal(rejectPayload.approval.status, "rejected");
+    assert.equal(rejectPayload.approval.decision.decidedBy, "contract-test");
+    assert.equal(rejectPayload.approval.decision.reason, "No preview supplied.");
+
+    const conflictResponse = await fetch(`http://127.0.0.1:${port}/api/v1/approvals/mock-approval-preview/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "rejected", decidedBy: "contract-test" }),
+    });
+    assert.equal(conflictResponse.status, 409);
+
+    const unknownApprovalResponse = await fetch(`http://127.0.0.1:${port}/api/v1/approvals/unknown-approval/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "approved", decidedBy: "contract-test" }),
+    });
+    assert.equal(unknownApprovalResponse.status, 404);
+
+    const resolvedApprovalsResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/approvals`);
+    assert.equal(resolvedApprovalsResponse.ok, true);
+    const resolvedApprovalsPayload = await resolvedApprovalsResponse.json();
+    assert.equal(resolvedApprovalsPayload.approvals.count, 2);
+    assert.equal(resolvedApprovalsPayload.approvals.pendingCount, 0);
+    assert.equal(resolvedApprovalsPayload.approvals.totalCount, 2);
+    assert.deepEqual(
+      resolvedApprovalsPayload.approvals.items.map((item: any) => item.status).sort(),
+      ["approved", "rejected"],
+    );
+    assert.ok(resolvedApprovalsPayload.approvals.items.every((item: any) => item.decision?.decidedBy === "contract-test"));
 
     const changesResponse = await fetch(`http://127.0.0.1:${port}/api/v1/workbench/changes?limit=100`);
     assert.equal(changesResponse.ok, true);
@@ -3741,6 +3820,16 @@ async function main() {
     assert.ok(eventsPayload.events.some((event: any) => event.type === "attachment.preview.requested"));
     assert.ok(eventsPayload.events.some((event: any) => event.type === "attachment.preview.available"));
     assert.ok(eventsPayload.events.some((event: any) => event.type === "attachment.preview.blocked"));
+    const resolvedEvents = eventsPayload.events.filter((event: any) => event.type === "approval.resolved");
+    assert.equal(resolvedEvents.length, 2);
+    const approvedEvents = resolvedEvents.filter((event: any) => event.relatedApprovalId === "mock-approval-preview");
+    const rejectedEvents = resolvedEvents.filter((event: any) => event.relatedApprovalId === "mock-approval-no-preview");
+    assert.equal(approvedEvents.length, 1);
+    assert.equal(rejectedEvents.length, 1);
+    assert.equal(approvedEvents[0].severity, "info");
+    assert.equal(rejectedEvents[0].severity, "medium");
+    assert.deepEqual(approvedEvents[0].metadata.decision, approvePayload.approval.decision);
+    assert.deepEqual(rejectedEvents[0].metadata.decision, rejectPayload.approval.decision);
 
     const approvalsRouteResponse = await fetch(`http://127.0.0.1:${port}/api/v1/approvals`);
     assert.equal(approvalsRouteResponse.ok, true);
@@ -3748,7 +3837,7 @@ async function main() {
     assert.ok(Array.isArray(approvalsRoutePayload.approvals));
     assert.equal(approvalsRoutePayload.count, approvalsRoutePayload.approvals.length);
     assert.equal(approvalsRoutePayload.pendingCount, 0);
-    assert.equal(approvalsRoutePayload.totalCount, 0);
+    assert.equal(approvalsRoutePayload.totalCount, 2);
 
     // POST to execute-graph (streaming). Use a simple node that writes a file.
     const graph = { id: "g-e2e", projectId: "p-e2e", nodes: [{ id: "n1", packet: { intent: "create marker", node_type: "ui", context: { targetFile: "marker.txt" }, filePaths: ["marker.txt"], dependencies: [] } }] };

@@ -15,6 +15,7 @@ import {
   ExecutionEngine,
   InMemoryApprovalQueue,
   InMemoryPrismEventLedger,
+  approvalDecisionStatuses,
   type MemoryDB,
   type PrismEventType,
   getWorkbenchAttachment,
@@ -36,6 +37,7 @@ const TOKEN = ENV_TOKEN || randomBytes(18).toString("hex");
 const DAEMON_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WORKBENCH_HTML_PATH = path.resolve(DAEMON_DIR, "../ui/workbench/index.html");
 const WORKBENCH_SHIM_DIR = path.resolve(DAEMON_DIR, "../ui/workbench/vendor-shims");
+const WORKBENCH_JS_DIR = path.resolve(DAEMON_DIR, "../ui/workbench/js");
 const NODE_MODULES_DIR = path.resolve(DAEMON_DIR, "../node_modules");
 
 async function initEngine() {
@@ -556,9 +558,12 @@ async function sendVendorFile(res: http.ServerResponse, requestPath: string) {
 
 async function sendWorkbenchShimFile(res: http.ServerResponse, requestPath: string) {
   const relative = decodeURIComponent(requestPath.replace(/^\/workbench-shims\//, ""));
-  const resolved = path.resolve(WORKBENCH_SHIM_DIR, relative);
-  const boundary = WORKBENCH_SHIM_DIR.endsWith(path.sep) ? WORKBENCH_SHIM_DIR : `${WORKBENCH_SHIM_DIR}${path.sep}`;
-  if (resolved !== WORKBENCH_SHIM_DIR && !resolved.startsWith(boundary)) {
+  const isWorkbenchModule = relative.startsWith("js/");
+  const root = isWorkbenchModule ? WORKBENCH_JS_DIR : WORKBENCH_SHIM_DIR;
+  const rootRelative = isWorkbenchModule ? relative.slice("js/".length) : relative;
+  const resolved = path.resolve(root, rootRelative);
+  const boundary = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  if (resolved !== root && !resolved.startsWith(boundary)) {
     return jsonResponse(res, 403, { error: "not allowed" });
   }
 
@@ -798,16 +803,53 @@ function getWorkbenchOptions(
     projectLabel: ctx.projectLabel,
     workDirLabel: ctx.workDirLabel,
     daemonStatus: "healthy" as const,
-    mode: "read-only" as const,
+    mode: "approvals-enabled" as const,
     eventLedger: ledger,
     approvalQueue,
   };
+}
+
+function seedMockApprovalFixtures(approvalQueue: InMemoryApprovalQueue) {
+  if (process.env.AI_FORGE_MOCK_EXECUTORS !== "1" || process.env.AI_FORGE_SEED_APPROVALS !== "1") {
+    return;
+  }
+
+  approvalQueue.requestApproval({
+    id: "mock-approval-preview",
+    title: "Apply reviewed local fixture",
+    summary: "Write the reviewed mock fixture into the isolated local work directory.",
+    approvalClass: "write",
+    checkpointPolicy: "before_write",
+    relatedCapabilityId: "mock.fixture.write",
+    relatedArtifactIds: ["mock-artifact-preview"],
+    relatedFilePaths: [".demo/work/mock-preview.txt"],
+    previewAvailable: true,
+    previewSummary: "One local text fixture will be written after a checkpoint.",
+    riskNotes: ["Changes local working state and can be reverted from the checkpoint."],
+    localRemoteBoundary: "local-only",
+    requestedBy: "mock-executor",
+  });
+  approvalQueue.requestApproval({
+    id: "mock-approval-no-preview",
+    title: "Run unpreviewed local fixture",
+    summary: "Exercise the explicit no-preview approval treatment without an external call.",
+    approvalClass: "write",
+    checkpointPolicy: "before_write",
+    relatedCapabilityId: "mock.fixture.unpreviewed",
+    relatedArtifactIds: ["mock-artifact-no-preview"],
+    relatedFilePaths: [".demo/work/mock-no-preview.txt"],
+    previewAvailable: false,
+    riskNotes: ["No preview was generated for this mock-only local write."],
+    localRemoteBoundary: "local-only",
+    requestedBy: "mock-executor",
+  });
 }
 
 async function start() {
   const { engine, graphBuilder } = await initEngine();
   const eventLedger = new InMemoryPrismEventLedger();
   const approvalQueue = new InMemoryApprovalQueue(eventLedger);
+  seedMockApprovalFixtures(approvalQueue);
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -849,6 +891,41 @@ async function start() {
           pendingCount: pendingApprovals.length,
           totalCount: approvals.length,
         });
+      }
+
+      const approvalResolveMatch = url.pathname.match(/^\/api\/v1\/approvals\/([^/]+)\/resolve$/);
+      if (approvalResolveMatch && req.method === "POST") {
+        const approvalId = decodeURIComponent(approvalResolveMatch[1]);
+        const approval = approvalQueue.getApproval(approvalId);
+        if (!approval) {
+          return jsonResponse(res, 404, { error: "approval not found" });
+        }
+        if (approval.status !== "pending") {
+          return jsonResponse(res, 409, { error: "approval is not pending" });
+        }
+
+        const body = await readBody(req);
+        const status = body?.status;
+        const decidedBy = typeof body?.decidedBy === "string" ? body.decidedBy.trim() : "";
+        const reason = typeof body?.reason === "string" ? body.reason.trim() : undefined;
+        const knownDecisionStatus = typeof status === "string"
+          && approvalDecisionStatuses.includes(status as (typeof approvalDecisionStatuses)[number]);
+        if (!knownDecisionStatus || (status !== "approved" && status !== "rejected") || !decidedBy) {
+          return jsonResponse(res, 400, {
+            error: 'expected { status: "approved" | "rejected", decidedBy, reason? }',
+          });
+        }
+        if (body?.reason != null && typeof body.reason !== "string") {
+          return jsonResponse(res, 400, { error: "reason must be a string when provided" });
+        }
+
+        const updated = approvalQueue.resolveApproval(approvalId, {
+          status,
+          decidedAt: new Date().toISOString(),
+          decidedBy,
+          ...(reason ? { reason } : {}),
+        });
+        return jsonResponse(res, 200, { approval: updated });
       }
 
       if (req.method === "GET" && url.pathname === "/api/v1/workbench/resume") {
