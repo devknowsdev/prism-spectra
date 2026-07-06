@@ -164,6 +164,11 @@ async function evalByValue<T>(client: CdpClient, expression: string): Promise<T>
   return result.result.value as T;
 }
 
+async function pressKey(client: CdpClient, key: "Enter" | "Tab"): Promise<void> {
+  await client.send("Input.dispatchKeyEvent", { type: "keyDown", key, code: key, windowsVirtualKeyCode: key === "Enter" ? 13 : 9 });
+  await client.send("Input.dispatchKeyEvent", { type: "keyUp", key, code: key, windowsVirtualKeyCode: key === "Enter" ? 13 : 9 });
+}
+
 function findButtonClickScript(text: string): string {
   return `(() => {
     const buttons = Array.from(document.querySelectorAll('button'));
@@ -258,6 +263,8 @@ async function startDaemon(cwd: string, port: number): Promise<{ stop: () => Pro
       ...process.env,
       AI_FORGE_DAEMON_PORT: String(port),
       AI_FORGE_DAEMON_TOKEN: token,
+      AI_FORGE_MOCK_EXECUTORS: "1",
+      AI_FORGE_SEED_APPROVALS: "1",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -431,6 +438,40 @@ async function main() {
       assert.equal(audioPreviewRequestsBefore, 0, "audio preview should not load before the user clicks the button");
       assert.ok(previewRequests.some((url) => url.includes(`/api/v1/workbench/attachments/${seeded.audioAttachmentId}/preview`)), "audio preview should reach the safe local preview route");
       assert.ok(await evalByValue<boolean>(client, `document.querySelector('[data-attachment-action="audio-preview-play-pause"]') instanceof HTMLButtonElement && !document.querySelector('[data-attachment-action="audio-preview-play-pause"]').disabled`));
+
+      await client.send("Runtime.evaluate", { expression: findButtonClickScript("Approvals") });
+      await waitForExpr(client, `document.querySelector('[data-section="approvals"]')?.classList.contains("active")`);
+      await waitForExpr(client, `document.querySelectorAll('[data-approval-card]').length === 2`);
+      assert.equal(await evalByValue<string>(client, `document.getElementById("approvals-status")?.textContent || ""`), "2 pending · 2 total");
+      assert.equal(await evalByValue<number>(client, `document.querySelectorAll('[data-approval-card][tabindex="0"]').length`), 2);
+      assert.equal(await evalByValue<boolean>(client, `document.querySelector('[data-approval-card="mock-approval-no-preview"]')?.innerText.includes("No preview")`), true);
+      assert.equal(await evalByValue<boolean>(client, `document.querySelector('[data-approval-card="mock-approval-no-preview"]')?.textContent.includes("amber")`), true);
+
+      await client.send("Runtime.evaluate", {
+        expression: `document.querySelector('[data-approval-card="mock-approval-preview"]')?.focus()`,
+      });
+      await pressKey(client, "Enter");
+      assert.equal(await evalByValue<string | null>(client, `document.activeElement?.getAttribute("data-approval-action")`), "approved");
+      await pressKey(client, "Enter");
+      await waitForExpr(client, `document.querySelector('[data-approval-card="mock-approval-preview"]')?.innerText.includes("Approved")`);
+
+      await client.send("Runtime.evaluate", {
+        expression: `document.querySelector('[data-approval-card="mock-approval-no-preview"]')?.focus()`,
+      });
+      await pressKey(client, "Enter");
+      assert.equal(await evalByValue<string | null>(client, `document.activeElement?.getAttribute("data-approval-action")`), "approved");
+      await pressKey(client, "Tab");
+      assert.equal(await evalByValue<string | null>(client, `document.activeElement?.getAttribute("data-approval-action")`), "rejected");
+      await pressKey(client, "Enter");
+      await waitForExpr(client, `document.querySelector('[data-approval-card="mock-approval-no-preview"]')?.innerText.includes("Denied")`);
+      assert.equal(await evalByValue<string>(client, `document.getElementById("approvals-status")?.textContent || ""`), "0 pending · 2 total");
+
+      const eventsResponse = await fetch(`http://127.0.0.1:${daemonPort}/api/v1/events`);
+      assert.equal(eventsResponse.ok, true);
+      const eventsPayload = await eventsResponse.json();
+      const resolvedEvents = eventsPayload.events.filter((event: any) => event.type === "approval.resolved");
+      assert.equal(resolvedEvents.length, 2);
+      assert.deepEqual(resolvedEvents.map((event: any) => event.metadata.decision.status).sort(), ["approved", "rejected"]);
     } finally {
       await client.close().catch(() => {});
     }
