@@ -92,7 +92,9 @@ import {
   APP_PREVIEW_IGNORED_DIRECTORIES,
   APP_PREVIEW_LIVERELOAD_TAG,
   createAppPreviewWatcher,
+  createAppPreviews,
   injectAppPreviewLiveReload,
+  loadAppPreviewChangePipelineConfigs,
   loadAppPreviewDirectories,
   loadWorkbenchChangePipelineConfig,
   resolveAppPreviewFile,
@@ -3370,6 +3372,199 @@ async function main() {
     assert.deepEqual(result, { validated: false, reloaded: true });
     assert.equal(reloads, 1);
     assert.equal(ledger.list().filter((event) => event.source === "pipeline").length, 0);
+  });
+
+  await test("change pipeline tags provenance with the given target and keeps the Workbench default byte-for-byte", async () => {
+    // Focus/EPK path: an explicit target flows into every pipeline event.
+    const focusLedger = new InMemoryPrismEventLedger({ sessionId: "session-target-focus" });
+    await handleWorkbenchChangePipeline({
+      target: "focus",
+      config: { validate: "npm run build" },
+      eventLedger: focusLedger,
+      emitReload: () => {},
+      workDir: "/tmp/spectra-focus",
+      runsCleanFn: async () => ({ passed: true }),
+    });
+    const focusEvents = focusLedger.list().filter((event) => event.source === "pipeline");
+    assert.ok(focusEvents.length === 3);
+    assert.ok(focusEvents.every((event) => event.metadata?.target === "focus"));
+    assert.ok(focusEvents.every((event) => event.sessionId === "session-target-focus"));
+    assert.ok(focusEvents.some((event) => event.summary === "Focus change detected"));
+
+    // Regression: no target defaults to the Workbench with the exact #43 wording
+    // and metadata, so the shipped Workbench pipeline is unchanged.
+    const workbenchLedger = new InMemoryPrismEventLedger({ sessionId: "session-target-default" });
+    await handleWorkbenchChangePipeline({
+      config: { validate: "npm run typecheck" },
+      eventLedger: workbenchLedger,
+      emitReload: () => {},
+      workDir: "/tmp/spectra-workbench",
+      runsCleanFn: async () => ({ passed: true }),
+    });
+    const workbenchEvents = workbenchLedger.list().filter((event) => event.source === "pipeline");
+    assert.ok(workbenchEvents.every((event) => event.metadata?.target === "workbench"));
+    assert.deepEqual(
+      workbenchEvents
+        .slice()
+        .sort((left, right) => left.summary.localeCompare(right.summary))
+        .map((event) => event.summary),
+      ["Workbench change detected", "Workbench validation passed", "Workbench validation started"],
+    );
+  });
+
+  await test("app preview config parses per-app validate objects and legacy directory strings", async () => {
+    const previewRoot = path.join(ROOT, "app-preview-config");
+    const focusDir = path.join(previewRoot, "focus");
+    const epkDir = path.join(previewRoot, "epk-public");
+    fs.mkdirSync(focusDir, { recursive: true });
+    fs.mkdirSync(epkDir, { recursive: true });
+
+    const configPath = path.join(previewRoot, "spectra.preview.local.json");
+    fs.writeFileSync(configPath, JSON.stringify({
+      focus: {
+        dir: "./focus",
+        validate: "npm run build",
+        reloadOnValidationFailure: false,
+      },
+      epk: "./epk-public",
+    }));
+
+    const directories = loadAppPreviewDirectories(configPath);
+    assert.equal(directories.get("focus"), fs.realpathSync(focusDir));
+    assert.equal(directories.get("epk"), fs.realpathSync(epkDir));
+
+    const pipelineConfigs = loadAppPreviewChangePipelineConfigs(configPath);
+    assert.deepEqual(pipelineConfigs.get("focus"), {
+      validate: "npm run build",
+      reloadOnValidationFailure: false,
+    });
+    // Legacy bare-string app has no validation command → no regression path.
+    assert.deepEqual(pipelineConfigs.get("epk"), { reloadOnValidationFailure: false });
+
+    fs.writeFileSync(configPath, JSON.stringify({ focus: { validate: "x" } }));
+    assert.throws(() => loadAppPreviewChangePipelineConfigs(configPath), /must include a directory path/);
+  });
+
+  await test("app preview pipeline validates Focus changes and reloads with session-stamped provenance", async () => {
+    const previewRoot = path.join(ROOT, "app-preview-focus-pass");
+    const focusDir = path.join(previewRoot, "focus");
+    fs.mkdirSync(focusDir, { recursive: true });
+    fs.writeFileSync(path.join(focusDir, "index.html"), "<body>Focus</body>");
+
+    const ledger = new InMemoryPrismEventLedger({ sessionId: "session-focus-pass" });
+    const runs: Array<{ command: string; cwd: string }> = [];
+    const previews = createAppPreviews(
+      new Map([["focus", fs.realpathSync(focusDir)]]),
+      {
+        eventLedger: ledger,
+        pipelineConfigs: new Map([["focus", { validate: "npm run build" }]]),
+        runsCleanFn: async (command, cwd) => {
+          runs.push({ command, cwd });
+          return { passed: true };
+        },
+      },
+    );
+    const reloadEvents: string[] = [];
+    const unsubscribe = subscribeWorkbenchReloadSse(
+      previews.get("focus")!.reloadHub,
+      (event) => reloadEvents.push(event),
+    );
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      fs.writeFileSync(path.join(focusDir, "index.html"), "<body>Focus changed</body>");
+      await new Promise((resolve) => setTimeout(resolve, 400));
+
+      assert.deepEqual(reloadEvents, [WORKBENCH_RELOAD_SSE_EVENT]);
+      assert.deepEqual(runs, [{ command: "npm run build", cwd: fs.realpathSync(focusDir) }]);
+      const pipelineEvents = ledger.list().filter((event) => event.source === "pipeline");
+      assert.deepEqual(new Set(pipelineEvents.map((event) => event.type)), new Set([
+        "pipeline.change.detected",
+        "pipeline.validation.started",
+        "pipeline.validation.passed",
+      ]));
+      assert.ok(pipelineEvents.every((event) => event.metadata?.target === "focus"));
+      assert.ok(pipelineEvents.every((event) => event.sessionId === "session-focus-pass"));
+    } finally {
+      unsubscribe();
+      previews.get("focus")!.watcher.close();
+    }
+  });
+
+  await test("app preview pipeline holds the EPK reload on failed validation and records the reason", async () => {
+    const previewRoot = path.join(ROOT, "app-preview-epk-fail");
+    const epkDir = path.join(previewRoot, "epk-public");
+    fs.mkdirSync(epkDir, { recursive: true });
+    fs.writeFileSync(path.join(epkDir, "index.html"), "<body>EPK</body>");
+
+    const ledger = new InMemoryPrismEventLedger({ sessionId: "session-epk-fail" });
+    const previews = createAppPreviews(
+      new Map([["epk", fs.realpathSync(epkDir)]]),
+      {
+        eventLedger: ledger,
+        pipelineConfigs: new Map([["epk", { validate: "npm test" }]]),
+        runsCleanFn: async () => ({ passed: false, reason: "epk build failed" }),
+      },
+    );
+    const reloadEvents: string[] = [];
+    const unsubscribe = subscribeWorkbenchReloadSse(
+      previews.get("epk")!.reloadHub,
+      (event) => reloadEvents.push(event),
+    );
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      fs.writeFileSync(path.join(epkDir, "index.html"), "<body>EPK changed</body>");
+      await new Promise((resolve) => setTimeout(resolve, 400));
+
+      assert.deepEqual(reloadEvents, []);
+      const pipelineEvents = ledger.list().filter((event) => event.source === "pipeline");
+      assert.deepEqual(new Set(pipelineEvents.map((event) => event.type)), new Set([
+        "pipeline.change.detected",
+        "pipeline.validation.started",
+        "pipeline.validation.failed",
+      ]));
+      const failed = pipelineEvents.find((event) => event.type === "pipeline.validation.failed");
+      assert.equal(failed?.metadata?.target, "epk");
+      assert.equal(failed?.metadata?.reason, "epk build failed");
+      assert.ok(pipelineEvents.every((event) => event.sessionId === "session-epk-fail"));
+    } finally {
+      unsubscribe();
+      previews.get("epk")!.watcher.close();
+    }
+  });
+
+  await test("app preview without a configured command reloads directly with zero pipeline events", async () => {
+    const previewRoot = path.join(ROOT, "app-preview-none");
+    const focusDir = path.join(previewRoot, "focus");
+    fs.mkdirSync(focusDir, { recursive: true });
+    fs.writeFileSync(path.join(focusDir, "index.html"), "<body>Focus</body>");
+
+    const ledger = new InMemoryPrismEventLedger({ sessionId: "session-app-none" });
+    const previews = createAppPreviews(
+      new Map([["focus", fs.realpathSync(focusDir)]]),
+      {
+        eventLedger: ledger,
+        pipelineConfigs: new Map([["focus", { reloadOnValidationFailure: false }]]),
+        runsCleanFn: async () => {
+          throw new Error("validation should not run without a command");
+        },
+      },
+    );
+    const reloadEvents: string[] = [];
+    const unsubscribe = subscribeWorkbenchReloadSse(
+      previews.get("focus")!.reloadHub,
+      (event) => reloadEvents.push(event),
+    );
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      fs.writeFileSync(path.join(focusDir, "index.html"), "<body>Focus changed</body>");
+      await new Promise((resolve) => setTimeout(resolve, 400));
+
+      assert.deepEqual(reloadEvents, [WORKBENCH_RELOAD_SSE_EVENT]);
+      assert.equal(ledger.list().filter((event) => event.source === "pipeline").length, 0);
+    } finally {
+      unsubscribe();
+      previews.get("focus")!.watcher.close();
+    }
   });
 
   await test("app preview config, HTML injection, and watcher stay local and app-scoped", async () => {

@@ -122,6 +122,30 @@ runs that local command before reload. Passing validation emits the reload;
 failed validation records pipeline provenance and holds the reload by default.
 Leaving `workbench.validate` unset preserves the original change-to-reload path.
 
+The Focus and EPK previews can opt into the same change→validate→reload
+pipeline. Give an app an object value with a `validate` command (instead of a
+bare directory string) in the local config:
+
+```json
+{
+  "focus": {
+    "dir": "../prism-focus",
+    "validate": "npm run build",
+    "reloadOnValidationFailure": false
+  },
+  "epk": "../EPK/EPK/public"
+}
+```
+
+A debounced change in a watched app dir then runs that app's local command
+before its preview reloads, emitting the same `pipeline.*` provenance (tagged
+with the app as its target) under the current session. Passing validation
+reloads; failed validation holds the last-good preview by default (flip
+`reloadOnValidationFailure` to reload anyway). An app left as a bare directory
+string — or with no `validate` — keeps the original change-to-reload path with
+zero pipeline events. The command runs only from this local, git-ignored config,
+never from a request, repo, or AI.
+
 Read-only AI gateway launch, only when intentionally testing suite AI request routing:
 
 ```bash
