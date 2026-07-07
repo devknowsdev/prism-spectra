@@ -40,11 +40,13 @@ import {
 import {
   createAppPreviews,
   injectAppPreviewLiveReload,
+  loadWorkbenchChangePipelineConfig,
   loadAppPreviewDirectories,
   resolveAppPreviewFile,
   type AppPreview,
   type AppPreviewName,
 } from "../src/workbench/appPreview.js";
+import { handleWorkbenchChangePipeline } from "../src/workbench/changePipeline.js";
 
 const PORT = Number(process.env.AI_FORGE_DAEMON_PORT ?? 3000);
 const HOST = process.env.AI_FORGE_DAEMON_HOST ?? "127.0.0.1";
@@ -1032,10 +1034,22 @@ async function start() {
   const approvalQueue = new InMemoryApprovalQueue(eventLedger);
   seedMockApprovalFixtures(approvalQueue);
   const workbenchReloadHub = new WorkbenchReloadHub();
+  const workbenchChangePipelineConfig = WORKBENCH_WATCH_ENABLED
+    ? loadWorkbenchChangePipelineConfig(APP_PREVIEW_CONFIG_PATH)
+    : { reloadOnValidationFailure: false };
   const workbenchWatcher = WORKBENCH_WATCH_ENABLED
     ? createWorkbenchWatcher({
         workbenchDir: WORKBENCH_DIR,
-        onReload: () => workbenchReloadHub.emitReload(),
+        onReload: () => {
+          void handleWorkbenchChangePipeline({
+            config: workbenchChangePipelineConfig,
+            eventLedger,
+            emitReload: () => workbenchReloadHub.emitReload(),
+            workDir: process.cwd(),
+          }).catch((error) => {
+            console.warn("[daemon] Workbench change pipeline failed:", error);
+          });
+        },
       })
     : null;
   const appPreviewDirectories = APP_PREVIEW_ENABLED

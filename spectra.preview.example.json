@@ -1,4 +1,8 @@
 {
   "focus": "../prism-focus",
-  "epk": "../EPK/EPK/public"
+  "epk": "../EPK/EPK/public",
+  "workbench": {
+    "validate": "npm run typecheck",
+    "reloadOnValidationFailure": false
+  }
 }

@@ -106,6 +106,22 @@ somewhere else. Spectra observes app directories read-only and injects its
 reload client only into local preview HTML responses; it never changes app
 files.
 
+The same local config can opt the Workbench watcher into a validation gate:
+
+```json
+{
+  "workbench": {
+    "validate": "npm run typecheck",
+    "reloadOnValidationFailure": false
+  }
+}
+```
+
+When `AI_FORGE_WORKBENCH_WATCH=1` is enabled, a debounced Workbench UI change
+runs that local command before reload. Passing validation emits the reload;
+failed validation records pipeline provenance and holds the reload by default.
+Leaving `workbench.validate` unset preserves the original change-to-reload path.
+
 Read-only AI gateway launch, only when intentionally testing suite AI request routing:
 
 ```bash
