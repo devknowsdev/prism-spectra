@@ -1,5 +1,9 @@
 {
-  "focus": "../prism-focus",
+  "focus": {
+    "dir": "../prism-focus",
+    "validate": "npm run build",
+    "reloadOnValidationFailure": false
+  },
   "epk": "../EPK/EPK/public",
   "workbench": {
     "validate": "npm run typecheck",

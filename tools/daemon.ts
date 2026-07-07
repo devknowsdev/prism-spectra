@@ -41,11 +41,13 @@ import {
   createAppPreviews,
   injectAppPreviewLiveReload,
   loadWorkbenchChangePipelineConfig,
+  loadAppPreviewChangePipelineConfigs,
   loadAppPreviewDirectories,
   resolveAppPreviewFile,
   type AppPreview,
   type AppPreviewName,
 } from "../src/workbench/appPreview.js";
+import type { WorkbenchChangePipelineConfig } from "../src/workbench/changePipeline.js";
 import { handleWorkbenchChangePipeline } from "../src/workbench/changePipeline.js";
 
 const PORT = Number(process.env.AI_FORGE_DAEMON_PORT ?? 3000);
@@ -1055,7 +1057,13 @@ async function start() {
   const appPreviewDirectories = APP_PREVIEW_ENABLED
     ? loadAppPreviewDirectories(APP_PREVIEW_CONFIG_PATH)
     : new Map<AppPreviewName, string>();
-  const appPreviews = createAppPreviews(appPreviewDirectories);
+  const appPreviewPipelineConfigs = APP_PREVIEW_ENABLED
+    ? loadAppPreviewChangePipelineConfigs(APP_PREVIEW_CONFIG_PATH)
+    : new Map<AppPreviewName, WorkbenchChangePipelineConfig>();
+  const appPreviews = createAppPreviews(appPreviewDirectories, {
+    eventLedger,
+    pipelineConfigs: appPreviewPipelineConfigs,
+  });
   const runningAppPreviews = await startAppPreviewServers(appPreviews);
 
   const server = http.createServer(async (req, res) => {

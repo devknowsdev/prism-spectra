@@ -1,6 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { WorkbenchChangePipelineConfig } from "./changePipeline.js";
+import type { PrismEventLedger } from "../events/ledger.js";
+import type { ValidationOutcome } from "../safety/validation.js";
+import {
+  handleWorkbenchChangePipeline,
+  type WorkbenchChangePipelineConfig,
+} from "./changePipeline.js";
 import { WorkbenchReloadHub, type WorkbenchWatcher } from "./liveReload.js";
 
 export const APP_PREVIEW_NAMES = ["focus", "epk"] as const;
@@ -40,6 +45,70 @@ function readPreviewConfigObject(configPath: string): Record<string, unknown> | 
   return parsed as Record<string, unknown>;
 }
 
+// Parse the `validate` / `reloadOnValidationFailure` pipeline fields shared by
+// the workbench and per-app (focus/epk) config objects. `label` names the
+// config section in error messages (e.g. "workbench", "focus").
+function parsePipelineFields(
+  section: Record<string, unknown>,
+  label: string,
+): WorkbenchChangePipelineConfig {
+  const validate = section.validate;
+  if (validate != null && validate !== "" && typeof validate !== "string") {
+    throw new Error(`app preview config "${label}.validate" must be a command string`);
+  }
+  const reloadOnValidationFailure = section.reloadOnValidationFailure;
+  if (reloadOnValidationFailure != null && typeof reloadOnValidationFailure !== "boolean") {
+    throw new Error(`app preview config "${label}.reloadOnValidationFailure" must be a boolean`);
+  }
+
+  return {
+    validate: typeof validate === "string" && validate.trim() ? validate.trim() : undefined,
+    reloadOnValidationFailure: reloadOnValidationFailure === true,
+  };
+}
+
+interface AppPreviewEntry {
+  directory: string;
+  pipeline: WorkbenchChangePipelineConfig;
+}
+
+// Resolve a single focus/epk entry, which may be either a bare directory-path
+// string (legacy #38/#40 form) or an object `{ dir, validate?,
+// reloadOnValidationFailure? }`. The object form co-locates the per-app
+// validation command with its directory, mirroring the workbench section.
+function readAppPreviewEntry(
+  parsed: Record<string, unknown>,
+  app: AppPreviewName,
+  configPath: string,
+): AppPreviewEntry | null {
+  const configured = parsed[app];
+  if (configured == null || configured === "") return null;
+
+  let dirValue: unknown;
+  let pipeline: WorkbenchChangePipelineConfig = { reloadOnValidationFailure: false };
+
+  if (typeof configured === "string") {
+    dirValue = configured;
+  } else if (typeof configured === "object" && !Array.isArray(configured)) {
+    const section = configured as Record<string, unknown>;
+    dirValue = section.dir;
+    pipeline = parsePipelineFields(section, app);
+  } else {
+    throw new Error(`app preview config "${app}" must be a directory path or an object`);
+  }
+
+  if (typeof dirValue !== "string" || dirValue === "") {
+    throw new Error(`app preview config "${app}" must include a directory path`);
+  }
+
+  const directory = path.resolve(path.dirname(configPath), dirValue);
+  const stat = fs.statSync(directory);
+  if (!stat.isDirectory()) {
+    throw new Error(`app preview config "${app}" is not a directory: ${directory}`);
+  }
+  return { directory: fs.realpathSync(directory), pipeline };
+}
+
 export function loadAppPreviewDirectories(
   configPath: string,
 ): Map<AppPreviewName, string> {
@@ -48,21 +117,26 @@ export function loadAppPreviewDirectories(
 
   const directories = new Map<AppPreviewName, string>();
   for (const app of APP_PREVIEW_NAMES) {
-    const configured = parsed[app];
-    if (configured == null || configured === "") continue;
-    if (typeof configured !== "string") {
-      throw new Error(`app preview config "${app}" must be a directory path`);
-    }
-
-    const directory = path.resolve(path.dirname(configPath), configured);
-    const stat = fs.statSync(directory);
-    if (!stat.isDirectory()) {
-      throw new Error(`app preview config "${app}" is not a directory: ${directory}`);
-    }
-    directories.set(app, fs.realpathSync(directory));
+    const entry = readAppPreviewEntry(parsed, app, configPath);
+    if (entry) directories.set(app, entry.directory);
   }
 
   return directories;
+}
+
+export function loadAppPreviewChangePipelineConfigs(
+  configPath: string,
+): Map<AppPreviewName, WorkbenchChangePipelineConfig> {
+  const parsed = readPreviewConfigObject(configPath);
+  const configs = new Map<AppPreviewName, WorkbenchChangePipelineConfig>();
+  if (parsed == null) return configs;
+
+  for (const app of APP_PREVIEW_NAMES) {
+    const entry = readAppPreviewEntry(parsed, app, configPath);
+    if (entry) configs.set(app, entry.pipeline);
+  }
+
+  return configs;
 }
 
 export function loadWorkbenchChangePipelineConfig(
@@ -79,20 +153,7 @@ export function loadWorkbenchChangePipelineConfig(
     throw new Error('app preview config "workbench" must be an object');
   }
 
-  const workbench = configured as Record<string, unknown>;
-  const validate = workbench.validate;
-  if (validate != null && validate !== "" && typeof validate !== "string") {
-    throw new Error('app preview config "workbench.validate" must be a command string');
-  }
-  const reloadOnValidationFailure = workbench.reloadOnValidationFailure;
-  if (reloadOnValidationFailure != null && typeof reloadOnValidationFailure !== "boolean") {
-    throw new Error('app preview config "workbench.reloadOnValidationFailure" must be a boolean');
-  }
-
-  return {
-    validate: typeof validate === "string" && validate.trim() ? validate.trim() : undefined,
-    reloadOnValidationFailure: reloadOnValidationFailure === true,
-  };
+  return parsePipelineFields(configured as Record<string, unknown>, "workbench");
 }
 
 export function injectAppPreviewLiveReload(html: string): string {
@@ -179,20 +240,50 @@ export function createAppPreviewWatcher(options: {
   };
 }
 
+export interface CreateAppPreviewsOptions {
+  /** Ledger used to record pipeline.* provenance for validated app changes. */
+  eventLedger?: PrismEventLedger;
+  /** Per-app validation config (from the local git-ignored preview config). */
+  pipelineConfigs?: ReadonlyMap<AppPreviewName, WorkbenchChangePipelineConfig>;
+  /** Test seam: override the shell runner used by the change pipeline. */
+  runsCleanFn?: (command: string, cwd: string) => Promise<ValidationOutcome>;
+}
+
 export function createAppPreviews(
   directories: ReadonlyMap<AppPreviewName, string>,
+  options: CreateAppPreviewsOptions = {},
 ): Map<AppPreviewName, AppPreview> {
   const previews = new Map<AppPreviewName, AppPreview>();
   try {
     for (const [app, directory] of directories) {
       const reloadHub = new WorkbenchReloadHub();
+      const pipelineConfig = options.pipelineConfigs?.get(app);
+      const eventLedger = options.eventLedger;
       previews.set(app, {
         app,
         directory,
         reloadHub,
         watcher: createAppPreviewWatcher({
           appDir: directory,
-          onReload: () => reloadHub.emitReload(),
+          onReload: () => {
+            // No configured command (or no ledger to record into) → byte-for-byte
+            // the pre-pipeline behaviour: a direct reload with zero pipeline.*
+            // events. Identical to how #43 treats an unconfigured Workbench.
+            if (!eventLedger || !pipelineConfig?.validate?.trim()) {
+              reloadHub.emitReload();
+              return;
+            }
+            void handleWorkbenchChangePipeline({
+              target: app,
+              config: pipelineConfig,
+              eventLedger,
+              emitReload: () => reloadHub.emitReload(),
+              workDir: directory,
+              runsCleanFn: options.runsCleanFn,
+            }).catch((error) => {
+              console.warn(`[app-preview] ${app} change pipeline failed:`, error);
+            });
+          },
         }),
       });
     }

@@ -3,12 +3,30 @@ import { runsClean, type ValidationOutcome } from "../safety/validation.js";
 
 export const WORKBENCH_PIPELINE_TARGET = "workbench";
 
+// Human-readable label for a pipeline target used in event summaries. Known
+// targets get a curated label; anything else falls back to a capitalized form.
+// "workbench" -> "Workbench" keeps the shipped #43 summaries byte-for-byte.
+function pipelineTargetLabel(target: string): string {
+  switch (target) {
+    case "workbench":
+      return "Workbench";
+    case "focus":
+      return "Focus";
+    case "epk":
+      return "EPK";
+    default:
+      return target.charAt(0).toUpperCase() + target.slice(1);
+  }
+}
+
 export interface WorkbenchChangePipelineConfig {
   validate?: string;
   reloadOnValidationFailure?: boolean;
 }
 
 export interface WorkbenchChangePipelineOptions {
+  /** Which watched target this change belongs to. Defaults to the Workbench. */
+  target?: string;
   config?: WorkbenchChangePipelineConfig;
   eventLedger: PrismEventLedger;
   emitReload: () => void;
@@ -26,6 +44,8 @@ export interface WorkbenchChangePipelineResult {
 export async function handleWorkbenchChangePipeline(
   options: WorkbenchChangePipelineOptions,
 ): Promise<WorkbenchChangePipelineResult> {
+  const target = options.target?.trim() || WORKBENCH_PIPELINE_TARGET;
+  const label = pipelineTargetLabel(target);
   const command = options.config?.validate?.trim();
   if (!command) {
     options.emitReload();
@@ -34,27 +54,27 @@ export async function handleWorkbenchChangePipeline(
 
   options.eventLedger.append({
     type: "pipeline.change.detected",
-    summary: "Workbench change detected",
+    summary: `${label} change detected`,
     severity: "info",
     source: "pipeline",
-    metadata: { target: WORKBENCH_PIPELINE_TARGET },
+    metadata: { target },
   });
   options.eventLedger.append({
     type: "pipeline.validation.started",
-    summary: "Workbench validation started",
+    summary: `${label} validation started`,
     severity: "info",
     source: "pipeline",
-    metadata: { target: WORKBENCH_PIPELINE_TARGET, command },
+    metadata: { target, command },
   });
 
   const outcome = await (options.runsCleanFn ?? runsClean)(command, options.workDir);
   if (outcome.passed) {
     options.eventLedger.append({
       type: "pipeline.validation.passed",
-      summary: "Workbench validation passed",
+      summary: `${label} validation passed`,
       severity: "info",
       source: "pipeline",
-      metadata: { target: WORKBENCH_PIPELINE_TARGET, command },
+      metadata: { target, command },
     });
     options.emitReload();
     return { validated: true, passed: true, reloaded: true };
@@ -63,10 +83,10 @@ export async function handleWorkbenchChangePipeline(
   const reason = outcome.reason ?? "validation command failed";
   options.eventLedger.append({
     type: "pipeline.validation.failed",
-    summary: "Workbench validation failed",
+    summary: `${label} validation failed`,
     severity: "medium",
     source: "pipeline",
-    metadata: { target: WORKBENCH_PIPELINE_TARGET, command, reason },
+    metadata: { target, command, reason },
   });
 
   if (options.config?.reloadOnValidationFailure === true) {
