@@ -1,3 +1,4 @@
 export * from "./attachments.js";
+export * from "./changePipeline.js";
 export * from "./conversations.js";
 export * from "./dataSpine.js";

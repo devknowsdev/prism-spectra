@@ -47,7 +47,7 @@ export async function validate(packet: TaskPacket, result: ExecutionResult, work
   return { passed: true };
 }
 
-async function runsClean(command: string, cwd: string): Promise<ValidationOutcome> {
+export async function runsClean(command: string, cwd: string): Promise<ValidationOutcome> {
   try {
     await execFileAsync("/bin/sh", ["-c", command], { cwd, timeout: 60_000 });
     return { passed: true };

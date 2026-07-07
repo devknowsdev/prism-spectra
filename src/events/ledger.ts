@@ -29,6 +29,10 @@ export const prismEventTypes = [
   "job.completed",
   "job.cancelled",
   "job.failed",
+  "pipeline.change.detected",
+  "pipeline.validation.started",
+  "pipeline.validation.passed",
+  "pipeline.validation.failed",
   "system.notice",
   "system.warning",
   "system.error",
@@ -47,6 +51,7 @@ export const prismEventSources = [
   "artifact",
   "attachment",
   "job",
+  "pipeline",
   "system",
   "conversation",
 ] as const;

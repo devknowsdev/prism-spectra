@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import type { WorkbenchChangePipelineConfig } from "./changePipeline.js";
 import { WorkbenchReloadHub, type WorkbenchWatcher } from "./liveReload.js";
 
 export const APP_PREVIEW_NAMES = ["focus", "epk"] as const;
@@ -21,15 +22,13 @@ export interface AppPreview {
   watcher: WorkbenchWatcher;
 }
 
-export function loadAppPreviewDirectories(
-  configPath: string,
-): Map<AppPreviewName, string> {
+function readPreviewConfigObject(configPath: string): Record<string, unknown> | null {
   let raw: string;
   try {
     raw = fs.readFileSync(configPath, "utf-8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return new Map();
+      return null;
     }
     throw error;
   }
@@ -38,10 +37,18 @@ export function loadAppPreviewDirectories(
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error(`app preview config must be a JSON object: ${configPath}`);
   }
+  return parsed as Record<string, unknown>;
+}
+
+export function loadAppPreviewDirectories(
+  configPath: string,
+): Map<AppPreviewName, string> {
+  const parsed = readPreviewConfigObject(configPath);
+  if (parsed == null) return new Map();
 
   const directories = new Map<AppPreviewName, string>();
   for (const app of APP_PREVIEW_NAMES) {
-    const configured = (parsed as Record<string, unknown>)[app];
+    const configured = parsed[app];
     if (configured == null || configured === "") continue;
     if (typeof configured !== "string") {
       throw new Error(`app preview config "${app}" must be a directory path`);
@@ -56,6 +63,36 @@ export function loadAppPreviewDirectories(
   }
 
   return directories;
+}
+
+export function loadWorkbenchChangePipelineConfig(
+  configPath: string,
+): WorkbenchChangePipelineConfig {
+  const parsed = readPreviewConfigObject(configPath);
+  if (parsed == null) return { reloadOnValidationFailure: false };
+
+  const configured = parsed.workbench;
+  if (configured == null || configured === "") {
+    return { reloadOnValidationFailure: false };
+  }
+  if (!configured || typeof configured !== "object" || Array.isArray(configured)) {
+    throw new Error('app preview config "workbench" must be an object');
+  }
+
+  const workbench = configured as Record<string, unknown>;
+  const validate = workbench.validate;
+  if (validate != null && validate !== "" && typeof validate !== "string") {
+    throw new Error('app preview config "workbench.validate" must be a command string');
+  }
+  const reloadOnValidationFailure = workbench.reloadOnValidationFailure;
+  if (reloadOnValidationFailure != null && typeof reloadOnValidationFailure !== "boolean") {
+    throw new Error('app preview config "workbench.reloadOnValidationFailure" must be a boolean');
+  }
+
+  return {
+    validate: typeof validate === "string" && validate.trim() ? validate.trim() : undefined,
+    reloadOnValidationFailure: reloadOnValidationFailure === true,
+  };
 }
 
 export function injectAppPreviewLiveReload(html: string): string {

@@ -94,8 +94,10 @@ import {
   createAppPreviewWatcher,
   injectAppPreviewLiveReload,
   loadAppPreviewDirectories,
+  loadWorkbenchChangePipelineConfig,
   resolveAppPreviewFile,
 } from "../src/workbench/appPreview.js";
+import { handleWorkbenchChangePipeline } from "../src/workbench/changePipeline.js";
 import {
   SANDBOX_DIR,
   SANDBOX_FIXTURES_DIR,
@@ -3288,6 +3290,88 @@ async function main() {
     }
   });
 
+  await test("workbench change pipeline reloads after passing validation and emits session events", async () => {
+    const ledger = new InMemoryPrismEventLedger({ sessionId: "session-pipeline-pass" });
+    const runs: Array<{ command: string; cwd: string }> = [];
+    let reloads = 0;
+    const result = await handleWorkbenchChangePipeline({
+      config: { validate: "npm run typecheck" },
+      eventLedger: ledger,
+      emitReload: () => {
+        reloads += 1;
+      },
+      workDir: "/tmp/spectra-work",
+      runsCleanFn: async (command, cwd) => {
+        runs.push({ command, cwd });
+        return { passed: true };
+      },
+    });
+
+    assert.deepEqual(result, { validated: true, passed: true, reloaded: true });
+    assert.equal(reloads, 1);
+    assert.deepEqual(runs, [{ command: "npm run typecheck", cwd: "/tmp/spectra-work" }]);
+    const pipelineEvents = ledger.list().filter((event) => event.source === "pipeline");
+    assert.deepEqual(new Set(pipelineEvents.map((event) => event.type)), new Set([
+      "pipeline.change.detected",
+      "pipeline.validation.started",
+      "pipeline.validation.passed",
+    ]));
+    assert.equal(pipelineEvents.length, 3);
+    assert.ok(pipelineEvents.every((event) => event.sessionId === "session-pipeline-pass"));
+  });
+
+  await test("workbench change pipeline holds reload after failed validation and records reason", async () => {
+    const ledger = new InMemoryPrismEventLedger({ sessionId: "session-pipeline-fail" });
+    let reloads = 0;
+    const result = await handleWorkbenchChangePipeline({
+      config: { validate: "npm test" },
+      eventLedger: ledger,
+      emitReload: () => {
+        reloads += 1;
+      },
+      workDir: "/tmp/spectra-work",
+      runsCleanFn: async () => ({ passed: false, reason: "tests failed" }),
+    });
+
+    assert.deepEqual(result, {
+      validated: true,
+      passed: false,
+      reloaded: false,
+      reason: "tests failed",
+    });
+    assert.equal(reloads, 0);
+    const pipelineEvents = ledger.list().filter((event) => event.source === "pipeline");
+    assert.deepEqual(new Set(pipelineEvents.map((event) => event.type)), new Set([
+      "pipeline.change.detected",
+      "pipeline.validation.started",
+      "pipeline.validation.failed",
+    ]));
+    assert.equal(pipelineEvents.length, 3);
+    assert.ok(pipelineEvents.every((event) => event.sessionId === "session-pipeline-fail"));
+    const failed = pipelineEvents.find((event) => event.type === "pipeline.validation.failed");
+    assert.equal(failed?.metadata?.reason, "tests failed");
+  });
+
+  await test("workbench change pipeline without a command preserves direct reload and emits no pipeline events", async () => {
+    const ledger = new InMemoryPrismEventLedger({ sessionId: "session-pipeline-none" });
+    let reloads = 0;
+    const result = await handleWorkbenchChangePipeline({
+      config: {},
+      eventLedger: ledger,
+      emitReload: () => {
+        reloads += 1;
+      },
+      workDir: "/tmp/spectra-work",
+      runsCleanFn: async () => {
+        throw new Error("validation should not run without a command");
+      },
+    });
+
+    assert.deepEqual(result, { validated: false, reloaded: true });
+    assert.equal(reloads, 1);
+    assert.equal(ledger.list().filter((event) => event.source === "pipeline").length, 0);
+  });
+
   await test("app preview config, HTML injection, and watcher stay local and app-scoped", async () => {
     const previewRoot = path.join(ROOT, "app-preview");
     const focusDir = path.join(previewRoot, "focus");
@@ -3307,10 +3391,18 @@ async function main() {
     fs.writeFileSync(configPath, JSON.stringify({
       focus: "./focus",
       epk: "./epk-public",
+      workbench: {
+        validate: "npm run typecheck",
+        reloadOnValidationFailure: false,
+      },
     }));
     const directories = loadAppPreviewDirectories(configPath);
     assert.equal(directories.get("focus"), fs.realpathSync(focusDir));
     assert.equal(directories.get("epk"), fs.realpathSync(epkDir));
+    assert.deepEqual(loadWorkbenchChangePipelineConfig(configPath), {
+      validate: "npm run typecheck",
+      reloadOnValidationFailure: false,
+    });
     assert.equal((await resolveAppPreviewFile(focusDir, "")), focusHtmlPath);
     assert.equal(await resolveAppPreviewFile(focusDir, "../epk-public/index.html"), null);
 
