@@ -3,6 +3,7 @@ import { listWorkbenchAttachments, type WorkbenchAttachmentSummary as WorkbenchP
 import { listWorkbenchConversations, type WorkbenchConversationSummary as WorkbenchProjectConversationSummary } from "./conversations.js";
 import type { MemoryDB } from "../memory/db.js";
 import type { PrismEvent, PrismEventLedger } from "../events/index.js";
+import type { SpectraSession } from "../sessions/index.js";
 
 export type WorkbenchDaemonStatus = "starting" | "healthy" | "degraded";
 export type WorkbenchMode = "read-only" | "approvals-enabled";
@@ -16,6 +17,7 @@ export interface WorkbenchCheckpointSummary {
   createdAt: string;
   rolledBack: boolean;
   rolledBackAt: string | null;
+  sessionId: string | null;
 }
 
 export interface WorkbenchResumeConversationSummary {
@@ -38,6 +40,7 @@ export interface WorkbenchLastActivity {
   relatedConversationId: string | null;
   relatedCheckpointId: number | null;
   relatedApprovalId: string | null;
+  sessionId: string | null;
   severity: "info" | "low" | "medium" | "high";
 }
 
@@ -76,6 +79,7 @@ export interface WorkbenchChangeItem {
   relatedConversationId: string | null;
   relatedCheckpointId: number | null;
   relatedApprovalId: string | null;
+  sessionId: string | null;
   severity: "info" | "low" | "medium" | "high";
 }
 
@@ -98,6 +102,7 @@ export interface WorkbenchResumeData {
   latestConversationSummary: string;
   latestAttachmentSummary: string;
   nextSafeAction: string;
+  currentSession: SpectraSession | null;
   emptyStateMessage: string;
 }
 
@@ -113,6 +118,7 @@ export interface WorkbenchChangesData {
   count: number;
   ledgerCount: number;
   derivedCount: number;
+  currentSession: SpectraSession | null;
   items: WorkbenchChangeItem[];
   emptyStateMessage: string;
 }
@@ -130,6 +136,7 @@ export interface BuildWorkbenchDataSpineOptions {
   mode?: WorkbenchMode;
   eventLedger?: PrismEventLedger;
   approvalQueue?: ApprovalQueue;
+  currentSession?: SpectraSession | null;
 }
 
 function safeText(value: unknown, fallback = ""): string {
@@ -153,6 +160,7 @@ function summarizeCheckpoint(row: Record<string, unknown>): WorkbenchCheckpointS
     createdAt: safeText(row.created_at, ""),
     rolledBack: Number(row.rolled_back ?? 0) === 1,
     rolledBackAt: optionalText(row.rolled_back_at),
+    sessionId: optionalText(row.session_id),
   };
 }
 
@@ -169,7 +177,7 @@ function summarizeConversation(row: Record<string, unknown>): WorkbenchResumeCon
 function listRecentCheckpoints(db: MemoryDB, limit: number): WorkbenchCheckpointSummary[] {
   const rows = db.db
     .prepare(
-      "SELECT id, project_id, graph_id, node_id, sha, had_changes, rolled_back, created_at, rolled_back_at FROM checkpoints ORDER BY created_at DESC, id DESC LIMIT ?"
+      "SELECT id, project_id, graph_id, node_id, sha, had_changes, rolled_back, created_at, rolled_back_at, session_id FROM checkpoints ORDER BY created_at DESC, id DESC LIMIT ?"
     )
     .all(limit) as Record<string, unknown>[];
   return rows.map(summarizeCheckpoint);
@@ -213,6 +221,7 @@ function ledgerEventToChange(event: PrismEvent): WorkbenchChangeItem {
     relatedConversationId: event.relatedConversationId ?? null,
     relatedCheckpointId: event.relatedCheckpointId ?? null,
     relatedApprovalId: event.relatedApprovalId ?? null,
+    sessionId: event.sessionId ?? null,
     severity: event.severity,
   };
 }
@@ -233,6 +242,7 @@ function checkpointToChange(row: Record<string, unknown>): WorkbenchChangeItem {
     relatedConversationId: null,
     relatedCheckpointId: checkpointId || null,
     relatedApprovalId: null,
+    sessionId: optionalText(row.session_id),
     severity: rolledBack ? "low" : hadChanges ? "medium" : "info",
   };
 }
@@ -251,6 +261,7 @@ function conversationToChange(row: Record<string, unknown>): WorkbenchChangeItem
     relatedConversationId: String(conversationId),
     relatedCheckpointId: null,
     relatedApprovalId: null,
+    sessionId: null,
     severity: "info",
   };
 }
@@ -277,6 +288,7 @@ function messageToChange(row: Record<string, unknown>): WorkbenchChangeItem {
     relatedConversationId: conversationId ? String(conversationId) : null,
     relatedCheckpointId: null,
     relatedApprovalId: null,
+    sessionId: null,
     severity: "info",
   };
 }
@@ -298,6 +310,7 @@ function attachmentToChange(row: Record<string, unknown>): WorkbenchChangeItem {
     relatedConversationId: conversationId ? String(conversationId) : null,
     relatedCheckpointId: null,
     relatedApprovalId: null,
+    sessionId: null,
     severity: "info",
   };
 }
@@ -347,7 +360,7 @@ function chooseNextSafeAction(
 
 function collectDerivedChangeItems(db: MemoryDB, limit: number): WorkbenchChangeItem[] {
   const checkpoints = db.db
-    .prepare("SELECT id, node_id, sha, had_changes, rolled_back, created_at FROM checkpoints ORDER BY created_at DESC, id DESC LIMIT ?")
+    .prepare("SELECT id, node_id, sha, had_changes, rolled_back, created_at, session_id FROM checkpoints ORDER BY created_at DESC, id DESC LIMIT ?")
     .all(limit) as Record<string, unknown>[];
   const conversations = db.db
     .prepare("SELECT id, title, created_at FROM conversations ORDER BY created_at DESC, id DESC LIMIT ?")
@@ -388,6 +401,7 @@ export function buildWorkbenchChanges(db: MemoryDB, options: BuildWorkbenchDataS
     count: items.length,
     ledgerCount: ledgerItems.length,
     derivedCount: derivedItems.length,
+    currentSession: options.currentSession ?? null,
     items,
     emptyStateMessage: "No changes are available yet. This is an intentional read-only empty state.",
   };
@@ -444,6 +458,7 @@ export function buildWorkbenchResume(db: MemoryDB, options: BuildWorkbenchDataSp
       recentAttachmentCollection.totalCount,
       recentEventCount,
     ),
+    currentSession: options.currentSession ?? null,
     emptyStateMessage: "No daemon history has been recorded yet. Empty states here are intentional.",
   };
 

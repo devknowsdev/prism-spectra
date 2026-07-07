@@ -41,6 +41,7 @@ import {
   createInitialSidecar,
   InMemoryApprovalQueue,
   InMemoryPrismEventLedger,
+  createCurrentSession,
   getWorkbenchAttachment,
   getWorkbenchConversation,
   deriveAttachmentPreviewSummary,
@@ -2974,6 +2975,79 @@ async function main() {
     assert.equal(ledger.list().length, 0);
   });
 
+  await test("session migration is additive and current-session rows are minimal", async () => {
+    const dir = path.join(ROOT, "session-migration");
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+    const dbPath = path.join(dir, "legacy.db");
+    const legacy = new DatabaseSync(dbPath);
+    legacy.exec(`
+      CREATE TABLE checkpoints (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id TEXT,
+        graph_id TEXT,
+        node_id TEXT,
+        sha TEXT NOT NULL,
+        had_changes INTEGER NOT NULL DEFAULT 0,
+        rolled_back INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        rolled_back_at TEXT
+      );
+      INSERT INTO checkpoints (project_id, graph_id, node_id, sha, had_changes)
+      VALUES ('legacy-project', 'legacy-graph', 'legacy-node', 'legacy-sha', 1);
+    `);
+    legacy.close();
+
+    const db = new MemoryDB(dbPath);
+    const checkpointCols = db.db.prepare("PRAGMA table_info('checkpoints')").all() as Record<string, unknown>[];
+    assert.ok(checkpointCols.some((column) => column.name === "session_id"));
+    const sessionCols = db.db.prepare("PRAGMA table_info('sessions')").all() as Record<string, unknown>[];
+    assert.deepEqual(
+      sessionCols.map((column) => column.name),
+      ["id", "project", "label", "started_at", "ended_at"],
+    );
+    const legacyRow = db.db.prepare("SELECT node_id, sha, session_id FROM checkpoints WHERE node_id = ?").get("legacy-node") as Record<string, unknown>;
+    assert.equal(legacyRow.sha, "legacy-sha");
+    assert.equal(legacyRow.session_id, null);
+
+    const session = createCurrentSession(db, "prism-spectra", {
+      id: "session-test-1",
+      startedAt: "2026-07-06T12:00:00.000Z",
+    });
+    assert.deepEqual(session, {
+      id: "session-test-1",
+      project: "prism-spectra",
+      label: null,
+      startedAt: "2026-07-06T12:00:00.000Z",
+      endedAt: null,
+    });
+    const sessionRows = db.db.prepare("SELECT id, project, label, started_at, ended_at FROM sessions").all() as Record<string, unknown>[];
+    assert.equal(sessionRows.length, 1);
+    assert.equal(sessionRows[0].id, "session-test-1");
+    db.close();
+  });
+
+  await test("event ledger assigns current session ids to new events only", async () => {
+    const ledger = new InMemoryPrismEventLedger({ sessionId: "session-ledger-1" });
+    const first = ledger.append({
+      type: "system.notice",
+      summary: "session-scoped event",
+      severity: "info",
+      source: "system",
+    });
+    assert.equal(first.sessionId, "session-ledger-1");
+    assert.deepEqual(ledger.list({ sessionId: "session-ledger-1" }).map((event) => event.id), [first.id]);
+
+    ledger.setSessionId(null);
+    const second = ledger.append({
+      type: "system.notice",
+      summary: "legacy-shaped event",
+      severity: "info",
+      source: "system",
+    });
+    assert.equal(second.sessionId, undefined);
+  });
+
   await test("approval queue requests, resolves, and emits ledger events without executing anything", async () => {
     const ledger = new InMemoryPrismEventLedger();
     const queue = new InMemoryApprovalQueue(ledger);
@@ -3023,7 +3097,14 @@ async function main() {
     );
     db.db.prepare("INSERT INTO conversations (title, metadata) VALUES (?, ?)").run("Workbench chat", null);
 
-    const ledger = new InMemoryPrismEventLedger();
+    const currentSession = {
+      id: "session-spine-1",
+      project: "prism-spectra",
+      label: null,
+      startedAt: "2026-07-06T12:30:00.000Z",
+      endedAt: null,
+    };
+    const ledger = new InMemoryPrismEventLedger({ sessionId: currentSession.id });
     const queue = new InMemoryApprovalQueue(ledger);
     const requested = queue.requestApproval({
       title: "Review attachment ingest",
@@ -3071,21 +3152,27 @@ async function main() {
       reason: "Needs a narrower target.",
     });
 
-    const changes = buildWorkbenchChanges(db, { approvalQueue: queue, eventLedger: ledger });
+    const changes = buildWorkbenchChanges(db, { approvalQueue: queue, eventLedger: ledger, currentSession });
     assert.ok(changes.ledgerCount >= 2);
     assert.ok(changes.derivedCount >= 2);
+    assert.deepEqual(changes.currentSession, currentSession);
     assert.ok(changes.items.some((item) => item.sourceKind === "ledger"));
     assert.ok(changes.items.some((item) => item.sourceKind === "derived"));
+    assert.ok(changes.items.some((item) => item.sourceKind === "ledger" && item.sessionId === currentSession.id));
+    assert.ok(changes.items.some((item) => item.sourceKind === "derived" && item.sessionId === null));
 
     const resume = buildWorkbenchResume(db, {
       projectLabel: "prism-spectra",
       workDirLabel: ".demo/work",
       approvalQueue: queue,
       eventLedger: ledger,
+      currentSession,
     });
     assert.equal(resume.pendingApprovalsCount, 0);
     assert.equal(resume.recentEventCount, 3);
     assert.equal(resume.lastEventSummary, "Manual ledger note");
+    assert.deepEqual(resume.currentSession, currentSession);
+    assert.equal(resume.lastActivity?.sessionId, currentSession.id);
     assert.equal(resume.nextSafeAction, "Review recent project memory");
     db.close();
   });
@@ -3667,6 +3754,17 @@ async function main() {
     assert.equal(manifestPayload.manifests.length, seedCapabilityManifests.length);
     assert.equal(manifestPayload.manifests[0].id, seedCapabilityManifests[0].id);
 
+    const currentSessionResponse = await fetch(`http://127.0.0.1:${port}/api/v1/session/current`);
+    assert.equal(currentSessionResponse.ok, true);
+    const currentSessionPayload = await currentSessionResponse.json();
+    assert.equal(typeof currentSessionPayload.session.id, "string");
+    assert.ok(currentSessionPayload.session.id.startsWith("sess_"));
+    assert.equal(currentSessionPayload.session.project, path.basename(tmp));
+    assert.equal(currentSessionPayload.session.label, null);
+    assert.equal(typeof currentSessionPayload.session.startedAt, "string");
+    assert.equal(currentSessionPayload.session.endedAt, null);
+    const currentSessionId = currentSessionPayload.session.id;
+
     const workbenchResponse = await fetch(`http://127.0.0.1:${port}/workbench`);
     assert.equal(workbenchResponse.ok, true);
     const workbenchHtml = await workbenchResponse.text();
@@ -3686,6 +3784,7 @@ async function main() {
     assert.match(workbenchHtml, /Load mode/);
     assert.match(workbenchHtml, /Reset filters/);
     assert.match(workbenchHtml, /Recent events/);
+    assert.match(workbenchHtml, /Current session/);
     assert.match(workbenchHtml, /Related conversation/);
     assert.match(workbenchHtml, /Preview/);
     assert.match(workbenchHtml, /Load waveform preview/);
@@ -3746,6 +3845,7 @@ async function main() {
     assert.ok(resumePayload.resume);
     assert.equal(resumePayload.resume.daemonStatus, "healthy");
     assert.equal(resumePayload.resume.mode, "approvals-enabled");
+    assert.deepEqual(resumePayload.resume.currentSession, currentSessionPayload.session);
     assert.equal(typeof resumePayload.resume.projectLabel, "string");
     assert.equal(typeof resumePayload.resume.workDirLabel, "string");
     assert.ok(Array.isArray(resumePayload.resume.recentCheckpoints));
@@ -4113,6 +4213,7 @@ async function main() {
     }
     await eventStreamReader.cancel();
     assert.match(streamedEvents, /data: \{"id":"[^"]+","time":"[^"]+","type":"approval\.resolved"/);
+    assert.match(streamedEvents, new RegExp(`"sessionId":"${currentSessionId}"`));
 
     const rejectResponse = await fetch(`http://127.0.0.1:${port}/api/v1/approvals/mock-approval-no-preview/resolve`, {
       method: "POST",
@@ -4158,6 +4259,7 @@ async function main() {
     assert.equal(typeof changesPayload.changes.count, "number");
     assert.equal(typeof changesPayload.changes.ledgerCount, "number");
     assert.equal(typeof changesPayload.changes.derivedCount, "number");
+    assert.deepEqual(changesPayload.changes.currentSession, currentSessionPayload.session);
     assert.ok(Array.isArray(changesPayload.changes.items));
     assert.equal(changesPayload.changes.count, changesPayload.changes.items.length);
     assert.ok(changesPayload.changes.items.some((item: any) => item.type === "conversation.created"));
@@ -4178,6 +4280,7 @@ async function main() {
     assert.ok(Array.isArray(eventsPayload.events));
     assert.equal(eventsPayload.count, eventsPayload.events.length);
     assert.ok(eventsPayload.totalCount >= 4);
+    assert.ok(eventsPayload.events.every((event: any) => event.sessionId === currentSessionId));
     assert.ok(eventsPayload.events.some((event: any) => event.type === "attachment.ingest.completed"));
     assert.ok(eventsPayload.events.some((event: any) => event.type === "attachment.tag.added"));
     assert.ok(eventsPayload.events.some((event: any) => event.type === "attachment.tag.removed"));
@@ -4193,6 +4296,8 @@ async function main() {
     assert.equal(rejectedEvents.length, 1);
     assert.equal(approvedEvents[0].severity, "info");
     assert.equal(rejectedEvents[0].severity, "medium");
+    assert.equal(approvedEvents[0].sessionId, currentSessionId);
+    assert.equal(rejectedEvents[0].sessionId, currentSessionId);
     assert.deepEqual(approvedEvents[0].metadata.decision, approvePayload.approval.decision);
     assert.deepEqual(rejectedEvents[0].metadata.decision, rejectPayload.approval.decision);
 
@@ -4238,10 +4343,11 @@ async function main() {
     assert.ok(fs.existsSync(dbFile), "expected daemon DB file");
     const { MemoryDB } = await import("../src/memory/db.js");
     const mdb = new MemoryDB(dbFile);
-    const rows = mdb.db.prepare('SELECT id, node_id, sha, had_changes, rolled_back FROM checkpoints ORDER BY created_at DESC').all();
+    const rows = mdb.db.prepare('SELECT id, node_id, sha, had_changes, rolled_back, session_id FROM checkpoints ORDER BY created_at DESC').all();
     assert.ok(Array.isArray(rows) && rows.length > 0, "expected at least one checkpoint row");
     const cp = rows.find((r: any) => r.node_id === 'n1');
     assert.ok(cp, "expected checkpoint for node n1");
+    assert.equal(cp.session_id, currentSessionId);
 
     // call rollback endpoint
     const rb = await fetch(`http://127.0.0.1:${port}/api/v1/nodes/n1/rollback`, { method: 'POST', headers: { 'x-local-token': token } });

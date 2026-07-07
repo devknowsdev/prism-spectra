@@ -64,6 +64,7 @@ export interface PrismEvent {
   relatedConversationId?: string;
   relatedCheckpointId?: number;
   relatedApprovalId?: string;
+  sessionId?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -79,6 +80,7 @@ export interface PrismEventInput {
   relatedConversationId?: string;
   relatedCheckpointId?: number;
   relatedApprovalId?: string;
+  sessionId?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -91,6 +93,7 @@ export interface PrismEventListOptions {
   relatedConversationId?: string;
   relatedCheckpointId?: number;
   relatedApprovalId?: string;
+  sessionId?: string;
 }
 
 export interface PrismEventLedger {
@@ -125,6 +128,15 @@ export class InMemoryPrismEventLedger implements PrismEventLedger {
   private seq = 0;
   private readonly events: StoredPrismEvent[] = [];
   private readonly listeners = new Set<PrismEventListener>();
+  private currentSessionId: string | undefined;
+
+  constructor(options: { sessionId?: string } = {}) {
+    this.currentSessionId = options.sessionId?.trim() || undefined;
+  }
+
+  setSessionId(sessionId: string | null | undefined): void {
+    this.currentSessionId = sessionId?.trim() || undefined;
+  }
 
   append(input: PrismEventInput): PrismEvent {
     const event: PrismEvent = {
@@ -139,6 +151,7 @@ export class InMemoryPrismEventLedger implements PrismEventLedger {
       relatedConversationId: input.relatedConversationId?.trim() || undefined,
       relatedCheckpointId: typeof input.relatedCheckpointId === "number" ? input.relatedCheckpointId : undefined,
       relatedApprovalId: input.relatedApprovalId?.trim() || undefined,
+      sessionId: input.sessionId?.trim() || this.currentSessionId,
       metadata: input.metadata ? structuredClone(input.metadata) : undefined,
     };
 
@@ -176,6 +189,7 @@ export class InMemoryPrismEventLedger implements PrismEventLedger {
         if (options.relatedConversationId != null && event.relatedConversationId !== options.relatedConversationId) return false;
         if (options.relatedCheckpointId != null && event.relatedCheckpointId !== options.relatedCheckpointId) return false;
         if (options.relatedApprovalId != null && event.relatedApprovalId !== options.relatedApprovalId) return false;
+        if (options.sessionId != null && event.sessionId !== options.sessionId) return false;
         return true;
       })
       .sort((left, right) => {

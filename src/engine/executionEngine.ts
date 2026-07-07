@@ -86,6 +86,8 @@ export interface EngineOptions {
   routeDecisionCacheEnabled?: boolean;
   /** Route decision cache cosine threshold. Default 0.9. */
   routeDecisionCacheThreshold?: number;
+  /** Current Spectra session id, when a daemon/session owner has established one. */
+  sessionId?: string;
 }
 
 export interface NodeRunLog {
@@ -146,9 +148,11 @@ export class ExecutionEngine {
   private confidenceThreshold: number;
   private embeddingProvider?: EmbeddingProvider;
   private embeddingKeepalive?: { stop: () => void };
+  private sessionId?: string;
 
   constructor(opts: EngineOptions) {
     this.workDir = opts.workDir;
+    this.sessionId = opts.sessionId?.trim() || undefined;
     this.fallbackOnFailure = opts.fallbackOnFailure ?? false;
     const mockExecutors = opts.mockExecutors ?? process.env.AI_FORGE_MOCK_EXECUTORS === "1";
     this.useLiveOllamaClassifier = opts.useLiveOllamaClassifier ?? !mockExecutors;
@@ -185,6 +189,10 @@ export class ExecutionEngine {
     this.checkpoints = new CheckpointManager(this.workDir);
     this.modelLock = new LocalModelLock(opts.ollamaSwapDelayMs);
     this.executors = buildExecutorRegistry({ mock: mockExecutors });
+  }
+
+  setSessionId(sessionId: string | null | undefined): void {
+    this.sessionId = sessionId?.trim() || undefined;
   }
 
   async init(): Promise<void> {
@@ -400,10 +408,10 @@ export class ExecutionEngine {
       try {
         this.memory.db
           .prepare(`
-            INSERT INTO checkpoints (project_id, graph_id, node_id, sha, had_changes)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO checkpoints (project_id, graph_id, node_id, sha, had_changes, session_id)
+            VALUES (?, ?, ?, ?, ?, ?)
           `)
-          .run(graph.projectId, graph.id, nodeId, checkpointResult.sha, checkpointResult.hadChanges ? 1 : 0);
+          .run(graph.projectId, graph.id, nodeId, checkpointResult.sha, checkpointResult.hadChanges ? 1 : 0, this.sessionId ?? null);
       } catch (e) {
         console.warn("Failed to persist checkpoint record", e);
       }
