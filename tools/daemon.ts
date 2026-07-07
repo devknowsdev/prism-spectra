@@ -26,6 +26,7 @@ import {
   listWorkbenchConversations,
   buildWorkbenchResume,
   seedCapabilityManifests,
+  type PrismEvent,
 } from "../src/index.js";
 import { TaskGraph } from "../src/taskGraph/graph.js";
 import { probeAllProviders, applyProviderProbe } from "../src/config/providerProbe.js";
@@ -79,6 +80,23 @@ function jsonResponse(res: http.ServerResponse, code: number, body: unknown) {
     "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
   });
   res.end(s);
+}
+
+function sseEvent(event: PrismEvent): string {
+  return `id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`;
+}
+
+function wantsEventStream(req: http.IncomingMessage): boolean {
+  return String(req.headers.accept || "").includes("text/event-stream");
+}
+
+function subscribeEventLedgerSse(
+  eventLedger: InMemoryPrismEventLedger,
+  handler: (event: string) => void,
+): () => void {
+  return eventLedger.subscribe((event) => {
+    handler(sseEvent(event));
+  });
 }
 
 function unauthorized(res: http.ServerResponse) {
@@ -1053,6 +1071,20 @@ async function start() {
       }
 
       if (req.method === "GET" && url.pathname === "/api/v1/events") {
+        if (wantsEventStream(req)) {
+          res.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache, no-store",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+          });
+          res.write(": connected\n\n");
+          const unsubscribe = subscribeEventLedgerSse(eventLedger, (event) => {
+            res.write(event);
+          });
+          req.once("close", unsubscribe);
+          return;
+        }
         const limit = Number(url.searchParams.get("limit") || 50);
         const events = eventLedger.list({ limit });
         const totalCount = eventLedger.list().length;
