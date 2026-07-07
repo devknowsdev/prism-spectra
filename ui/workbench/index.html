@@ -1602,6 +1602,19 @@
       `;
     }
 
+    function sessionLabel(session) {
+      if (!session) return "No active session";
+      const label = session.label || "Current session";
+      const started = session.startedAt ? ` · started ${session.startedAt}` : "";
+      return `${label} · ${session.id}${started}`;
+    }
+
+    function itemSessionLabel(item, currentSession) {
+      if (!item?.sessionId) return "session none";
+      if (currentSession?.id && item.sessionId === currentSession.id) return "current session";
+      return `session ${item.sessionId}`;
+    }
+
     function renderFieldList(fields) {
       return `
         <div class="field-list">
@@ -2466,6 +2479,7 @@
 
       resumeMeta.innerHTML = [
         renderKeyValueCard("Current project", resume.projectLabel || "Prism Spectra workspace placeholder"),
+        renderKeyValueCard("Current session", sessionLabel(resume.currentSession)),
         renderKeyValueCard("Work dir", resume.workDirLabel || ".demo/work"),
         renderKeyValueCard("Last event", resume.lastEventSummary || resume.lastActivitySummary || "No event ledger entries yet."),
         renderKeyValueCard("Recent events", String(resume.recentEventCount)),
@@ -2490,6 +2504,7 @@
               <div class="placeholder-line" style="margin-top: 6px;">
                 <span>graph ${escapeHtml(checkpoint.graphId || "unknown")}</span>
                 <span>sha ${escapeHtml(checkpoint.sha)}</span>
+                <span>${escapeHtml(itemSessionLabel(checkpoint, resume.currentSession))}</span>
                 <span>${checkpoint.hadChanges ? "had changes" : "no changes"}</span>
                 <span>${checkpoint.rolledBack ? "rolled back" : "active"}</span>
               </div>
@@ -2624,7 +2639,20 @@
       }
 
       changesEmpty.innerHTML = "";
-      changesList.innerHTML = changes.items.map((change) => `
+      const sessionMarker = changes.currentSession ? `
+        <article class="timeline-card">
+          <div class="timeline-topline">
+            <strong>Current session</strong>
+            <span>${escapeHtml(changes.currentSession.startedAt || "started")}</span>
+          </div>
+          <div class="placeholder-line" style="margin-top: 8px;">
+            <span>${escapeHtml(changes.currentSession.project)}</span>
+            <span>${escapeHtml(changes.currentSession.label || "unlabeled")}</span>
+            <span>${escapeHtml(changes.currentSession.id)}</span>
+          </div>
+        </article>
+      ` : "";
+      changesList.innerHTML = sessionMarker + changes.items.map((change) => `
         <article class="timeline-card">
           <div class="timeline-topline">
             <strong>${escapeHtml(change.summary)}</strong>
@@ -2654,6 +2682,10 @@
             <div class="field">
               <div class="k">Related approval</div>
               <div class="v">${escapeHtml(change.relatedApprovalId || "none")}</div>
+            </div>
+            <div class="field">
+              <div class="k">Session</div>
+              <div class="v">${escapeHtml(itemSessionLabel(change, changes.currentSession))}</div>
             </div>
           </div>
         </article>

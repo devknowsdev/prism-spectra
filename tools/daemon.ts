@@ -26,7 +26,9 @@ import {
   listWorkbenchConversations,
   buildWorkbenchResume,
   seedCapabilityManifests,
+  createCurrentSession,
   type PrismEvent,
+  type SpectraSession,
 } from "../src/index.js";
 import { TaskGraph } from "../src/taskGraph/graph.js";
 import { probeAllProviders, applyProviderProbe } from "../src/config/providerProbe.js";
@@ -972,6 +974,7 @@ function getWorkbenchContext() {
 function getWorkbenchOptions(
   ledger: InMemoryPrismEventLedger,
   approvalQueue: InMemoryApprovalQueue,
+  currentSession: SpectraSession,
 ) {
   const ctx = getWorkbenchContext();
   return {
@@ -981,6 +984,7 @@ function getWorkbenchOptions(
     mode: "approvals-enabled" as const,
     eventLedger: ledger,
     approvalQueue,
+    currentSession,
   };
 }
 
@@ -1022,7 +1026,9 @@ function seedMockApprovalFixtures(approvalQueue: InMemoryApprovalQueue) {
 
 async function start() {
   const { engine, graphBuilder } = await initEngine();
-  const eventLedger = new InMemoryPrismEventLedger();
+  const currentSession = createCurrentSession(engine.memory, getWorkbenchContext().projectLabel);
+  engine.setSessionId(currentSession.id);
+  const eventLedger = new InMemoryPrismEventLedger({ sessionId: currentSession.id });
   const approvalQueue = new InMemoryApprovalQueue(eventLedger);
   seedMockApprovalFixtures(approvalQueue);
   const workbenchReloadHub = new WorkbenchReloadHub();
@@ -1068,6 +1074,10 @@ async function start() {
 
       if (req.method === "GET" && url.pathname === "/api/v1/capabilities/manifests") {
         return jsonResponse(res, 200, { manifests: seedCapabilityManifests });
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/v1/session/current") {
+        return jsonResponse(res, 200, { session: currentSession });
       }
 
       if (req.method === "GET" && url.pathname === "/api/v1/events") {
@@ -1170,17 +1180,17 @@ async function start() {
 
       if (req.method === "GET" && url.pathname === "/api/v1/workbench/resume") {
         return jsonResponse(res, 200, {
-          resume: buildWorkbenchResume(engine.memory, getWorkbenchOptions(eventLedger, approvalQueue)),
+          resume: buildWorkbenchResume(engine.memory, getWorkbenchOptions(eventLedger, approvalQueue, currentSession)),
         });
       }
 
       if (req.method === "GET" && url.pathname === "/api/v1/workbench/approvals") {
-        return jsonResponse(res, 200, { approvals: buildWorkbenchApprovals(getWorkbenchOptions(eventLedger, approvalQueue)) });
+        return jsonResponse(res, 200, { approvals: buildWorkbenchApprovals(getWorkbenchOptions(eventLedger, approvalQueue, currentSession)) });
       }
 
       if (req.method === "GET" && url.pathname === "/api/v1/workbench/changes") {
         const changesLimit = Math.min(Number(url.searchParams.get("limit") || 50), 200);
-        return jsonResponse(res, 200, { changes: buildWorkbenchChanges(engine.memory, getWorkbenchOptions(eventLedger, approvalQueue), changesLimit) });
+        return jsonResponse(res, 200, { changes: buildWorkbenchChanges(engine.memory, getWorkbenchOptions(eventLedger, approvalQueue, currentSession), changesLimit) });
       }
 
       if (req.method === "GET" && url.pathname === "/api/v1/workbench/conversations") {
@@ -1596,7 +1606,7 @@ async function start() {
         // List checkpoints: GET /api/v1/checkpoints?limit=100
         if (req.method === 'GET' && url.pathname === '/api/v1/checkpoints') {
           const limit = Number(url.searchParams.get('limit') || 200);
-          const rows = engine.memory.db.prepare('SELECT id, project_id, graph_id, node_id, sha, had_changes, rolled_back, created_at, rolled_back_at FROM checkpoints ORDER BY created_at DESC LIMIT ?').all(limit);
+          const rows = engine.memory.db.prepare('SELECT id, project_id, graph_id, node_id, sha, had_changes, rolled_back, created_at, rolled_back_at, session_id FROM checkpoints ORDER BY created_at DESC LIMIT ?').all(limit);
           return jsonResponse(res, 200, { checkpoints: rows });
         }
 
@@ -1604,7 +1614,7 @@ async function start() {
         const cpMatch = url.pathname.match(/^\/api\/v1\/checkpoints\/(.+)$/);
         if (cpMatch && req.method === 'GET') {
           const nodeId = decodeURIComponent(cpMatch[1]);
-          const row = engine.memory.db.prepare('SELECT id, project_id, graph_id, node_id, sha, had_changes, rolled_back, created_at, rolled_back_at FROM checkpoints WHERE node_id = ? ORDER BY created_at DESC LIMIT 1').get(nodeId);
+          const row = engine.memory.db.prepare('SELECT id, project_id, graph_id, node_id, sha, had_changes, rolled_back, created_at, rolled_back_at, session_id FROM checkpoints WHERE node_id = ? ORDER BY created_at DESC LIMIT 1').get(nodeId);
           if (!row) return jsonResponse(res, 404, { error: 'checkpoint not found' });
           return jsonResponse(res, 200, { checkpoint: row });
         }

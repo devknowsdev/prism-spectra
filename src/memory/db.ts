@@ -103,6 +103,14 @@ export class MemoryDB {
       );
 
       -- Conversations and messages for chat/history persistence (simple schema)
+      CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        project TEXT NOT NULL,
+        label TEXT,
+        started_at TEXT NOT NULL,
+        ended_at TEXT
+      );
+
       CREATE TABLE IF NOT EXISTS conversations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT,
@@ -190,6 +198,14 @@ export class MemoryDB {
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
     `);
+
+    try {
+      const cols = this.db.prepare("PRAGMA table_info('checkpoints')").all();
+      const hasSessionId = Array.isArray(cols) && cols.some((c: any) => c.name === "session_id");
+      if (!hasSessionId) this.db.exec("ALTER TABLE checkpoints ADD COLUMN session_id TEXT;");
+    } catch (e) {
+      // ignore migration errors — best-effort
+    }
   }
 
   close(): void {
