@@ -79,6 +79,7 @@ import { dataBoundaryFor } from "../src/types.js";
 import { Wizard, MAX_QUESTIONS } from "../src/wizard/wizard.js";
 import { spawn } from "node:child_process";
 import os from "node:os";
+import vm from "node:vm";
 import type { TaskPacket } from "../src/types.js";
 import {
   createWorkbenchWatcher,
@@ -3114,6 +3115,55 @@ async function main() {
     db.close();
   });
 
+  await test("workbench live events client debounces relevant SSE messages and refreshes affected views", async () => {
+    const script = fs.readFileSync(path.join(__dirname, "..", "ui", "workbench", "js", "live-events.js"), "utf-8");
+    const listeners = new Map<string, (event: { data: string }) => void>();
+    const calls: string[] = [];
+    let timeoutCallback: any = null;
+    let timeoutCount = 0;
+    const sandbox = {
+      __spectraWorkbenchLive: {
+        loadResume: async () => { calls.push("resume"); },
+        loadApprovals: async () => { calls.push("approvals"); },
+        loadChanges: async () => { calls.push("changes"); },
+      },
+      EventSource: class FakeEventSource {
+        static CLOSED = 2;
+        readyState = 1;
+        constructor(endpoint: string) {
+          assert.equal(endpoint, "/api/v1/events");
+        }
+        addEventListener(type: string, handler: (event: { data: string }) => void) {
+          listeners.set(type, handler);
+        }
+      },
+      setTimeout: (callback: () => Promise<void>, ms: number) => {
+        assert.equal(ms, 80);
+        timeoutCallback = callback;
+        timeoutCount += 1;
+        return timeoutCount;
+      },
+      JSON,
+      Promise,
+      Set,
+    };
+    vm.createContext(sandbox);
+    vm.runInContext(script, sandbox);
+
+    const onMessage = listeners.get("message");
+    assert.equal(typeof onMessage, "function");
+    onMessage!({ data: JSON.stringify({ type: "approval.resolved" }) });
+    onMessage!({ data: JSON.stringify({ type: "checkpoint.created" }) });
+    onMessage!({ data: JSON.stringify({ type: "system.notice" }) });
+    assert.equal(timeoutCount, 1);
+    const flushLiveRefresh = timeoutCallback;
+    if (flushLiveRefresh === null) {
+      throw new Error("live refresh debounce callback was not scheduled");
+    }
+    await flushLiveRefresh();
+    assert.deepEqual(calls.sort(), ["approvals", "changes", "resume"]);
+  });
+
   await test("workbench watcher emits one debounced reload for scoped UI changes", async () => {
     const workbenchDir = path.join(ROOT, "live-reload", "ui", "workbench");
     fs.mkdirSync(path.join(workbenchDir, "js"), { recursive: true });
@@ -3642,10 +3692,19 @@ async function main() {
     assert.match(workbenchHtml, /Real app previews/);
     assert.match(workbenchHtml, /\/api\/v1\/preview\/apps/);
     assert.match(workbenchHtml, /workbench-shims\/js\/approvals\.js/);
+    assert.match(workbenchHtml, /workbench-shims\/js\/live-events\.js/);
     assert.match(workbenchHtml, /workbench-shims\/js\/livereload\.js/);
     const approvalsModuleResponse = await fetch(`http://127.0.0.1:${port}/workbench-shims/js/approvals.js`);
     assert.equal(approvalsModuleResponse.ok, true);
-    assert.match(await approvalsModuleResponse.text(), /data-approval-action/);
+    const approvalsModule = await approvalsModuleResponse.text();
+    assert.match(approvalsModule, /data-approval-action/);
+    assert.match(approvalsModule, /__spectraWorkbenchLive/);
+    const liveEventsModuleResponse = await fetch(`http://127.0.0.1:${port}/workbench-shims/js/live-events.js`);
+    assert.equal(liveEventsModuleResponse.ok, true);
+    const liveEventsModule = await liveEventsModuleResponse.text();
+    assert.match(liveEventsModule, /EventSource\(endpoint\)/);
+    assert.match(liveEventsModule, /\/api\/v1\/events/);
+    assert.match(liveEventsModule, /approval\.resolved/);
     const liveReloadModuleResponse = await fetch(`http://127.0.0.1:${port}/workbench-shims/js/livereload.js`);
     assert.equal(liveReloadModuleResponse.ok, true);
     assert.doesNotMatch(await liveReloadModuleResponse.text(), /console\./);
@@ -3659,9 +3718,14 @@ async function main() {
     assert.equal(disabledEpkPreviewResponse.status, 404);
     const disabledPreviewClientResponse = await fetch(`http://127.0.0.1:${port}/preview/js/livereload.js`);
     assert.equal(disabledPreviewClientResponse.status, 404);
-    const disabledFocusLiveResponse = await fetch(`http://127.0.0.1:${port}/api/v1/preview/focus/live`);
+    const disabledFocusLiveResponse = await fetch(`http://127.0.0.1:${port}/api/v1/preview/focus/live`, {
+      headers: { "x-local-token": token },
+    });
     assert.equal(disabledFocusLiveResponse.status, 404);
-    const disabledFocusLiveHeadResponse = await fetch(`http://127.0.0.1:${port}/api/v1/preview/focus/live`, { method: "HEAD" });
+    const disabledFocusLiveHeadResponse = await fetch(`http://127.0.0.1:${port}/api/v1/preview/focus/live`, {
+      method: "HEAD",
+      headers: { "x-local-token": token },
+    });
     assert.equal(disabledFocusLiveHeadResponse.status, 404);
     const disabledPreviewAppsResponse = await fetch(`http://127.0.0.1:${port}/api/v1/preview/apps`);
     assert.equal(disabledPreviewAppsResponse.status, 404);
@@ -4010,6 +4074,14 @@ async function main() {
     assert.equal(approvalsPayload.approvals.items.length, 2);
     assert.ok(String(approvalsPayload.approvals.emptyStateMessage).length > 0);
 
+    const eventStreamResponse = await fetch(`http://127.0.0.1:${port}/api/v1/events`, {
+      headers: { Accept: "text/event-stream" },
+    });
+    assert.equal(eventStreamResponse.ok, true);
+    assert.match(eventStreamResponse.headers.get("content-type") || "", /text\/event-stream/);
+    const eventStreamReader = eventStreamResponse.body!.getReader();
+    await eventStreamReader.read();
+
     const approveResponse = await fetch(`http://127.0.0.1:${port}/api/v1/approvals/mock-approval-preview/resolve`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -4024,6 +4096,23 @@ async function main() {
       decidedBy: "contract-test",
       reason: "Preview reviewed.",
     });
+
+    const eventStreamDecoder = new TextDecoder();
+    let streamedEvents = "";
+    const eventDeadline = Date.now() + 2000;
+    while (!streamedEvents.includes('"type":"approval.resolved"') && Date.now() < eventDeadline) {
+      const remaining = Math.max(1, eventDeadline - Date.now());
+      const result = await Promise.race([
+        eventStreamReader.read(),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error("timed out waiting for approval.resolved event")), remaining);
+        }),
+      ]);
+      if (result.done) break;
+      streamedEvents += eventStreamDecoder.decode(result.value, { stream: true });
+    }
+    await eventStreamReader.cancel();
+    assert.match(streamedEvents, /data: \{"id":"[^"]+","time":"[^"]+","type":"approval\.resolved"/);
 
     const rejectResponse = await fetch(`http://127.0.0.1:${port}/api/v1/approvals/mock-approval-no-preview/resolve`, {
       method: "POST",

@@ -206,4 +206,9 @@ listElement.addEventListener("keydown", (event) => {
   card.querySelector("button[data-approval-action]")?.focus();
 });
 
+globalThis.__spectraWorkbenchLive = {
+  ...(globalThis.__spectraWorkbenchLive || {}),
+  loadApprovals,
+};
+
 void loadApprovals();

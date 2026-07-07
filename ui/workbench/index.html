@@ -3182,6 +3182,11 @@
     const initialView = (location.hash || "#resume").slice(1);
     const validView = viewMeta[initialView] ? initialView : "resume";
     setView(validView);
+    window.__spectraWorkbenchLive = {
+      loadResume,
+      loadApprovals,
+      loadChanges,
+    };
     loadResume();
     loadConversations();
     loadAttachments();
@@ -3190,6 +3195,7 @@
     loadAppPreviews();
   </script>
   <script type="module" src="/workbench-shims/js/approvals.js"></script>
+  <script src="/workbench-shims/js/live-events.js"></script>
   <script type="module" src="/workbench-shims/js/livereload.js"></script>
 </body>
 </html>

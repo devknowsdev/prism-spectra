@@ -100,6 +100,8 @@ export interface PrismEventLedger {
   clear(): void;
 }
 
+export type PrismEventListener = (event: PrismEvent) => void;
+
 interface StoredPrismEvent {
   seq: number;
   event: PrismEvent;
@@ -122,6 +124,7 @@ function matchesFilter<T extends string>(value: T, filter: T[] | undefined): boo
 export class InMemoryPrismEventLedger implements PrismEventLedger {
   private seq = 0;
   private readonly events: StoredPrismEvent[] = [];
+  private readonly listeners = new Set<PrismEventListener>();
 
   append(input: PrismEventInput): PrismEvent {
     const event: PrismEvent = {
@@ -141,7 +144,22 @@ export class InMemoryPrismEventLedger implements PrismEventLedger {
 
     this.seq += 1;
     this.events.push({ seq: this.seq, event: cloneEvent(event) });
-    return cloneEvent(event);
+    const emitted = cloneEvent(event);
+    for (const listener of this.listeners) {
+      try {
+        listener(cloneEvent(event));
+      } catch {
+        // Listener failures must not change ledger append semantics.
+      }
+    }
+    return emitted;
+  }
+
+  subscribe(listener: PrismEventListener): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
 
   list(options: PrismEventListOptions = {}): PrismEvent[] {
