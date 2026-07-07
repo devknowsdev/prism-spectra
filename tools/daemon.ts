@@ -1828,6 +1828,10 @@ async function start() {
       console.log(
         `App previews: ${[...runningAppPreviews].map(([app, item]) => `${app}=${item.url}`).join(", ")}`,
       );
+    } else if (APP_PREVIEW_ENABLED) {
+      console.warn(
+        `[daemon] AI_FORGE_APP_PREVIEW=1 but no app previews started — check ${APP_PREVIEW_CONFIG_PATH} (missing or empty; recreate from spectra.preview.example.json).`,
+      );
     }
   });
 }
