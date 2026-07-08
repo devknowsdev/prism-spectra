@@ -1,0 +1,63 @@
+{
+  "id": "reserved.research_pull",
+  "kind": "tool-action",
+  "displayName": "Reserved Research Pull Namespace",
+  "description": "Inert placeholder for the governed, manifest-gated successor to manual Beam research harvests. It enables no network pull.",
+  "ownerRepo": "prism-spectra",
+  "status": "reserved",
+  "executionMode": "read-only",
+  "entrypoint": {
+    "type": "reserved-domain",
+    "domain": "research-pull"
+  },
+  "locality": "local",
+  "dataBoundary": "local",
+  "riskClass": "read-only",
+  "approvalRequired": false,
+  "allowedInputs": [],
+  "allowedOutputs": [],
+  "allowedPaths": [],
+  "allowedEnvVars": [],
+  "networkPolicy": {
+    "mode": "none",
+    "allowedHosts": []
+  },
+  "credentialPolicy": {
+    "mode": "none",
+    "envVars": []
+  },
+  "costPolicy": {
+    "mode": "none"
+  },
+  "resourcePolicy": {
+    "profile": "tiny"
+  },
+  "provenanceFields": [
+    "capabilityManifest"
+  ],
+  "telemetryFields": [
+    "capabilityManifest.status",
+    "capabilityManifest.id"
+  ],
+  "validation": {
+    "tests": [
+      "capabilities:check"
+    ]
+  },
+  "rollback": "Revert the placeholder manifest.",
+  "failureMode": "Placeholder is omitted if invalid; no runtime behavior changes.",
+  "disabledByDefault": true,
+  "verifiedOn": "2026-07-08",
+  "gatingContract": "A future Beam research-pull capability contract is required before enablement.",
+  "action": {
+    "name": "reserved.research_pull",
+    "apiShape": "No active API shape; reserved namespace only.",
+    "modelMayInfluenceParameters": false,
+    "terminalExecution": false,
+    "fileWritesPossible": false,
+    "allowedPathRoots": [],
+    "approvalQueueIntegration": "none",
+    "checkpointRequired": false,
+    "validationRequired": false
+  }
+}

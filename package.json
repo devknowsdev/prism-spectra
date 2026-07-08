@@ -15,7 +15,7 @@
     "sandbox:seed": "node --import tsx sandbox/scripts/seed-sandbox.ts",
     "test:browser": "node --import tsx test/browser/workbench-smoke.test.ts",
     "test:setup": "npm run doctor && npm run typecheck && npm run build",
-    "test:full": "node --import tsx test/run.ts && node --import tsx test/tier2b-routing.test.ts && node --import tsx test/tier3a-semantic-cache.test.ts && node --import tsx test/tier3b-route-cache.test.ts && node --import tsx test/tier3b-engine-route-hints.test.ts && node --import tsx test/tier3c-routing-hardening.test.ts",
+    "test:full": "node --import tsx test/run.ts && node --import tsx test/capabilities.test.ts && node --import tsx test/tier2b-routing.test.ts && node --import tsx test/tier3a-semantic-cache.test.ts && node --import tsx test/tier3b-route-cache.test.ts && node --import tsx test/tier3b-engine-route-hints.test.ts && node --import tsx test/tier3c-routing-hardening.test.ts",
     "test:ai-request": "node --import tsx test/ai-request.test.ts",
     "test:cockpit": "node --import tsx test/cockpit-html.test.ts",
     "test:tier2b": "node --import tsx test/tier2b-routing.test.ts",
@@ -32,8 +32,9 @@
     "ai:gateway": "tsx tools/ai-gateway.ts",
     "cockpit": "tsx tools/ai-gateway.ts",
     "focus:ai:gateway": "tsx tools/ai-gateway.ts",
+    "capabilities:check": "tsx tools/capabilities-check.ts",
     "pretest": "npm run typecheck",
-    "test": "node --import tsx test/run.ts && node --import tsx test/tier2b-routing.test.ts && node --import tsx test/tier3a-semantic-cache.test.ts && node --import tsx test/tier3b-route-cache.test.ts && node --import tsx test/tier3b-engine-route-hints.test.ts && node --import tsx test/tier3c-routing-hardening.test.ts"
+    "test": "node --import tsx test/run.ts && node --import tsx test/capabilities.test.ts && node --import tsx test/tier2b-routing.test.ts && node --import tsx test/tier3a-semantic-cache.test.ts && node --import tsx test/tier3b-route-cache.test.ts && node --import tsx test/tier3b-engine-route-hints.test.ts && node --import tsx test/tier3c-routing-hardening.test.ts"
   },
   "license": "ISC",
   "engines": {

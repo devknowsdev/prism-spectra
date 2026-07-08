@@ -1,0 +1,70 @@
+{
+  "id": "fixture.valid_read_only",
+  "kind": "tool-action",
+  "displayName": "Fixture Valid Read Only",
+  "description": "Valid read-only fixture used by manifest loader tests.",
+  "ownerRepo": "prism-spectra",
+  "status": "enabled",
+  "executionMode": "read-only",
+  "entrypoint": {
+    "type": "ai-request",
+    "sourceApp": "fixture-app",
+    "intent": "fixture.valid"
+  },
+  "locality": "local",
+  "dataBoundary": "local",
+  "riskClass": "read-only",
+  "approvalRequired": false,
+  "allowedInputs": [
+    "sourceApp",
+    "intent"
+  ],
+  "allowedOutputs": [
+    "response",
+    "provenance"
+  ],
+  "allowedPaths": [],
+  "allowedEnvVars": [],
+  "networkPolicy": {
+    "mode": "loopback-only",
+    "allowedHosts": [
+      "127.0.0.1"
+    ]
+  },
+  "credentialPolicy": {
+    "mode": "none",
+    "envVars": []
+  },
+  "costPolicy": {
+    "mode": "none"
+  },
+  "resourcePolicy": {
+    "profile": "tiny"
+  },
+  "provenanceFields": [
+    "capabilityManifest"
+  ],
+  "telemetryFields": [
+    "capabilityManifest.status"
+  ],
+  "validation": {
+    "tests": [
+      "capabilities.test"
+    ]
+  },
+  "rollback": "Delete the fixture.",
+  "failureMode": "Fixture is skipped if invalid.",
+  "disabledByDefault": false,
+  "verifiedOn": "2026-07-08",
+  "action": {
+    "name": "fixture.valid",
+    "apiShape": "POST /api/v1/ai/request",
+    "modelMayInfluenceParameters": false,
+    "terminalExecution": false,
+    "fileWritesPossible": false,
+    "allowedPathRoots": [],
+    "approvalQueueIntegration": "none",
+    "checkpointRequired": false,
+    "validationRequired": false
+  }
+}

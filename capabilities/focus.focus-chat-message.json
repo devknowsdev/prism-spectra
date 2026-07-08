@@ -1,0 +1,94 @@
+{
+  "id": "focus.focus-chat-message",
+  "kind": "tool-action",
+  "displayName": "Focus Chat Assistant Message",
+  "description": "Read-only Focus chat assistant route that can propose tasks or schedule blocks for visible user review without mutating Focus state.",
+  "ownerRepo": "prism-spectra",
+  "status": "enabled",
+  "executionMode": "read-only",
+  "entrypoint": {
+    "type": "ai-request",
+    "sourceApp": "prism-focus",
+    "intent": "focus-chat-message"
+  },
+  "locality": "local",
+  "dataBoundary": "local",
+  "riskClass": "read-only",
+  "approvalRequired": false,
+  "allowedInputs": [
+    "sourceApp",
+    "intent",
+    "riskClass",
+    "preferredMode",
+    "aiRole",
+    "maxOutputTokens",
+    "record",
+    "input.prompt",
+    "input.instruction",
+    "input.currentFocusState",
+    "context.feature",
+    "context.appSurface"
+  ],
+  "allowedOutputs": [
+    "response",
+    "structuredResponse.reply",
+    "structuredResponse.proposedTasks",
+    "structuredResponse.proposedSchedule",
+    "structuredResponse.followUpQuestion",
+    "provenance"
+  ],
+  "allowedPaths": [],
+  "allowedEnvVars": [],
+  "networkPolicy": {
+    "mode": "loopback-only",
+    "allowedHosts": [
+      "127.0.0.1"
+    ]
+  },
+  "credentialPolicy": {
+    "mode": "none",
+    "envVars": []
+  },
+  "costPolicy": {
+    "mode": "none"
+  },
+  "resourcePolicy": {
+    "profile": "small"
+  },
+  "provenanceFields": [
+    "routedBy",
+    "sourceApp",
+    "riskClass",
+    "preferredMode",
+    "graphId",
+    "nodeId",
+    "chainTried",
+    "capabilityManifest"
+  ],
+  "telemetryFields": [
+    "capabilityManifest.status",
+    "capabilityManifest.id"
+  ],
+  "validation": {
+    "tests": [
+      "test:focus-ai",
+      "test:ai-request",
+      "capabilities:check"
+    ]
+  },
+  "rollback": "Revert the manifest entry; Focus chat falls back to current unmanifested observe-only behavior.",
+  "failureMode": "If invalid, the loader omits this entry and the gateway records capabilityManifest.status=absent for this intent.",
+  "disabledByDefault": false,
+  "verifiedOn": "2026-07-08",
+  "action": {
+    "name": "focus-chat-message",
+    "apiShape": "POST /api/v1/ai/request with sourceApp=prism-focus and intent=focus-chat-message",
+    "modelMayInfluenceParameters": false,
+    "terminalExecution": false,
+    "fileWritesPossible": false,
+    "allowedPathRoots": [],
+    "approvalQueueIntegration": "none",
+    "checkpointRequired": false,
+    "validationRequired": false
+  }
+}
