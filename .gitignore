@@ -10,3 +10,6 @@ spectra.preview.local.json
 
 # Local eval run artifacts (regenerable; only .gitkeep is tracked)
 eval/reports/*.json
+
+# Local eval run artifacts (regenerable; only .gitkeep is tracked)
+eval/reports/*.json
