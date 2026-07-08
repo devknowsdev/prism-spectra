@@ -75,21 +75,21 @@
   "rollback": "Revert this disabled provider profile; no runtime state or local routing behavior changes.",
   "failureMode": "If invalid or missing, explicit cloud-teacher dispatch for OpenAI fails closed and normal app routing remains unchanged.",
   "disabledByDefault": true,
-  "verifiedOn": "2026-07-08",
+  "verifiedOn": "2026-07-09",
   "modelProvider": {
     "roles": [
       "teacher",
       "judge",
       "persona-driver"
     ],
-    "contextWindow": 1047576,
+    "contextWindow": 400000,
     "speed": "high",
     "qualityTier": "high",
     "costClass": "paid",
     "costPerToken": {
       "currency": "USD",
-      "inputPerMillion": 0.4,
-      "outputPerMillion": 1.6
+      "inputPerMillion": 0.25,
+      "outputPerMillion": 2
     },
     "modalities": [
       "text"

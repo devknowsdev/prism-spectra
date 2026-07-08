@@ -163,10 +163,84 @@ await test("eval runner writes a diff-reviewable report artifact with judge scor
   assert.equal(result.report.suite.fixtureCount, 7);
   assert.equal(result.report.cases.length, 7);
   assert.equal(result.report.summary.failed, 0);
+  assert.equal(result.report.summary.judgeErrors, 0);
+  assert.equal(result.report.summary.suspectZeroVariance, true);
   assert.equal(result.report.judge.provider, "openai");
+  assert.equal(result.report.judge.model, "gpt-5-mini");
+  assert.deepEqual(result.report.cases[0].local.determinism, {
+    temperature: {
+      value: 0,
+      source: "harness-default",
+      supported: false,
+      reason: "The ai-request gateway path does not currently consume temperature; recorded for eval comparability.",
+    },
+    seed: {
+      value: 1729,
+      source: "harness-default",
+      supported: false,
+      reason: "The ai-request gateway path does not currently consume seed; recorded for eval comparability.",
+    },
+  });
   assert.equal(path.relative(root, result.reportPath).replaceAll("\\", "/"), "eval/reports/eval-report-test.json");
   const written = JSON.parse(fs.readFileSync(result.reportPath, "utf8"));
   assert.equal(written.schemaVersion, EVAL_REPORT_SCHEMA_VERSION);
+});
+
+await test("eval runner records judge errors separately from local failures", async () => {
+  const root = copyEvalRoot("judge-errors");
+  const warnings: string[] = [];
+  let calls = 0;
+  const result = await runEvalSuite({
+    rootDir: root,
+    provider: "openai",
+    env: { OPENAI_API_KEY: "test-key" },
+    reportName: "eval-report-judge-errors.json",
+    localAnswerer: async () => mockAiRequestResult("Local answer should not be scored when the judge fails."),
+    fetchImpl: async () => {
+      calls += 1;
+      return jsonResponse({
+        choices: [{ message: { content: calls % 2 === 0 ? "not-json" : "" } }],
+        usage: { prompt_tokens: 100, completion_tokens: 0 },
+      });
+    },
+    logger: { info() {}, warn(message: string) { warnings.push(message); } },
+  });
+
+  assert.equal(result.report.summary.passed, 0);
+  assert.equal(result.report.summary.failed, 0);
+  assert.equal(result.report.summary.judgeErrors, 7);
+  assert.equal(result.report.summary.averageScore, 0);
+  assert.equal(result.report.summary.suspectZeroVariance, false);
+  assert.equal(result.report.suggestedArtifactChanges.length, 0);
+  assert.equal(result.report.cases.filter((item) => item.judge.status === "empty").length, 4);
+  assert.equal(result.report.cases.filter((item) => item.judge.status === "unparseable").length, 3);
+  assert.equal(warnings.filter((line) => line.startsWith("[eval] judge-error fixture=")).length, 7);
+});
+
+await test("eval runner plumbs judge model and max output token overrides", async () => {
+  const root = copyEvalRoot("judge-options");
+  const bodies: unknown[] = [];
+  const result = await runEvalSuite({
+    rootDir: root,
+    provider: "openai",
+    env: { OPENAI_API_KEY: "test-key" },
+    judgeModel: "gpt-test-judge",
+    maxJudgeOutputTokens: 123,
+    reportName: "eval-report-judge-options.json",
+    localAnswerer: async () => mockAiRequestResult("Synthetic answer."),
+    fetchImpl: async (_url, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return jsonResponse({
+        choices: [{ message: { content: JSON.stringify({ score: 4.2, findings: [] }) } }],
+        usage: { prompt_tokens: 100, completion_tokens: 20 },
+      });
+    },
+    logger: { info() {}, warn() {} },
+  });
+
+  assert.equal(result.report.judge.model, "gpt-test-judge");
+  assert.equal((bodies[0] as { model?: unknown }).model, "gpt-test-judge");
+  assert.equal((bodies[0] as { max_completion_tokens?: unknown }).max_completion_tokens, 123);
 });
 
 await test("eval suggestions are review-first and no proposal files are written", async () => {

@@ -159,9 +159,15 @@ async function checkCloudTeacherProviders(): Promise<Check> {
   const ok = health.filter((item) => item.ok).map((item) => item.provider);
   const missing = health.filter((item) => item.status === "missing-key").map((item) => item.provider);
   const failed = health.filter((item) => item.status === "auth-failed").map((item) => `${item.provider}: ${item.reason ?? "auth ping failed"}`);
+  const modelMissing = health
+    .filter((item) => item.status === "model-not-found")
+    .map((item) => `${item.provider}: configured model ${item.model ?? "unknown"} not found`);
 
   if (failed.length > 0) {
     return { status: "warn", label: "cloud-teacher providers", detail: `Auth ping failed for ${failed.join("; ")}.` };
+  }
+  if (modelMissing.length > 0) {
+    return { status: "warn", label: "cloud-teacher providers", detail: `Model existence check failed for ${modelMissing.join("; ")}.` };
   }
   if (ok.length > 0) {
     return { status: "ok", label: "cloud-teacher providers", detail: `Auth ping OK for ${ok.join(", ")}; missing keys for ${missing.join(", ") || "none"}.` };

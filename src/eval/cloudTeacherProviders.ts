@@ -42,7 +42,8 @@ export interface CloudTeacherHealthResult {
   ok: boolean;
   keyPresent: boolean;
   authOk: boolean;
-  status: "ok" | "missing-key" | "auth-failed";
+  status: "ok" | "missing-key" | "auth-failed" | "model-not-found";
+  model?: string;
   reason?: string;
 }
 
@@ -50,25 +51,27 @@ export function requiredEnvVarForCloudTeacherProvider(provider: CloudTeacherProv
   return configForProvider(provider).envVar;
 }
 
-interface ProviderConfig {
+export interface ProviderConfig {
   provider: CloudTeacherProvider;
   envVar: "ANTHROPIC_API_KEY" | "OPENAI_API_KEY";
   defaultModel: string;
   chatUrl: string;
   healthUrl: string;
+  contextWindow: number;
   inputPerMillionUsd: number;
   outputPerMillionUsd: number;
 }
 
-const PROVIDER_CONFIGS: Record<CloudTeacherProvider, ProviderConfig> = {
+export const PROVIDER_CONFIGS: Record<CloudTeacherProvider, ProviderConfig> = {
   anthropic: {
     provider: "anthropic",
     envVar: "ANTHROPIC_API_KEY",
     defaultModel: "claude-sonnet-5",
     chatUrl: "https://api.anthropic.com/v1/messages",
     healthUrl: "https://api.anthropic.com/v1/models",
-    inputPerMillionUsd: 3,
-    outputPerMillionUsd: 15,
+    contextWindow: 1_000_000,
+    inputPerMillionUsd: 2,
+    outputPerMillionUsd: 10,
   },
   openai: {
     provider: "openai",
@@ -76,8 +79,9 @@ const PROVIDER_CONFIGS: Record<CloudTeacherProvider, ProviderConfig> = {
     defaultModel: "gpt-5-mini",
     chatUrl: "https://api.openai.com/v1/chat/completions",
     healthUrl: "https://api.openai.com/v1/models",
-    inputPerMillionUsd: 0.4,
-    outputPerMillionUsd: 1.6,
+    contextWindow: 400_000,
+    inputPerMillionUsd: 0.25,
+    outputPerMillionUsd: 2,
   },
 };
 
@@ -150,6 +154,7 @@ export async function checkCloudTeacherHealth(
       keyPresent: false,
       authOk: false,
       status: "missing-key",
+      model: config.defaultModel,
       reason: `${config.envVar} not set`,
     };
   }
@@ -168,10 +173,23 @@ export async function checkCloudTeacherHealth(
         keyPresent: true,
         authOk: false,
         status: "auth-failed",
+        model: config.defaultModel,
         reason: `auth ping returned HTTP ${response.status}`,
       };
     }
-    return { provider, ok: true, keyPresent: true, authOk: true, status: "ok" };
+    const modelIds = extractModelIds(await response.json());
+    if (!modelIds.has(config.defaultModel)) {
+      return {
+        provider,
+        ok: false,
+        keyPresent: true,
+        authOk: true,
+        status: "model-not-found",
+        model: config.defaultModel,
+        reason: `configured model ${config.defaultModel} was not present in ${config.healthUrl}`,
+      };
+    }
+    return { provider, ok: true, keyPresent: true, authOk: true, status: "ok", model: config.defaultModel };
   } catch (error) {
     return {
       provider,
@@ -179,6 +197,7 @@ export async function checkCloudTeacherHealth(
       keyPresent: true,
       authOk: false,
       status: "auth-failed",
+      model: config.defaultModel,
       reason: (error as Error).message,
     };
   }
@@ -209,6 +228,11 @@ function configForProvider(provider: CloudTeacherProvider): ProviderConfig {
   const config = PROVIDER_CONFIGS[provider];
   if (!config) throw new Error(`unsupported cloud-teacher provider: ${provider}`);
   return config;
+}
+
+function extractModelIds(data: unknown): Set<string> {
+  const body = data as { data?: Array<{ id?: unknown }> };
+  return new Set((body.data ?? []).map((item) => item.id).filter((id): id is string => typeof id === "string"));
 }
 
 function chatHeaders(config: ProviderConfig, apiKey: string): Record<string, string> {

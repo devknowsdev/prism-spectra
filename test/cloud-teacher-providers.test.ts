@@ -133,12 +133,26 @@ await test("cloud-teacher health check fails closed without key and auth-pings w
     env: { OPENAI_API_KEY: "health-key" },
     fetchImpl: async (url) => {
       urlSeen = String(url);
-      return jsonResponse({ data: [] });
+      return jsonResponse({ data: [{ id: "gpt-5-mini" }] });
     },
   });
   assert.equal(urlSeen, "https://api.openai.com/v1/models");
   assert.equal(ok.ok, true);
   assert.equal(ok.authOk, true);
+  assert.equal(ok.status, "ok");
+  assert.equal(ok.model, "gpt-5-mini");
+});
+
+await test("cloud-teacher health check warns when configured model is absent", async () => {
+  const missingModel = await checkCloudTeacherHealth("anthropic", {
+    env: { ANTHROPIC_API_KEY: "health-key" },
+    fetchImpl: async () => jsonResponse({ data: [{ id: "claude-opus-4-8" }] }),
+  });
+  assert.equal(missingModel.ok, false);
+  assert.equal(missingModel.keyPresent, true);
+  assert.equal(missingModel.authOk, true);
+  assert.equal(missingModel.status, "model-not-found");
+  assert.equal(missingModel.model, "claude-sonnet-5");
 });
 
 await test("cloud-teacher providers are not normal routing executors", () => {

@@ -7,6 +7,7 @@ import {
   validateSpectraCapabilityManifest,
 } from "../src/capabilities/capabilityManifestRegistry.js";
 import { ExecutionEngine } from "../src/engine/executionEngine.js";
+import { PROVIDER_CONFIGS } from "../src/eval/cloudTeacherProviders.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..");
@@ -91,6 +92,26 @@ async function main() {
     }
     assert.deepEqual(anthropic?.credentialPolicy.envVars, ["ANTHROPIC_API_KEY"]);
     assert.deepEqual(openai?.credentialPolicy.envVars, ["OPENAI_API_KEY"]);
+  });
+
+  await test("cloud teacher manifests match provider adapter model metadata", () => {
+    const result = loadCapabilityManifestRegistry({
+      directory: path.join(ROOT, "capabilities"),
+      logger,
+    });
+    assert.deepEqual(result.issues, []);
+
+    for (const manifestId of ["anthropic.claude", "openai.gpt"]) {
+      const manifest = result.registry.get(manifestId);
+      assert.ok(manifest?.modelProvider);
+      assert.ok(manifest.modelProvider.costPerToken);
+      const provider = manifest.modelProvider.provider as keyof typeof PROVIDER_CONFIGS;
+      const config = PROVIDER_CONFIGS[provider];
+      assert.equal(manifest.modelProvider.model, config.defaultModel);
+      assert.equal(manifest.modelProvider.contextWindow, config.contextWindow);
+      assert.equal(manifest.modelProvider.costPerToken.inputPerMillion, config.inputPerMillionUsd);
+      assert.equal(manifest.modelProvider.costPerToken.outputPerMillion, config.outputPerMillionUsd);
+    }
   });
 
   await test("fixture valid manifest registers and matches ai-request telemetry", () => {
