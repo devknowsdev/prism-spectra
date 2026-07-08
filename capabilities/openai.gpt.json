@@ -102,6 +102,6 @@
       "endpoint": "https://api.openai.com/v1/models"
     },
     "fallbackPolicy": "never-normal-routing",
-    "model": "gpt-4.1-mini"
+    "model": "gpt-5-mini"
   }
 }

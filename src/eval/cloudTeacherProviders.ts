@@ -73,7 +73,7 @@ const PROVIDER_CONFIGS: Record<CloudTeacherProvider, ProviderConfig> = {
   openai: {
     provider: "openai",
     envVar: "OPENAI_API_KEY",
-    defaultModel: "gpt-4.1-mini",
+    defaultModel: "gpt-5-mini",
     chatUrl: "https://api.openai.com/v1/chat/completions",
     healthUrl: "https://api.openai.com/v1/models",
     inputPerMillionUsd: 0.4,
@@ -246,7 +246,7 @@ function chatBody(config: ProviderConfig, messages: CloudTeacherMessage[], model
 
   return {
     model,
-    max_tokens: maxOutputTokens,
+    max_completion_tokens: maxOutputTokens,
     messages,
   };
 }
