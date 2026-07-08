@@ -75,21 +75,21 @@
   "rollback": "Revert this disabled provider profile; no runtime state or local routing behavior changes.",
   "failureMode": "If invalid or missing, explicit cloud-teacher dispatch for Anthropic fails closed and normal app routing remains unchanged.",
   "disabledByDefault": true,
-  "verifiedOn": "2026-07-08",
+  "verifiedOn": "2026-07-09",
   "modelProvider": {
     "roles": [
       "teacher",
       "judge",
       "persona-driver"
     ],
-    "contextWindow": 200000,
+    "contextWindow": 1000000,
     "speed": "medium",
     "qualityTier": "high",
     "costClass": "paid",
     "costPerToken": {
       "currency": "USD",
-      "inputPerMillion": 3,
-      "outputPerMillion": 15
+      "inputPerMillion": 2,
+      "outputPerMillion": 10
     },
     "modalities": [
       "text"

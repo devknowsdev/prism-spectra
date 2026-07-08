@@ -69,6 +69,7 @@ export interface EvalSuite {
 export interface EvalRunOptions {
   rootDir?: string;
   provider?: CloudTeacherProvider;
+  judgeModel?: string;
   costCeilingUsd?: number;
   maxJudgeOutputTokens?: number;
   env?: Record<string, string | undefined>;
@@ -80,7 +81,28 @@ export interface EvalRunOptions {
   now?: () => Date;
 }
 
-export type EvalLocalAnswerer = (fixture: EvalFixture, request: AiRequestInput) => Promise<AiRequestResult>;
+export interface EvalLocalDeterminismControl {
+  value: number;
+  source: "fixture" | "harness-default";
+  supported: boolean;
+  reason?: string;
+}
+
+export interface EvalLocalDeterminism {
+  temperature: EvalLocalDeterminismControl;
+  seed: EvalLocalDeterminismControl;
+}
+
+export type EvalLocalAnswerRequest = AiRequestInput & {
+  temperature?: number;
+  seed?: number;
+};
+
+export type EvalLocalAnswerer = (
+  fixture: EvalFixture,
+  request: EvalLocalAnswerRequest,
+  determinism: EvalLocalDeterminism,
+) => Promise<AiRequestResult>;
 
 export interface EvalReport {
   schemaVersion: typeof EVAL_REPORT_SCHEMA_VERSION;
@@ -107,7 +129,9 @@ export interface EvalReport {
   summary: {
     passed: number;
     failed: number;
+    judgeErrors: number;
     averageScore: number;
+    suspectZeroVariance: boolean;
   };
   cases: EvalReportCase[];
   suggestedArtifactChanges: SuggestedArtifactChange[];
@@ -125,8 +149,10 @@ export interface EvalReportCase {
     response: string;
     provenance: unknown;
     usage: unknown;
+    determinism: EvalLocalDeterminism;
   };
   judge: {
+    status: JudgeResultStatus;
     score: number;
     findings: string[];
     raw: string;
@@ -152,11 +178,15 @@ export interface SuggestedArtifactChange {
   applied: false;
 }
 
+export type JudgeResultStatus = "ok" | "empty" | "unparseable";
+
 const FORBIDDEN_T0_PATH_FRAGMENTS = [
   "prism-beam/user-context",
   "user-context/",
   "user-context\\",
 ];
+const DEFAULT_LOCAL_TEMPERATURE = 0;
+const DEFAULT_LOCAL_SEED = 1729;
 
 export async function loadEvalSuite(rootDir = process.cwd()): Promise<EvalSuite> {
   const evalRoot = path.join(rootDir, "eval");
@@ -204,19 +234,26 @@ export async function runEvalSuite(options: EvalRunOptions = {}): Promise<{ repo
   const ceilingUsd = options.costCeilingUsd ?? DEFAULT_CLOUD_TEACHER_COST_CEILING_USD;
   const logger = options.logger ?? console;
   const localAnswerer = options.localAnswerer ?? createGatewayLocalAnswerer(rootDir);
-  const localAnswers: Array<{ fixture: EvalFixture; request: AiRequestInput; result: AiRequestResult }> = [];
+  const localAnswers: Array<{
+    fixture: EvalFixture;
+    request: EvalLocalAnswerRequest;
+    determinism: EvalLocalDeterminism;
+    result: AiRequestResult;
+  }> = [];
 
   for (const fixture of suite.fixtures) {
-    const request = normalizeFixtureRequest(fixture);
-    const result = await localAnswerer(fixture, request);
-    localAnswers.push({ fixture, request, result });
+    const request = withEvalLocalDeterminism(normalizeFixtureRequest(fixture), fixture);
+    const determinism = determinismForFixture(fixture);
+    const result = await localAnswerer(fixture, request, determinism);
+    localAnswers.push({ fixture, request, determinism, result });
   }
 
-  const judgeRequests = localAnswers.map(({ fixture, request, result }) => {
+  const judgeRequests = localAnswers.map(({ fixture, request, determinism, result }) => {
     const rubric = requiredMapValue(suite.rubrics, fixture.rubricId, "rubric");
     return {
       fixture,
       request,
+      determinism,
       result,
       rubric,
       messages: buildJudgeMessages(fixture, request, result, rubric),
@@ -247,6 +284,7 @@ export async function runEvalSuite(options: EvalRunOptions = {}): Promise<{ repo
     const judgeResult = await dispatchCloudTeacherChatCompletion({
       provider,
       role: "judge",
+      model: options.judgeModel,
       messages: item.messages,
       maxOutputTokens: maxJudgeOutputTokens,
       costCeilingUsd: Math.max(0.01, ceilingUsd - actualCostUsd),
@@ -259,15 +297,23 @@ export async function runEvalSuite(options: EvalRunOptions = {}): Promise<{ repo
     judgeModel = judgeResult.model;
     const parsed = parseJudgeResult(judgeResult.content);
     const baseline = requiredMapValue(suite.baselines, item.fixture.baselineId, "baseline");
-    const passed = parsed.score >= baseline.minimumScore;
-    const reportCase = buildReportCase(item.fixture, item.request, item.result, judgeResult, parsed, baseline, passed);
+    const passed = parsed.status === "ok" && parsed.score >= baseline.minimumScore;
+    if (parsed.status !== "ok") {
+      logger.warn(`[eval] judge-error fixture=${item.fixture.id} status=${parsed.status}`);
+    }
+    const reportCase = buildReportCase(item.fixture, item.request, item.determinism, item.result, judgeResult, parsed, baseline, passed);
     cases.push(reportCase);
-    if (!passed) {
+    if (parsed.status === "ok" && !passed) {
       suggestions.push(...buildReviewSuggestions(reportCase, parsed.findings));
     }
   }
 
-  const averageScore = cases.length === 0 ? 0 : round2(cases.reduce((sum, item) => sum + item.judge.score, 0) / cases.length);
+  const judgedOkCases = cases.filter((item) => item.judge.status === "ok");
+  const averageScore = judgedOkCases.length === 0 ? 0 : round2(judgedOkCases.reduce((sum, item) => sum + item.judge.score, 0) / judgedOkCases.length);
+  const suspectZeroVariance = judgedOkCases.length >= 3 && judgedOkCases.every((item) => item.judge.score === judgedOkCases[0].judge.score);
+  if (suspectZeroVariance) {
+    logger.warn("[eval] WARNING: zero score variance - judge may be rubber-stamping");
+  }
   const generatedAt = (options.now ?? (() => new Date()))().toISOString();
   const report: EvalReport = {
     schemaVersion: EVAL_REPORT_SCHEMA_VERSION,
@@ -292,9 +338,11 @@ export async function runEvalSuite(options: EvalRunOptions = {}): Promise<{ repo
       ceilingUsd,
     },
     summary: {
-      passed: cases.filter((item) => item.baseline.passed).length,
-      failed: cases.filter((item) => !item.baseline.passed).length,
+      passed: judgedOkCases.filter((item) => item.baseline.passed).length,
+      failed: judgedOkCases.filter((item) => !item.baseline.passed).length,
+      judgeErrors: cases.filter((item) => item.judge.status !== "ok").length,
       averageScore,
+      suspectZeroVariance,
     },
     cases,
     suggestedArtifactChanges: suggestions,
@@ -337,6 +385,35 @@ function createGatewayLocalAnswerer(rootDir: string): EvalLocalAnswerer {
       engine.close();
       await fs.rm(path.join(tmpRoot, runId), { recursive: true, force: true });
     }
+  };
+}
+
+function withEvalLocalDeterminism(request: AiRequestInput, fixture: EvalFixture): EvalLocalAnswerRequest {
+  const determinism = determinismForFixture(fixture);
+  return {
+    ...request,
+    temperature: determinism.temperature.value,
+    seed: determinism.seed.value,
+  };
+}
+
+function determinismForFixture(fixture: EvalFixture): EvalLocalDeterminism {
+  const raw = fixture.aiRequest as Record<string, unknown>;
+  const fixtureTemperature = finiteNumber(raw.temperature);
+  const fixtureSeed = finiteNumber(raw.seed);
+  return {
+    temperature: {
+      value: fixtureTemperature ?? DEFAULT_LOCAL_TEMPERATURE,
+      source: fixtureTemperature == null ? "harness-default" : "fixture",
+      supported: false,
+      reason: "The ai-request gateway path does not currently consume temperature; recorded for eval comparability.",
+    },
+    seed: {
+      value: fixtureSeed ?? DEFAULT_LOCAL_SEED,
+      source: fixtureSeed == null ? "harness-default" : "fixture",
+      supported: false,
+      reason: "The ai-request gateway path does not currently consume seed; recorded for eval comparability.",
+    },
   };
 }
 
@@ -468,7 +545,10 @@ function buildJudgeMessages(
   ];
 }
 
-function parseJudgeResult(content: string): { score: number; findings: string[] } {
+function parseJudgeResult(content: string): { status: JudgeResultStatus; score: number; findings: string[] } {
+  if (content.trim() === "") {
+    return { status: "empty", score: 0, findings: ["Judge returned empty output."] };
+  }
   try {
     const parsed = JSON.parse(content) as { score?: unknown; findings?: unknown };
     const score = Number(parsed.score);
@@ -476,20 +556,22 @@ function parseJudgeResult(content: string): { score: number; findings: string[] 
       ? parsed.findings.filter((item): item is string => typeof item === "string")
       : [];
     return {
+      status: "ok",
       score: Number.isFinite(score) ? Math.max(0, Math.min(5, score)) : 0,
       findings,
     };
   } catch {
-    return { score: 0, findings: ["Judge returned non-JSON output."] };
+    return { status: "unparseable", score: 0, findings: ["Judge returned non-JSON output."] };
   }
 }
 
 function buildReportCase(
   fixture: EvalFixture,
-  request: AiRequestInput,
+  request: EvalLocalAnswerRequest,
+  determinism: EvalLocalDeterminism,
   result: AiRequestResult,
   judgeResult: CloudTeacherChatResult,
-  parsedJudge: { score: number; findings: string[] },
+  parsedJudge: { status: JudgeResultStatus; score: number; findings: string[] },
   baseline: EvalBaseline,
   passed: boolean,
 ): EvalReportCase {
@@ -505,8 +587,10 @@ function buildReportCase(
       response: result.response,
       provenance: result.provenance,
       usage: "usage" in result ? result.usage : undefined,
+      determinism,
     },
     judge: {
+      status: parsedJudge.status,
       score: parsedJudge.score,
       findings: parsedJudge.findings,
       raw: judgeResult.content,
@@ -628,6 +712,15 @@ function collectStrings(value: unknown, output: string[] = []): string[] {
 
 function plainObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
 }
 
 function safeTimestamp(value: string): string {
