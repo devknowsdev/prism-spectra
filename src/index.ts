@@ -65,4 +65,5 @@ export * from "./events/index.js";
 export * from "./sessions/index.js";
 export * from "./approvals/index.js";
 export * from "./capabilities/index.js";
+export * from "./eval/cloudTeacherProviders.js";
 export * from "./workbench/index.js";

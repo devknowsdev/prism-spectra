@@ -29,6 +29,8 @@ import {
   createCurrentSession,
   type PrismEvent,
   type SpectraSession,
+  checkAllCloudTeacherHealth,
+  loadCapabilityManifestRegistry,
 } from "../src/index.js";
 import { TaskGraph } from "../src/taskGraph/graph.js";
 import { probeAllProviders, applyProviderProbe } from "../src/config/providerProbe.js";
@@ -73,6 +75,7 @@ const APP_PREVIEW_CONFIG_PATH = path.resolve(
 async function initEngine() {
   const engine = new ExecutionEngine({ dbPath: ".demo/daemon.db", workDir: ".demo/work", mockExecutors: process.env.AI_FORGE_MOCK_EXECUTORS === "1", fallbackOnFailure: false });
   await engine.init();
+  await loadStartupCapabilityManifests();
   const statuses = await probeAllProviders();   applyProviderProbe(engine, statuses);   const ollamaStatus = statuses.find(s => s.provider === "ollama");   if (!ollamaStatus?.available) {     console.warn("[daemon] Ollama unavailable at startup — local tier disabled:", ollamaStatus?.reason ?? "no reason given");   }   const graphBuilder = new GraphBuilder(engine.memory, engine.taskHistory);
   return { engine, graphBuilder };
 }
@@ -131,6 +134,11 @@ function sendHtml(res: http.ServerResponse, html: string) {
     "Access-Control-Allow-Origin": "*",
   });
   res.end(html);
+}
+
+async function loadStartupCapabilityManifests() {
+  const result = loadCapabilityManifestRegistry({ directory: path.resolve(process.cwd(), "capabilities") });
+  console.log(`[capabilities] loaded ${result.loaded.length} file-backed capability manifests with ${result.issues.length} issue(s)`);
 }
 
 async function readWorkbenchHtml(): Promise<string> {
@@ -1300,7 +1308,7 @@ async function start() {
       if (provided !== TOKEN) return unauthorized(res);
 
       if (req.method === "GET" && url.pathname === "/api/v1/health") {
-        return jsonResponse(res, 200, { ok: true, available: true });
+        return jsonResponse(res, 200, { ok: true, available: true, cloudTeacherProviders: await checkAllCloudTeacherHealth() });
       }
 
       if (req.method === "POST" && url.pathname === "/api/v1/build-graph") {

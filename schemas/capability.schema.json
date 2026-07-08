@@ -68,10 +68,11 @@
       "additionalProperties": false,
       "required": ["type"],
       "properties": {
-        "type": { "type": "string", "enum": ["ai-request", "reserved-domain"] },
+        "type": { "type": "string", "enum": ["ai-request", "reserved-domain", "explicit-eval-teacher-dispatch"] },
         "sourceApp": { "type": "string", "minLength": 1 },
         "intent": { "type": "string", "minLength": 1 },
-        "domain": { "type": "string", "minLength": 1 }
+        "domain": { "type": "string", "minLength": 1 },
+        "adapter": { "type": "string", "minLength": 1 }
       }
     },
     "locality": { "type": "string", "enum": ["local", "external", "hybrid"] },
@@ -173,27 +174,55 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "role",
+        "roles",
         "contextWindow",
         "speed",
         "qualityTier",
         "costClass",
+        "costPerToken",
         "modalities",
         "provider",
+        "requiredEnvVar",
+        "healthcheck",
+        "model",
         "fallbackPolicy"
       ],
       "properties": {
-        "role": { "type": "string", "minLength": 1 },
+        "roles": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["teacher", "judge", "persona-driver"] },
+          "minItems": 1,
+          "uniqueItems": true
+        },
         "contextWindow": { "type": "integer", "minimum": 1 },
         "speed": { "type": "string", "enum": ["low", "medium", "high"] },
         "qualityTier": { "type": "string", "enum": ["low", "medium", "high"] },
         "costClass": { "type": "string", "enum": ["free", "metered", "paid"] },
-        "costPerToken": { "type": "number", "minimum": 0 },
+        "costPerToken": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["currency", "inputPerMillion", "outputPerMillion"],
+          "properties": {
+            "currency": { "type": "string", "enum": ["USD"] },
+            "inputPerMillion": { "type": "number", "minimum": 0 },
+            "outputPerMillion": { "type": "number", "minimum": 0 }
+          }
+        },
         "modalities": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
         "provider": { "type": "string", "minLength": 1 },
         "requiredEnvVar": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
-        "healthcheck": { "type": "string" },
-        "fallbackPolicy": { "type": "string", "minLength": 1 }
+        "healthcheck": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "method", "endpoint"],
+          "properties": {
+            "type": { "type": "string", "enum": ["auth-ping"] },
+            "method": { "type": "string", "enum": ["GET"] },
+            "endpoint": { "type": "string", "minLength": 1 }
+          }
+        },
+        "model": { "type": "string", "minLength": 1 },
+        "fallbackPolicy": { "type": "string", "enum": ["never-normal-routing"] }
       }
     }
   },
