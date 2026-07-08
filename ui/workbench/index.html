@@ -983,26 +983,29 @@
       </div>
 
       <nav class="nav" aria-label="Primary">
-        <button type="button" data-view="resume" aria-current="page">
+        <button type="button" data-view="resume" aria-current="page" title="Where you are right now: workspace snapshot, recent checkpoints, conversations and attachments, plus the next smallest safe action.">
           <span>Resume</span><small>1</small>
         </button>
-        <button type="button" data-view="conversations">
+        <button type="button" data-view="conversations" title="Project memory threads — each message and the context attached to it. Read-only.">
           <span>Conversations</span><small>2</small>
         </button>
-        <button type="button" data-view="attachments">
+        <button type="button" data-view="attachments" title="Local project artifacts with metadata and an audit trail. Adding a file is explicit (preview, then Import); no delete, move, or remote providers.">
           <span>Attachments</span><small>3</small>
         </button>
-        <button type="button" data-view="approvals">
+        <button type="button" data-view="approvals" title="Actions waiting on your yes/no. Each shows its risk tier, affected files, and a preview before it can run.">
           <span>Approvals</span><small>4</small>
         </button>
-        <button type="button" data-view="changes">
+        <button type="button" data-view="changes" title="Live timeline of provenance events — what happened, when, and which capability or checkpoint it relates to. Updates without a reload.">
           <span>Changes</span><small>5</small>
         </button>
-        <button type="button" data-view="capabilities">
+        <button type="button" data-view="capabilities" title="What Spectra can do, generated from capability manifests: load mode, approval class, and local/remote boundary.">
           <span>Capabilities</span><small>6</small>
         </button>
-        <button type="button" data-view="settings">
+        <button type="button" data-view="settings" title="Workbench and safety toggles (low-power, preview-only, music-safe, and so on). Placeholders until future daemon state controls them.">
           <span>Settings</span><small>7</small>
+        </button>
+        <button type="button" data-view="guide" title="How to use this workbench: what each view is for and the review-first model.">
+          <span>Guide</span><small>8</small>
         </button>
       </nav>
 
@@ -1019,9 +1022,9 @@
           <p id="subtitle">Where you are, what is safe, and the next smallest action.</p>
         </div>
         <div class="status-pills" aria-label="Workbench summary">
-          <span class="pill">Read-only shell</span>
-          <span class="pill">Manifest-driven capabilities</span>
-          <span class="pill">CLI equivalent: placeholder</span>
+          <span class="pill" title="This page only reads daemon state. It exposes no write routes — nothing here can change your files or repos.">Read-only shell</span>
+          <span class="pill" title="The Capabilities view is generated from capability manifests, not hard-coded — each declares its load mode, approval class, and boundary.">Manifest-driven capabilities</span>
+          <span class="pill" title="Every action has an equivalent prism CLI command (e.g. prism approvals approve &lt;id&gt;), so nothing here is a black box.">CLI equivalent: placeholder</span>
         </div>
       </header>
 
@@ -1426,6 +1429,76 @@
             </div>
           </div>
         </section>
+
+        <section class="view" data-section="guide" aria-labelledby="guide-title">
+          <div class="stack">
+            <div class="card">
+              <div class="section-title">
+                <h3 id="guide-title">Guide</h3>
+                <span>How to use this workbench</span>
+              </div>
+              <p class="empty" style="margin-bottom: 14px;">
+                The Workbench is a calm, <strong>read-only</strong> shell over the local Spectra daemon. It shows
+                where a work session stands and what is safe to do next — it never changes your files or repos on
+                its own. Navigate with the left rail or press <code>1</code>–<code>8</code>. Everything follows one
+                rule: <strong>review first</strong> — you see a preview and approve before anything runs.
+              </p>
+              <div class="field-list">
+                <div class="field"><div class="k">Resume</div><div class="v">Where you are now: workspace snapshot, recent checkpoints, conversations, and attachments, plus the next smallest safe action.</div></div>
+                <div class="field"><div class="k">Conversations</div><div class="v">Project memory threads — each message and the context attached to it. Read-only.</div></div>
+                <div class="field"><div class="k">Attachments</div><div class="v">Local project artifacts with metadata and an audit trail. Adding a file is explicit: preview, then Import. No delete, move, or remote providers.</div></div>
+                <div class="field"><div class="k">Approvals</div><div class="v">Actions waiting on your yes/no. Each shows its risk tier, affected files, and a preview before it can run.</div></div>
+                <div class="field"><div class="k">Changes</div><div class="v">A live timeline of provenance events — what happened, when, and which capability or checkpoint it relates to. Updates without a reload.</div></div>
+                <div class="field"><div class="k">Capabilities</div><div class="v">What Spectra can do, generated from capability manifests: load mode, approval class, and local/remote boundary.</div></div>
+                <div class="field"><div class="k">Settings</div><div class="v">Workbench and safety toggles (low-power, preview-only, music-safe, and so on). Placeholders until future daemon state controls them.</div></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="section-title">
+                <h3>Reading an approval</h3>
+                <span>Risk tiers &amp; the review gate</span>
+              </div>
+              <p class="empty" style="margin-bottom: 12px;">
+                Each approval card carries a coloured risk tier on its left edge and a preview of the proposed work.
+                Nothing executes until you approve it, and every action has an equivalent <code>prism</code> CLI
+                command — so the workbench is never a black box.
+              </p>
+              <div class="field-list">
+                <div class="field"><div class="k"><span class="approval-tier" style="border-left: 4px solid var(--good); padding-left: 8px;">green</span></div><div class="v">Low risk — local, observe or preview only. Safe to approve routinely.</div></div>
+                <div class="field"><div class="k"><span class="approval-tier" style="border-left: 4px solid var(--warn); padding-left: 8px;">amber</span></div><div class="v">Medium risk — local writes or larger jobs. Read the preview before approving.</div></div>
+                <div class="field"><div class="k"><span class="approval-tier" style="border-left: 4px solid var(--danger); padding-left: 8px;">red</span></div><div class="v">High risk — destructive, remote, or expensive. Approve only deliberately; these stay gated by design.</div></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="section-title">
+                <h3>Live preview &amp; the change pipeline</h3>
+                <span>Local dev only</span>
+              </div>
+              <div class="placeholder-line" style="margin-bottom: 10px;">
+                <span>Launch previews with</span><code>AI_FORGE_APP_PREVIEW=1</code><span>and the Workbench watcher with</span><code>AI_FORGE_WORKBENCH_WATCH=1</code>.
+              </div>
+              <p class="empty">
+                When a preview is running and a validation command is configured, saving a watched file runs that
+                check first — you'll see <em>change → validating → passed/failed</em> in the <strong>Changes</strong>
+                timeline, and a failing check holds the reload so the last good preview stays up. With no command
+                configured, the preview just reloads as before. Commands come only from your local, git-ignored
+                preview config — never from a request, repo, or AI.
+              </p>
+            </div>
+
+            <div class="card" style="background: rgba(139, 92, 246, 0.06);">
+              <div class="section-title">
+                <h3>Boundaries</h3>
+                <span>Why this feels safe</span>
+              </div>
+              <div class="placeholder-line">
+                <code>read-only page</code><code>no write routes</code><code>local-first</code><code>no delete</code><code>no move</code><code>no remote providers</code><code>review before execute</code>
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
     </main>
   </div>
@@ -1550,6 +1623,10 @@
       settings: {
         title: "Settings",
         subtitle: "Workbench and safety toggles that future daemon state will control."
+      },
+      guide: {
+        title: "Guide",
+        subtitle: "How to use this workbench — what each view is for and the review-first model."
       }
     };
 
@@ -2722,6 +2799,7 @@
         "5": "changes",
         "6": "capabilities",
         "7": "settings",
+        "8": "guide",
       };
       if (viewByKey[key]) {
         event.preventDefault();
