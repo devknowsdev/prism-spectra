@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "spectra.eval.baselines.v1",
+  "baselines": [
+    {
+      "id": "baseline-focus-chat-day-dump",
+      "fixtureId": "focus-chat-day-dump",
+      "minimumScore": 3.5,
+      "notes": "Starter baseline: must produce a useful review-only JSON planning shape."
+    },
+    {
+      "id": "baseline-focus-call-plan-next-90",
+      "fixtureId": "focus-call-plan-next-90",
+      "minimumScore": 3.5,
+      "notes": "Starter baseline: must make a calm, bounded short plan without app mutation."
+    },
+    {
+      "id": "baseline-focus-bridge-smoke",
+      "fixtureId": "focus-bridge-smoke",
+      "minimumScore": 3,
+      "notes": "Starter baseline: smoke response can be simple but must stay read-only."
+    },
+    {
+      "id": "baseline-epk-refine-copy-bio",
+      "fixtureId": "epk-refine-copy-bio",
+      "minimumScore": 3.5,
+      "notes": "Starter baseline: copy can improve clarity but cannot invent facts."
+    },
+    {
+      "id": "baseline-epk-check-copy-consistency",
+      "fixtureId": "epk-check-copy-consistency",
+      "minimumScore": 3.5,
+      "notes": "Starter baseline: findings-only consistency review, no rewrite."
+    },
+    {
+      "id": "baseline-epk-refine-promo-copy",
+      "fixtureId": "epk-refine-promo-copy",
+      "minimumScore": 3.5,
+      "notes": "Starter baseline: promo Markdown refinement preserves claims."
+    },
+    {
+      "id": "baseline-epk-suggest-route-tags",
+      "fixtureId": "epk-suggest-route-tags",
+      "minimumScore": 3.5,
+      "notes": "Starter baseline: recommends only existing synthetic tags/angles and applies nothing."
+    }
+  ]
+}

@@ -46,6 +46,10 @@ export interface CloudTeacherHealthResult {
   reason?: string;
 }
 
+export function requiredEnvVarForCloudTeacherProvider(provider: CloudTeacherProvider): "ANTHROPIC_API_KEY" | "OPENAI_API_KEY" {
+  return configForProvider(provider).envVar;
+}
+
 interface ProviderConfig {
   provider: CloudTeacherProvider;
   envVar: "ANTHROPIC_API_KEY" | "OPENAI_API_KEY";

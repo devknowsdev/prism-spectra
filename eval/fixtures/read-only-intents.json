@@ -1,0 +1,210 @@
+{
+  "schemaVersion": "spectra.eval.fixtures.v1",
+  "boundaryTier": "T0",
+  "fixtures": [
+    {
+      "id": "focus-chat-day-dump",
+      "title": "Focus chat turns a day dump into reviewable next steps",
+      "rubricId": "focus-planning-read-only",
+      "baselineId": "baseline-focus-chat-day-dump",
+      "tags": ["focus", "day-dump", "read-only", "synthetic"],
+      "appShapeMetadata": {
+        "app": "prism-focus",
+        "surface": "chat-modal",
+        "expectedShape": ["reply", "proposedTasks", "proposedSchedule", "followUpQuestion"]
+      },
+      "aiRequest": {
+        "sourceApp": "prism-focus",
+        "intent": "focus-chat-message",
+        "riskClass": "read-only",
+        "preferredMode": "local-first",
+        "aiRole": "planner",
+        "maxOutputTokens": 900,
+        "record": false,
+        "input": {
+          "prompt": "Synthetic day dump: inbox is noisy, studio desk is messy, I need groceries, and I have a two-hour creative block after lunch.",
+          "instruction": "Return ONLY valid JSON with this shape: { reply, proposedTasks, proposedSchedule, followUpQuestion }. Keep suggestions review-only."
+        },
+        "context": {
+          "feature": "focus-chat",
+          "appSurface": "chat-modal"
+        }
+      }
+    },
+    {
+      "id": "focus-call-plan-next-90",
+      "title": "Focus generic call suggests a gentle next-90-minute plan",
+      "rubricId": "focus-planning-read-only",
+      "baselineId": "baseline-focus-call-plan-next-90",
+      "tags": ["focus", "planning", "read-only", "synthetic"],
+      "appShapeMetadata": {
+        "app": "prism-focus",
+        "surface": "ai-bridge",
+        "expectedShape": ["plan", "timeboxes", "caveats"]
+      },
+      "aiRequest": {
+        "sourceApp": "prism-focus",
+        "intent": "focus-ai-call",
+        "riskClass": "read-only",
+        "preferredMode": "local-first",
+        "aiRole": "planner",
+        "input": {
+          "userPrompt": "Plan the next 90 minutes around a synthetic admin task, a short walk, and one focused music-writing step.",
+          "systemPrompt": "Suggest a calm plan. Do not mutate tasks or schedule entries.",
+          "maxTokens": 600,
+          "temperature": 0.2
+        },
+        "context": {
+          "feature": "day-planning",
+          "responseFormat": "plain-text"
+        }
+      }
+    },
+    {
+      "id": "focus-bridge-smoke",
+      "title": "Focus bridge smoke returns a bounded read-only response",
+      "rubricId": "focus-bridge-read-only",
+      "baselineId": "baseline-focus-bridge-smoke",
+      "tags": ["focus", "bridge", "read-only", "synthetic"],
+      "appShapeMetadata": {
+        "app": "prism-focus",
+        "surface": "bridge-smoke",
+        "expectedShape": ["response", "provenance"]
+      },
+      "aiRequest": {
+        "sourceApp": "prism-focus",
+        "intent": "focus-ai-bridge-smoke-test",
+        "riskClass": "read-only",
+        "preferredMode": "local-first",
+        "nodeType": "docs",
+        "record": false,
+        "input": {
+          "prompt": "Synthetic bridge smoke: reply with one sentence confirming the request stayed read-only."
+        },
+        "context": {
+          "appSurface": "bridge-smoke",
+          "purpose": "eval-fixture"
+        }
+      }
+    },
+    {
+      "id": "epk-refine-copy-bio",
+      "title": "EPK copy refinement preserves claims while improving flow",
+      "rubricId": "epk-career-read-only",
+      "baselineId": "baseline-epk-refine-copy-bio",
+      "tags": ["epk", "career", "copy", "read-only", "synthetic"],
+      "appShapeMetadata": {
+        "app": "EPK",
+        "surface": "publisher",
+        "field": "bio.short"
+      },
+      "aiRequest": {
+        "sourceApp": "EPK",
+        "intent": "career.refine_epk_copy",
+        "riskClass": "read-only",
+        "preferredMode": "local-first",
+        "input": {
+          "text": "Synthetic artist makes layered live-looping sets for attentive rooms.",
+          "instruction": "Refine this EPK copy for clarity and flow. Preserve factual claims, names, and meaning. Do not invent details. Return only the revised copy."
+        },
+        "context": {
+          "appSurface": "publisher",
+          "field": "bio.short"
+        }
+      }
+    },
+    {
+      "id": "epk-check-copy-consistency",
+      "title": "EPK consistency check returns findings without rewriting copy",
+      "rubricId": "epk-career-read-only",
+      "baselineId": "baseline-epk-check-copy-consistency",
+      "tags": ["epk", "career", "consistency", "read-only", "synthetic"],
+      "appShapeMetadata": {
+        "app": "EPK",
+        "surface": "publisher",
+        "reviewType": "copy-consistency"
+      },
+      "aiRequest": {
+        "sourceApp": "EPK",
+        "intent": "career.check_epk_copy_consistency",
+        "riskClass": "read-only",
+        "preferredMode": "local-first",
+        "input": {
+          "copy": {
+            "bio": { "short": "Synthetic live-looping composer." },
+            "offerings": [{ "title": "Listening-room set", "description": "Layered performance for small venues.", "tags": ["booker"] }],
+            "credits": [{ "title": "Synthetic short film", "role": "Composer", "year": "2025", "description": "Original score.", "tags": ["screen"] }]
+          },
+          "instruction": "Review this EPK copy for internal consistency. Do not rewrite the copy. Do not invent facts. Return findings only."
+        },
+        "context": {
+          "appSurface": "publisher",
+          "reviewType": "copy-consistency"
+        }
+      }
+    },
+    {
+      "id": "epk-refine-promo-copy",
+      "title": "EPK promo kit refinement keeps generated Markdown factual",
+      "rubricId": "epk-career-read-only",
+      "baselineId": "baseline-epk-refine-promo-copy",
+      "tags": ["epk", "career", "promo-kit", "read-only", "synthetic"],
+      "appShapeMetadata": {
+        "app": "EPK",
+        "surface": "publisher",
+        "field": "brief-text"
+      },
+      "aiRequest": {
+        "sourceApp": "EPK",
+        "intent": "career.refine_epk_promo_copy",
+        "riskClass": "read-only",
+        "preferredMode": "local-first",
+        "input": {
+          "text": "# Synthetic Promo Kit\nA concise presenter brief for a layered live-looping performance.",
+          "instruction": "Refine this EPK promo copy for clarity, flow, and usefulness to presenters, venues, press, or collaborators. Preserve factual claims, names, dates, roles, and meaning. Do not invent details. Return only the revised copy."
+        },
+        "context": {
+          "appSurface": "publisher",
+          "field": "brief-text"
+        }
+      }
+    },
+    {
+      "id": "epk-suggest-route-tags",
+      "title": "EPK route tags recommends existing angles without applying tags",
+      "rubricId": "epk-career-read-only",
+      "baselineId": "baseline-epk-suggest-route-tags",
+      "tags": ["epk", "career", "route-tags", "read-only", "synthetic"],
+      "appShapeMetadata": {
+        "app": "EPK",
+        "surface": "publisher",
+        "reviewType": "route-tag-recommendations"
+      },
+      "aiRequest": {
+        "sourceApp": "EPK",
+        "intent": "career.suggest_epk_route_tags",
+        "riskClass": "read-only",
+        "preferredMode": "local-first",
+        "input": {
+          "route": {
+            "id": "booker",
+            "label": "Booker",
+            "audience": "For venues and presenters",
+            "sections": ["bio", "offerings", "contact"],
+            "offeringTags": ["booker"]
+          },
+          "content": {
+            "bio": { "short": "Synthetic live-looping composer." },
+            "offerings": [{ "title": "Listening-room set", "description": "Layered performance for small venues.", "tags": ["booker"] }],
+            "credits": [{ "title": "Synthetic short film", "role": "Composer", "year": "2025", "description": "Original score.", "tags": ["screen"] }]
+          },
+          "instruction": "Review this EPK route/page context and existing EPK content. Suggest which existing tags, offerings, credits, or biography angles best fit this audience route. Do not invent facts. Do not rewrite copy. Do not apply tags. Return recommendations only."
+        },
+        "context": {
+          "appSurface": "publisher",
+          "reviewType": "route-tag-recommendations"
+        }
+      }
+    }
+  ]
+}
