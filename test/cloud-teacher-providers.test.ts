@@ -133,14 +133,14 @@ await test("cloud-teacher health check fails closed without key and auth-pings w
     env: { OPENAI_API_KEY: "health-key" },
     fetchImpl: async (url) => {
       urlSeen = String(url);
-      return jsonResponse({ data: [{ id: "gpt-5.4-mini" }] });
+      return jsonResponse({ data: [{ id: "gpt-5-mini" }] });
     },
   });
   assert.equal(urlSeen, "https://api.openai.com/v1/models");
   assert.equal(ok.ok, true);
   assert.equal(ok.authOk, true);
   assert.equal(ok.status, "ok");
-  assert.equal(ok.model, "gpt-5.4-mini");
+  assert.equal(ok.model, "gpt-5-mini");
 });
 
 await test("cloud-teacher health check warns when configured model is absent", async () => {

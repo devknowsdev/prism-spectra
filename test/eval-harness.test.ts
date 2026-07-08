@@ -166,7 +166,7 @@ await test("eval runner writes a diff-reviewable report artifact with judge scor
   assert.equal(result.report.summary.judgeErrors, 0);
   assert.equal(result.report.summary.suspectZeroVariance, true);
   assert.equal(result.report.judge.provider, "openai");
-  assert.equal(result.report.judge.model, "gpt-5.4-mini");
+  assert.equal(result.report.judge.model, "gpt-5-mini");
   assert.deepEqual(result.report.cases[0].local.determinism, {
     temperature: {
       value: 0,

@@ -76,12 +76,12 @@ export const PROVIDER_CONFIGS: Record<CloudTeacherProvider, ProviderConfig> = {
   openai: {
     provider: "openai",
     envVar: "OPENAI_API_KEY",
-    defaultModel: "gpt-5.4-mini",
+    defaultModel: "gpt-5-mini",
     chatUrl: "https://api.openai.com/v1/chat/completions",
     healthUrl: "https://api.openai.com/v1/models",
     contextWindow: 400_000,
-    inputPerMillionUsd: 0.75,
-    outputPerMillionUsd: 4.5,
+    inputPerMillionUsd: 0.25,
+    outputPerMillionUsd: 2,
   },
 };
 
