@@ -12,6 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
+import { checkAllCloudTeacherHealth } from "../src/eval/cloudTeacherProviders.js";
 
 const MIN_NODE_MAJOR = 22;
 
@@ -26,9 +27,9 @@ type Check = {
 const args = new Set(process.argv.slice(2));
 const showSetupGuide = args.has("--setup-guide") || args.has("--setup") || args.has("setup");
 
-function main(): void {
+async function main(): Promise<void> {
   const root = process.cwd();
-  const checks = collectChecks(root);
+  const checks = await collectChecks(root);
 
   console.log("\nPrism Spectra setup doctor\n");
   for (const check of checks) {
@@ -54,7 +55,7 @@ function main(): void {
   console.log("\nSafety note: doctor/setup do not write config, start daemons, scan folders, publish, or execute graphs.\n");
 }
 
-function collectChecks(root: string): Check[] {
+async function collectChecks(root: string): Promise<Check[]> {
   const checks: Check[] = [];
 
   checks.push(checkNodeVersion());
@@ -65,6 +66,7 @@ function collectChecks(root: string): Check[] {
   checks.push(checkWorkbenchShell(root));
   checks.push(checkLocalTokenEnv());
   checks.push(checkProviderEnv());
+  checks.push(await checkCloudTeacherProviders());
   checks.push(checkGit(root));
   checks.push(checkDemoDirs(root));
 
@@ -152,6 +154,21 @@ function checkProviderEnv(): Check {
   return { status: "info", label: "provider environment", detail: "No provider env vars detected. CLI status can still explain provider setup." };
 }
 
+async function checkCloudTeacherProviders(): Promise<Check> {
+  const health = await checkAllCloudTeacherHealth();
+  const ok = health.filter((item) => item.ok).map((item) => item.provider);
+  const missing = health.filter((item) => item.status === "missing-key").map((item) => item.provider);
+  const failed = health.filter((item) => item.status === "auth-failed").map((item) => `${item.provider}: ${item.reason ?? "auth ping failed"}`);
+
+  if (failed.length > 0) {
+    return { status: "warn", label: "cloud-teacher providers", detail: `Auth ping failed for ${failed.join("; ")}.` };
+  }
+  if (ok.length > 0) {
+    return { status: "ok", label: "cloud-teacher providers", detail: `Auth ping OK for ${ok.join(", ")}; missing keys for ${missing.join(", ") || "none"}.` };
+  }
+  return { status: "info", label: "cloud-teacher providers", detail: `No cloud-teacher provider keys present (${missing.join(", ")}). Explicit eval/teacher dispatch will fail closed.` };
+}
+
 function checkGit(root: string): Check {
   const result = spawnSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd: root, encoding: "utf-8" });
   if (result.status === 0 && result.stdout.trim() === "true") {
@@ -195,4 +212,7 @@ function icon(status: CheckStatus): string {
   return "i";
 }
 
-main();
+main().catch((error) => {
+  console.error(`doctor failed: ${(error as Error).message}`);
+  process.exitCode = 1;
+});

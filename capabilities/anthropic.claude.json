@@ -1,0 +1,107 @@
+{
+  "id": "anthropic.claude",
+  "kind": "model-provider",
+  "displayName": "Anthropic Claude Cloud Teacher",
+  "description": "Disabled-by-default external Claude provider profile for Dave-dispatched teacher, judge, or persona-driver eval runs only. It is never a normal app-routing fallback.",
+  "ownerRepo": "prism-spectra",
+  "status": "disabled",
+  "executionMode": "external",
+  "entrypoint": {
+    "type": "explicit-eval-teacher-dispatch",
+    "adapter": "cloud-teacher.anthropic"
+  },
+  "locality": "external",
+  "dataBoundary": "remote_no_training",
+  "riskClass": "external",
+  "approvalRequired": true,
+  "allowedInputs": [
+    "synthetic-fixture",
+    "rubric",
+    "app-shape-metadata"
+  ],
+  "allowedOutputs": [
+    "chat-completion",
+    "cost-estimate",
+    "healthcheck"
+  ],
+  "allowedPaths": [
+    "eval/**"
+  ],
+  "allowedEnvVars": [
+    "ANTHROPIC_API_KEY"
+  ],
+  "networkPolicy": {
+    "mode": "declared-hosts",
+    "allowedHosts": [
+      "api.anthropic.com"
+    ]
+  },
+  "credentialPolicy": {
+    "mode": "declared-env",
+    "envVars": [
+      "ANTHROPIC_API_KEY"
+    ]
+  },
+  "costPolicy": {
+    "mode": "visible-before-use",
+    "notes": "Cloud-teacher dispatch prints a token-based estimate and aborts above the configured per-run ceiling before making the network call."
+  },
+  "resourcePolicy": {
+    "profile": "small",
+    "notes": "Default per-run cloud cost ceiling is $2, supplied by cloud-teacher adapter config."
+  },
+  "provenanceFields": [
+    "provider",
+    "model",
+    "role",
+    "dataBoundary",
+    "costEstimateUsd",
+    "tokensEstimated",
+    "outcome"
+  ],
+  "telemetryFields": [
+    "manifestId",
+    "manifestMatch",
+    "provider",
+    "healthStatus",
+    "costEstimateUsd"
+  ],
+  "validation": {
+    "tests": [
+      "capabilities:check",
+      "cloud-teacher-provider-adapter"
+    ]
+  },
+  "rollback": "Revert this disabled provider profile; no runtime state or local routing behavior changes.",
+  "failureMode": "If invalid or missing, explicit cloud-teacher dispatch for Anthropic fails closed and normal app routing remains unchanged.",
+  "disabledByDefault": true,
+  "verifiedOn": "2026-07-08",
+  "modelProvider": {
+    "roles": [
+      "teacher",
+      "judge",
+      "persona-driver"
+    ],
+    "contextWindow": 200000,
+    "speed": "medium",
+    "qualityTier": "high",
+    "costClass": "paid",
+    "costPerToken": {
+      "currency": "USD",
+      "inputPerMillion": 3,
+      "outputPerMillion": 15
+    },
+    "modalities": [
+      "text"
+    ],
+    "provider": "anthropic",
+    "requiredEnvVar": "ANTHROPIC_API_KEY",
+    "healthcheck": {
+      "type": "auth-ping",
+      "method": "GET",
+      "endpoint": "https://api.anthropic.com/v1/models"
+    },
+    "fallbackPolicy": "never-normal-routing",
+    "model": "claude-sonnet-4-20250514"
+  }
+}
