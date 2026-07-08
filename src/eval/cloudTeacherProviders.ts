@@ -64,7 +64,7 @@ const PROVIDER_CONFIGS: Record<CloudTeacherProvider, ProviderConfig> = {
   anthropic: {
     provider: "anthropic",
     envVar: "ANTHROPIC_API_KEY",
-    defaultModel: "claude-sonnet-4-20250514",
+    defaultModel: "claude-sonnet-5",
     chatUrl: "https://api.anthropic.com/v1/messages",
     healthUrl: "https://api.anthropic.com/v1/models",
     inputPerMillionUsd: 3,

@@ -200,7 +200,7 @@ export async function runEvalSuite(options: EvalRunOptions = {}): Promise<{ repo
     throw new Error(`${requiredEnvVar} is required for explicit ${provider} eval judge dispatch`);
   }
 
-  const maxJudgeOutputTokens = options.maxJudgeOutputTokens ?? 700;
+  const maxJudgeOutputTokens = options.maxJudgeOutputTokens ?? 2000;
   const ceilingUsd = options.costCeilingUsd ?? DEFAULT_CLOUD_TEACHER_COST_CEILING_USD;
   const logger = options.logger ?? console;
   const localAnswerer = options.localAnswerer ?? createGatewayLocalAnswerer(rootDir);
