@@ -48,10 +48,11 @@ const resourceProfiles = ["tiny", "small", "medium", "heavy", "extreme"] as cons
 const approvalQueueIntegrations = ["none", "required"] as const;
 
 export interface CapabilityEntrypoint {
-  type: "ai-request" | "reserved-domain";
+  type: "ai-request" | "reserved-domain" | "explicit-eval-teacher-dispatch";
   sourceApp?: string;
   intent?: string;
   domain?: string;
+  adapter?: string;
 }
 
 export interface CapabilityManifestAction {
@@ -67,17 +68,26 @@ export interface CapabilityManifestAction {
 }
 
 export interface CapabilityManifestModelProvider {
-  role: string;
+  roles: Array<"teacher" | "judge" | "persona-driver">;
   contextWindow: number;
   speed: "low" | "medium" | "high";
   qualityTier: "low" | "medium" | "high";
   costClass: "free" | "metered" | "paid";
-  costPerToken?: number;
+  costPerToken?: {
+    currency: "USD";
+    inputPerMillion: number;
+    outputPerMillion: number;
+  };
   modalities: string[];
   provider: string;
   requiredEnvVar?: string;
-  healthcheck?: string;
+  healthcheck?: {
+    type: "auth-ping";
+    method: "GET";
+    endpoint: string;
+  };
   fallbackPolicy: string;
+  model: string;
 }
 
 export interface SpectraCapabilityManifest {
@@ -420,8 +430,8 @@ function validateEntrypoint(value: unknown, errors: string[]): void {
     errors.push("entrypoint must be an object");
     return;
   }
-  requireOnlyKeys(value, "entrypoint", ["type", "sourceApp", "intent", "domain"], errors);
-  const type = requireEnum(value, "type", ["ai-request", "reserved-domain"] as const, errors, "entrypoint.type");
+  requireOnlyKeys(value, "entrypoint", ["type", "sourceApp", "intent", "domain", "adapter"], errors);
+  const type = requireEnum(value, "type", ["ai-request", "reserved-domain", "explicit-eval-teacher-dispatch"] as const, errors, "entrypoint.type");
   if (type === "ai-request") {
     requireString(value, "sourceApp", errors, "entrypoint.sourceApp");
     requireString(value, "intent", errors, "entrypoint.intent");
@@ -431,6 +441,12 @@ function validateEntrypoint(value: unknown, errors: string[]): void {
     requireString(value, "domain", errors, "entrypoint.domain");
     if ("sourceApp" in value || "intent" in value) {
       errors.push("reserved-domain entrypoints must not declare sourceApp or intent");
+    }
+  }
+  if (type === "explicit-eval-teacher-dispatch") {
+    requireString(value, "adapter", errors, "entrypoint.adapter");
+    if ("sourceApp" in value || "intent" in value || "domain" in value) {
+      errors.push("explicit eval teacher dispatch entrypoints must not declare sourceApp, intent, or domain");
     }
   }
 }
@@ -527,7 +543,7 @@ function validateKindExtension(manifest: Partial<SpectraCapabilityManifest>, err
     if ("action" in manifest) errors.push("model-provider manifests must not declare action");
     const modelProvider = manifest.modelProvider;
     requireOnlyKeys(modelProvider, "modelProvider", [
-      "role",
+      "roles",
       "contextWindow",
       "speed",
       "qualityTier",
@@ -538,18 +554,42 @@ function validateKindExtension(manifest: Partial<SpectraCapabilityManifest>, err
       "requiredEnvVar",
       "healthcheck",
       "fallbackPolicy",
+      "model",
     ], errors);
-    requireString(modelProvider, "role", errors, "modelProvider.role");
+    const roles = requireStringArray(modelProvider, "roles", errors, "modelProvider.roles");
+    if (roles) {
+      for (const role of roles) {
+        if (!["teacher", "judge", "persona-driver"].includes(role)) {
+          errors.push("modelProvider.roles entries must be one of: teacher, judge, persona-driver");
+        }
+      }
+    }
     requirePositiveInteger(modelProvider, "contextWindow", errors, "modelProvider.contextWindow");
     requireEnum(modelProvider, "speed", ["low", "medium", "high"] as const, errors, "modelProvider.speed");
     requireEnum(modelProvider, "qualityTier", ["low", "medium", "high"] as const, errors, "modelProvider.qualityTier");
     requireEnum(modelProvider, "costClass", ["free", "metered", "paid"] as const, errors, "modelProvider.costClass");
-    optionalNonNegativeNumber(modelProvider, "costPerToken", errors, "modelProvider.costPerToken");
+    validateCostPerToken(modelProvider.costPerToken, errors);
     requireStringArray(modelProvider, "modalities", errors, "modelProvider.modalities");
     requireString(modelProvider, "provider", errors, "modelProvider.provider");
     optionalEnvVar(modelProvider, "requiredEnvVar", errors, "modelProvider.requiredEnvVar");
-    optionalString(modelProvider, "healthcheck", errors, "modelProvider.healthcheck");
-    requireString(modelProvider, "fallbackPolicy", errors, "modelProvider.fallbackPolicy");
+    validateModelProviderHealthcheck(modelProvider.healthcheck, errors);
+    const fallbackPolicy = requireString(modelProvider, "fallbackPolicy", errors, "modelProvider.fallbackPolicy");
+    if (fallbackPolicy && fallbackPolicy !== "never-normal-routing") {
+      errors.push("modelProvider.fallbackPolicy must be never-normal-routing");
+    }
+    requireString(modelProvider, "model", errors, "modelProvider.model");
+    const requiredEnvVar = typeof modelProvider.requiredEnvVar === "string" ? modelProvider.requiredEnvVar : undefined;
+    if (requiredEnvVar) {
+      if (!(manifest.allowedEnvVars ?? []).includes(requiredEnvVar)) {
+        errors.push("modelProvider.requiredEnvVar must be listed in allowedEnvVars");
+      }
+      if (!(manifest.credentialPolicy?.envVars ?? []).includes(requiredEnvVar)) {
+        errors.push("modelProvider.requiredEnvVar must be listed in credentialPolicy.envVars");
+      }
+    }
+    if (manifest.entrypoint?.type !== "explicit-eval-teacher-dispatch") {
+      errors.push("model-provider manifests must use explicit-eval-teacher-dispatch entrypoints");
+    }
     return;
   }
 
@@ -673,6 +713,44 @@ function requirePositiveInteger(value: Record<string, unknown>, key: string, err
 function optionalNonNegativeNumber(value: Record<string, unknown>, key: string, errors: string[], label = key): void {
   if (!(key in value) || value[key] == null) return;
   if (typeof value[key] !== "number" || !Number.isFinite(value[key]) || value[key] < 0) {
+    errors.push(`${label} must be a non-negative number`);
+  }
+}
+
+function validateCostPerToken(value: unknown, errors: string[]): void {
+  if (value == null) return;
+  if (!isRecord(value)) {
+    errors.push("modelProvider.costPerToken must be an object when provided");
+    return;
+  }
+  requireOnlyKeys(value, "modelProvider.costPerToken", ["currency", "inputPerMillion", "outputPerMillion"], errors);
+  requireEnum(value, "currency", ["USD"] as const, errors, "modelProvider.costPerToken.currency");
+  requireNonNegativeNumber(value, "inputPerMillion", errors, "modelProvider.costPerToken.inputPerMillion");
+  requireNonNegativeNumber(value, "outputPerMillion", errors, "modelProvider.costPerToken.outputPerMillion");
+}
+
+function validateModelProviderHealthcheck(value: unknown, errors: string[]): void {
+  if (value == null) return;
+  if (!isRecord(value)) {
+    errors.push("modelProvider.healthcheck must be an object when provided");
+    return;
+  }
+  requireOnlyKeys(value, "modelProvider.healthcheck", ["type", "method", "endpoint"], errors);
+  requireEnum(value, "type", ["auth-ping"] as const, errors, "modelProvider.healthcheck.type");
+  requireEnum(value, "method", ["GET"] as const, errors, "modelProvider.healthcheck.method");
+  const endpoint = requireString(value, "endpoint", errors, "modelProvider.healthcheck.endpoint");
+  if (endpoint) {
+    try {
+      new URL(endpoint);
+    } catch {
+      errors.push("modelProvider.healthcheck.endpoint must be a URL");
+    }
+  }
+}
+
+function requireNonNegativeNumber(value: Record<string, unknown>, key: string, errors: string[], label = key): void {
+  const raw = value[key];
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) {
     errors.push(`${label} must be a non-negative number`);
   }
 }

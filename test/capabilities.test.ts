@@ -40,7 +40,7 @@ async function main() {
     });
     assert.equal(result.missing, false);
     assert.deepEqual(result.issues, []);
-    assert.equal(result.loaded.length, 10);
+    assert.equal(result.loaded.length, 12);
 
     const enabled = result.loaded.filter((manifest) => manifest.status === "enabled");
     assert.equal(enabled.length, 7);
@@ -66,13 +66,40 @@ async function main() {
     }
   });
 
+  await test("checked-in cloud teacher provider manifests load through shipped registry", () => {
+    const result = loadCapabilityManifestRegistry({
+      directory: path.join(ROOT, "capabilities"),
+      logger,
+    });
+    assert.deepEqual(result.issues, []);
+    const anthropic = result.registry.get("anthropic.claude");
+    const openai = result.registry.get("openai.gpt");
+    for (const manifest of [anthropic, openai]) {
+      assert.ok(manifest);
+      assert.equal(manifest.kind, "model-provider");
+      assert.equal(manifest.status, "disabled");
+      assert.equal(manifest.disabledByDefault, true);
+      assert.equal(manifest.executionMode, "external");
+      assert.equal(manifest.riskClass, "external");
+      assert.equal(manifest.locality, "external");
+      assert.equal(manifest.dataBoundary, "remote_no_training");
+      assert.equal(manifest.credentialPolicy.mode, "declared-env");
+      assert.equal(manifest.costPolicy.mode, "visible-before-use");
+      assert.equal(manifest.entrypoint.type, "explicit-eval-teacher-dispatch");
+      assert.deepEqual(manifest.modelProvider?.roles, ["teacher", "judge", "persona-driver"]);
+      assert.equal(manifest.modelProvider?.fallbackPolicy, "never-normal-routing");
+    }
+    assert.deepEqual(anthropic?.credentialPolicy.envVars, ["ANTHROPIC_API_KEY"]);
+    assert.deepEqual(openai?.credentialPolicy.envVars, ["OPENAI_API_KEY"]);
+  });
+
   await test("fixture valid manifest registers and matches ai-request telemetry", () => {
     const result = loadCapabilityManifestRegistry({
       directory: path.join(ROOT, "test", "fixtures", "capabilities", "valid"),
       logger,
     });
     assert.deepEqual(result.issues, []);
-    assert.equal(result.loaded.length, 1);
+    assert.equal(result.loaded.length, 2);
     assert.deepEqual(result.registry.matchAiRequest("fixture-app", "fixture.valid"), {
       status: "matched",
       id: "fixture.valid_read_only",
@@ -94,13 +121,16 @@ async function main() {
       logger,
     });
     assert.equal(result.loaded.length, 0);
-    assert.equal(result.issues.length, 5);
+    assert.equal(result.issues.length, 6);
     const allErrors = result.issues.flatMap((issue) => issue.errors).join("\n");
     assert.match(allErrors, /riskClass must be one of/);
     assert.match(allErrors, /environment variable names/);
     assert.match(allErrors, /must not declare file writes/);
     assert.match(allErrors, /must not declare terminal execution/);
     assert.match(allErrors, /unknown field 'extraPermission'/);
+    assert.match(allErrors, /modelProvider.roles entries/);
+    assert.match(allErrors, /modelProvider.healthcheck.method/);
+    assert.match(allErrors, /modelProvider.healthcheck.endpoint/);
   });
 
   await test("absent capability directory degrades to current behavior with warning", () => {
