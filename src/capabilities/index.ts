@@ -5,3 +5,4 @@ export * from "./CapabilityRegistry.js";
 export * from "./InMemoryCapabilityRegistry.js";
 export * from "./builtins.js";
 export * from "./manifest.js";
+export * from "./capabilityManifestRegistry.js";

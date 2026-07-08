@@ -58,6 +58,10 @@ import {
   type AiRequestInput,
   type AiRequestResult,
 } from "./aiRequest.js";
+import {
+  loadCapabilityManifestRegistry,
+  type SpectraCapabilityManifestRegistry,
+} from "../capabilities/capabilityManifestRegistry.js";
 
 export interface EngineOptions {
   dbPath: string;
@@ -88,6 +92,10 @@ export interface EngineOptions {
   routeDecisionCacheThreshold?: number;
   /** Current Spectra session id, when a daemon/session owner has established one. */
   sessionId?: string;
+  /** Optional manifest directory override for tests and non-standard daemon cwd. */
+  capabilityManifestDirectory?: string;
+  /** Optional registry injection for tests. */
+  capabilityManifestRegistry?: SpectraCapabilityManifestRegistry;
 }
 
 export interface NodeRunLog {
@@ -149,10 +157,13 @@ export class ExecutionEngine {
   private embeddingProvider?: EmbeddingProvider;
   private embeddingKeepalive?: { stop: () => void };
   private sessionId?: string;
+  private capabilityManifestRegistry: SpectraCapabilityManifestRegistry;
 
   constructor(opts: EngineOptions) {
     this.workDir = opts.workDir;
     this.sessionId = opts.sessionId?.trim() || undefined;
+    this.capabilityManifestRegistry = opts.capabilityManifestRegistry
+      ?? loadCapabilityManifestRegistry({ directory: opts.capabilityManifestDirectory }).registry;
     this.fallbackOnFailure = opts.fallbackOnFailure ?? false;
     const mockExecutors = opts.mockExecutors ?? process.env.AI_FORGE_MOCK_EXECUTORS === "1";
     this.useLiveOllamaClassifier = opts.useLiveOllamaClassifier ?? !mockExecutors;
@@ -205,6 +216,7 @@ export class ExecutionEngine {
     const preferredMode = request.preferredMode ?? "local-first";
     const graphId = `ai-request-${sourceApp}-${Date.now()}`;
     const nodeId = "request";
+    const capabilityManifest = this.capabilityManifestRegistry.matchAiRequest(sourceApp, request.intent);
     const packet: TaskPacket = {
       intent: buildAiRequestIntent({ ...request, sourceApp, riskClass, preferredMode }),
       node_type: request.nodeType ?? "docs",
@@ -250,6 +262,7 @@ export class ExecutionEngine {
           chainTried: cascadeError?.chainTried ?? [],
           routeCacheHit: cascadeError?.routeCacheHit,
           routeCacheSimilarity: cascadeError?.routeCacheSimilarity,
+          capabilityManifest,
         },
       };
     }
@@ -267,6 +280,7 @@ export class ExecutionEngine {
       cacheHitKind: execution.result.cacheHitKind,
       routeCacheHit: execution.routeCacheHit,
       routeCacheSimilarity: execution.routeCacheSimilarity,
+      capabilityManifest,
     };
 
     if (!execution.executor) {

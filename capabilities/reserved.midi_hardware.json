@@ -1,0 +1,63 @@
+{
+  "id": "reserved.midi_hardware",
+  "kind": "tool-action",
+  "displayName": "Reserved MIDI Hardware Namespace",
+  "description": "Inert placeholder for future MIDI/hardware capability vocabulary, including any RC-600 interface. It enables no hardware control.",
+  "ownerRepo": "prism-spectra",
+  "status": "reserved",
+  "executionMode": "read-only",
+  "entrypoint": {
+    "type": "reserved-domain",
+    "domain": "midi/hardware"
+  },
+  "locality": "local",
+  "dataBoundary": "local",
+  "riskClass": "read-only",
+  "approvalRequired": false,
+  "allowedInputs": [],
+  "allowedOutputs": [],
+  "allowedPaths": [],
+  "allowedEnvVars": [],
+  "networkPolicy": {
+    "mode": "none",
+    "allowedHosts": []
+  },
+  "credentialPolicy": {
+    "mode": "none",
+    "envVars": []
+  },
+  "costPolicy": {
+    "mode": "none"
+  },
+  "resourcePolicy": {
+    "profile": "tiny"
+  },
+  "provenanceFields": [
+    "capabilityManifest"
+  ],
+  "telemetryFields": [
+    "capabilityManifest.status",
+    "capabilityManifest.id"
+  ],
+  "validation": {
+    "tests": [
+      "capabilities:check"
+    ]
+  },
+  "rollback": "Revert the placeholder manifest.",
+  "failureMode": "Placeholder is omitted if invalid; no runtime behavior changes.",
+  "disabledByDefault": true,
+  "verifiedOn": "2026-07-08",
+  "gatingContract": "A future Beam MIDI/hardware capability contract is required before enablement.",
+  "action": {
+    "name": "reserved.midi_hardware",
+    "apiShape": "No active API shape; reserved namespace only.",
+    "modelMayInfluenceParameters": false,
+    "terminalExecution": false,
+    "fileWritesPossible": false,
+    "allowedPathRoots": [],
+    "approvalQueueIntegration": "none",
+    "checkpointRequired": false,
+    "validationRequired": false
+  }
+}

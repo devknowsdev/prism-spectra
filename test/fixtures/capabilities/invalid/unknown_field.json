@@ -1,0 +1,63 @@
+{
+  "id": "fixture.unknown_field",
+  "kind": "tool-action",
+  "displayName": "Unknown Field",
+  "description": "Invalid fixture with an undeclared root field.",
+  "ownerRepo": "prism-spectra",
+  "status": "enabled",
+  "executionMode": "read-only",
+  "entrypoint": {
+    "type": "ai-request",
+    "sourceApp": "fixture-app",
+    "intent": "fixture.unknown_field"
+  },
+  "locality": "local",
+  "dataBoundary": "local",
+  "riskClass": "read-only",
+  "approvalRequired": false,
+  "allowedInputs": [],
+  "allowedOutputs": [],
+  "allowedPaths": [],
+  "allowedEnvVars": [],
+  "networkPolicy": {
+    "mode": "none",
+    "allowedHosts": []
+  },
+  "credentialPolicy": {
+    "mode": "none",
+    "envVars": []
+  },
+  "costPolicy": {
+    "mode": "none"
+  },
+  "resourcePolicy": {
+    "profile": "tiny"
+  },
+  "provenanceFields": [
+    "capabilityManifest"
+  ],
+  "telemetryFields": [
+    "capabilityManifest.status"
+  ],
+  "validation": {
+    "tests": [
+      "capabilities.test"
+    ]
+  },
+  "rollback": "Delete the fixture.",
+  "failureMode": "Fixture is skipped if invalid.",
+  "disabledByDefault": false,
+  "verifiedOn": "2026-07-08",
+  "extraPermission": "not allowed by the schema",
+  "action": {
+    "name": "fixture.unknown_field",
+    "apiShape": "POST /api/v1/ai/request",
+    "modelMayInfluenceParameters": false,
+    "terminalExecution": false,
+    "fileWritesPossible": false,
+    "allowedPathRoots": [],
+    "approvalQueueIntegration": "none",
+    "checkpointRequired": false,
+    "validationRequired": false
+  }
+}

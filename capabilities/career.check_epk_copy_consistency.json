@@ -1,0 +1,86 @@
+{
+  "id": "career.check_epk_copy_consistency",
+  "kind": "tool-action",
+  "displayName": "EPK Copy Consistency Check",
+  "description": "Read-only EPK helper that reviews minimized public copy snapshots and returns consistency findings only.",
+  "ownerRepo": "prism-spectra",
+  "status": "enabled",
+  "executionMode": "read-only",
+  "entrypoint": {
+    "type": "ai-request",
+    "sourceApp": "EPK",
+    "intent": "career.check_epk_copy_consistency"
+  },
+  "locality": "local",
+  "dataBoundary": "local",
+  "riskClass": "read-only",
+  "approvalRequired": false,
+  "allowedInputs": [
+    "sourceApp",
+    "intent",
+    "riskClass",
+    "preferredMode",
+    "input.copy",
+    "input.instruction",
+    "context.appSurface",
+    "context.reviewType"
+  ],
+  "allowedOutputs": [
+    "response",
+    "structuredResponse",
+    "provenance"
+  ],
+  "allowedPaths": [],
+  "allowedEnvVars": [],
+  "networkPolicy": {
+    "mode": "loopback-only",
+    "allowedHosts": [
+      "127.0.0.1"
+    ]
+  },
+  "credentialPolicy": {
+    "mode": "none",
+    "envVars": []
+  },
+  "costPolicy": {
+    "mode": "none"
+  },
+  "resourcePolicy": {
+    "profile": "small"
+  },
+  "provenanceFields": [
+    "routedBy",
+    "sourceApp",
+    "riskClass",
+    "preferredMode",
+    "graphId",
+    "nodeId",
+    "chainTried",
+    "capabilityManifest"
+  ],
+  "telemetryFields": [
+    "capabilityManifest.status",
+    "capabilityManifest.id"
+  ],
+  "validation": {
+    "tests": [
+      "test:ai-request",
+      "capabilities:check"
+    ]
+  },
+  "rollback": "Revert the manifest entry; no EPK state migration is involved.",
+  "failureMode": "If invalid, the loader omits this entry and the gateway records capabilityManifest.status=absent for this intent.",
+  "disabledByDefault": false,
+  "verifiedOn": "2026-07-08",
+  "action": {
+    "name": "career.check_epk_copy_consistency",
+    "apiShape": "POST /api/v1/ai/request with sourceApp=EPK and intent=career.check_epk_copy_consistency",
+    "modelMayInfluenceParameters": false,
+    "terminalExecution": false,
+    "fileWritesPossible": false,
+    "allowedPathRoots": [],
+    "approvalQueueIntegration": "none",
+    "checkpointRequired": false,
+    "validationRequired": false
+  }
+}

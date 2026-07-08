@@ -1,6 +1,7 @@
 import type { ChainAttempt } from "../routing/router.js";
 import type { CacheHitKind, DataBoundary, ExecutorName, NodeType } from "../types.js";
 import type { ModelRole } from "../executors/ollama.js";
+import type { CapabilityManifestTelemetry } from "../capabilities/capabilityManifestRegistry.js";
 
 export const AI_REQUEST_RISK_CLASSES = ["read-only"] as const;
 export type AiRequestRiskClass = (typeof AI_REQUEST_RISK_CLASSES)[number];
@@ -43,6 +44,7 @@ export interface AiRequestSuccess {
     cacheHitKind?: CacheHitKind;
     routeCacheHit?: boolean;
     routeCacheSimilarity?: number;
+    capabilityManifest: CapabilityManifestTelemetry;
   };
   usage: {
     tokensIn: number;
@@ -72,6 +74,7 @@ export interface AiRequestFailure {
     cacheHitKind?: CacheHitKind;
     routeCacheHit?: boolean;
     routeCacheSimilarity?: number;
+    capabilityManifest: CapabilityManifestTelemetry;
   };
   usage?: {
     tokensIn: number;

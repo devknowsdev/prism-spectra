@@ -1,0 +1,90 @@
+{
+  "id": "focus.focus-ai-call",
+  "kind": "tool-action",
+  "displayName": "Focus Generic Assistant Call",
+  "description": "Read-only Focus helper route for task parsing, daily plan suggestions, journal interpretation, task breakdowns, and gentle prompts via the Spectra bridge.",
+  "ownerRepo": "prism-spectra",
+  "status": "enabled",
+  "executionMode": "read-only",
+  "entrypoint": {
+    "type": "ai-request",
+    "sourceApp": "prism-focus",
+    "intent": "focus-ai-call"
+  },
+  "locality": "local",
+  "dataBoundary": "local",
+  "riskClass": "read-only",
+  "approvalRequired": false,
+  "allowedInputs": [
+    "sourceApp",
+    "intent",
+    "riskClass",
+    "preferredMode",
+    "aiRole",
+    "input.systemPrompt",
+    "input.userPrompt",
+    "input.maxTokens",
+    "input.temperature",
+    "context.feature",
+    "context.responseFormat"
+  ],
+  "allowedOutputs": [
+    "response",
+    "structuredResponse",
+    "provenance"
+  ],
+  "allowedPaths": [],
+  "allowedEnvVars": [],
+  "networkPolicy": {
+    "mode": "loopback-only",
+    "allowedHosts": [
+      "127.0.0.1"
+    ]
+  },
+  "credentialPolicy": {
+    "mode": "none",
+    "envVars": []
+  },
+  "costPolicy": {
+    "mode": "none"
+  },
+  "resourcePolicy": {
+    "profile": "small"
+  },
+  "provenanceFields": [
+    "routedBy",
+    "sourceApp",
+    "riskClass",
+    "preferredMode",
+    "graphId",
+    "nodeId",
+    "chainTried",
+    "capabilityManifest"
+  ],
+  "telemetryFields": [
+    "capabilityManifest.status",
+    "capabilityManifest.id"
+  ],
+  "validation": {
+    "tests": [
+      "test:focus-ai",
+      "test:ai-request",
+      "capabilities:check"
+    ]
+  },
+  "rollback": "Revert the manifest entry; Focus falls back to current unmanifested observe-only behavior.",
+  "failureMode": "If invalid, the loader omits this entry and the gateway records capabilityManifest.status=absent for this intent.",
+  "disabledByDefault": false,
+  "verifiedOn": "2026-07-08",
+  "action": {
+    "name": "focus-ai-call",
+    "apiShape": "POST /api/v1/ai/request with sourceApp=prism-focus and intent=focus-ai-call",
+    "modelMayInfluenceParameters": false,
+    "terminalExecution": false,
+    "fileWritesPossible": false,
+    "allowedPathRoots": [],
+    "approvalQueueIntegration": "none",
+    "checkpointRequired": false,
+    "validationRequired": false
+  }
+}

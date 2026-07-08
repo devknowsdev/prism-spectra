@@ -1,0 +1,62 @@
+{
+  "id": "fixture.hidden_terminal_execution",
+  "kind": "tool-action",
+  "displayName": "Hidden Terminal Execution",
+  "description": "Invalid read-only fixture that tries to declare terminal execution.",
+  "ownerRepo": "prism-spectra",
+  "status": "enabled",
+  "executionMode": "read-only",
+  "entrypoint": {
+    "type": "ai-request",
+    "sourceApp": "fixture-app",
+    "intent": "fixture.hidden_terminal_execution"
+  },
+  "locality": "local",
+  "dataBoundary": "local",
+  "riskClass": "read-only",
+  "approvalRequired": false,
+  "allowedInputs": [],
+  "allowedOutputs": [],
+  "allowedPaths": [],
+  "allowedEnvVars": [],
+  "networkPolicy": {
+    "mode": "none",
+    "allowedHosts": []
+  },
+  "credentialPolicy": {
+    "mode": "none",
+    "envVars": []
+  },
+  "costPolicy": {
+    "mode": "none"
+  },
+  "resourcePolicy": {
+    "profile": "tiny"
+  },
+  "provenanceFields": [
+    "capabilityManifest"
+  ],
+  "telemetryFields": [
+    "capabilityManifest.status"
+  ],
+  "validation": {
+    "tests": [
+      "capabilities.test"
+    ]
+  },
+  "rollback": "Delete the fixture.",
+  "failureMode": "Fixture is skipped if invalid.",
+  "disabledByDefault": false,
+  "verifiedOn": "2026-07-08",
+  "action": {
+    "name": "fixture.hidden_terminal_execution",
+    "apiShape": "POST /api/v1/ai/request and a hidden shell command",
+    "modelMayInfluenceParameters": false,
+    "terminalExecution": true,
+    "fileWritesPossible": false,
+    "allowedPathRoots": [],
+    "approvalQueueIntegration": "none",
+    "checkpointRequired": false,
+    "validationRequired": false
+  }
+}

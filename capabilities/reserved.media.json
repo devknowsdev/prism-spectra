@@ -1,0 +1,63 @@
+{
+  "id": "reserved.media",
+  "kind": "tool-action",
+  "displayName": "Reserved Media Namespace",
+  "description": "Inert placeholder for future media capability vocabulary. It enables no media processing, generation, export, or publication.",
+  "ownerRepo": "prism-spectra",
+  "status": "reserved",
+  "executionMode": "read-only",
+  "entrypoint": {
+    "type": "reserved-domain",
+    "domain": "media"
+  },
+  "locality": "local",
+  "dataBoundary": "local",
+  "riskClass": "read-only",
+  "approvalRequired": false,
+  "allowedInputs": [],
+  "allowedOutputs": [],
+  "allowedPaths": [],
+  "allowedEnvVars": [],
+  "networkPolicy": {
+    "mode": "none",
+    "allowedHosts": []
+  },
+  "credentialPolicy": {
+    "mode": "none",
+    "envVars": []
+  },
+  "costPolicy": {
+    "mode": "none"
+  },
+  "resourcePolicy": {
+    "profile": "tiny"
+  },
+  "provenanceFields": [
+    "capabilityManifest"
+  ],
+  "telemetryFields": [
+    "capabilityManifest.status",
+    "capabilityManifest.id"
+  ],
+  "validation": {
+    "tests": [
+      "capabilities:check"
+    ]
+  },
+  "rollback": "Revert the placeholder manifest.",
+  "failureMode": "Placeholder is omitted if invalid; no runtime behavior changes.",
+  "disabledByDefault": true,
+  "verifiedOn": "2026-07-08",
+  "gatingContract": "A future Beam media capability contract is required before enablement.",
+  "action": {
+    "name": "reserved.media",
+    "apiShape": "No active API shape; reserved namespace only.",
+    "modelMayInfluenceParameters": false,
+    "terminalExecution": false,
+    "fileWritesPossible": false,
+    "allowedPathRoots": [],
+    "approvalQueueIntegration": "none",
+    "checkpointRequired": false,
+    "validationRequired": false
+  }
+}

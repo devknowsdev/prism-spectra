@@ -1,0 +1,62 @@
+{
+  "id": "fixture.bad_enum",
+  "kind": "tool-action",
+  "displayName": "Bad Enum",
+  "description": "Invalid fixture with a non-contract risk class.",
+  "ownerRepo": "prism-spectra",
+  "status": "enabled",
+  "executionMode": "read-only",
+  "entrypoint": {
+    "type": "ai-request",
+    "sourceApp": "fixture-app",
+    "intent": "fixture.bad_enum"
+  },
+  "locality": "local",
+  "dataBoundary": "local",
+  "riskClass": "local-write",
+  "approvalRequired": false,
+  "allowedInputs": [],
+  "allowedOutputs": [],
+  "allowedPaths": [],
+  "allowedEnvVars": [],
+  "networkPolicy": {
+    "mode": "none",
+    "allowedHosts": []
+  },
+  "credentialPolicy": {
+    "mode": "none",
+    "envVars": []
+  },
+  "costPolicy": {
+    "mode": "none"
+  },
+  "resourcePolicy": {
+    "profile": "tiny"
+  },
+  "provenanceFields": [
+    "capabilityManifest"
+  ],
+  "telemetryFields": [
+    "capabilityManifest.status"
+  ],
+  "validation": {
+    "tests": [
+      "capabilities.test"
+    ]
+  },
+  "rollback": "Delete the fixture.",
+  "failureMode": "Fixture is skipped if invalid.",
+  "disabledByDefault": false,
+  "verifiedOn": "2026-07-08",
+  "action": {
+    "name": "fixture.bad_enum",
+    "apiShape": "POST /api/v1/ai/request",
+    "modelMayInfluenceParameters": false,
+    "terminalExecution": false,
+    "fileWritesPossible": false,
+    "allowedPathRoots": [],
+    "approvalQueueIntegration": "none",
+    "checkpointRequired": false,
+    "validationRequired": false
+  }
+}
