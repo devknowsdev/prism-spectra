@@ -1,0 +1,89 @@
+{
+  "id": "fixture.bad_model_provider",
+  "kind": "model-provider",
+  "displayName": "Bad Model Provider",
+  "description": "Invalid model provider fixture: wrong role, hidden fallback, and invalid healthcheck.",
+  "ownerRepo": "prism-spectra",
+  "status": "disabled",
+  "executionMode": "external",
+  "entrypoint": {
+    "type": "explicit-eval-teacher-dispatch",
+    "adapter": "cloud-teacher.openai"
+  },
+  "locality": "external",
+  "dataBoundary": "remote_no_training",
+  "riskClass": "external",
+  "approvalRequired": true,
+  "allowedInputs": [
+    "synthetic-fixture"
+  ],
+  "allowedOutputs": [
+    "chat-completion"
+  ],
+  "allowedPaths": [
+    "eval/**"
+  ],
+  "allowedEnvVars": [
+    "OPENAI_API_KEY"
+  ],
+  "networkPolicy": {
+    "mode": "declared-hosts",
+    "allowedHosts": [
+      "api.openai.com"
+    ]
+  },
+  "credentialPolicy": {
+    "mode": "declared-env",
+    "envVars": [
+      "OPENAI_API_KEY"
+    ]
+  },
+  "costPolicy": {
+    "mode": "visible-before-use"
+  },
+  "resourcePolicy": {
+    "profile": "small"
+  },
+  "provenanceFields": [
+    "provider"
+  ],
+  "telemetryFields": [
+    "manifestId"
+  ],
+  "validation": {
+    "tests": [
+      "fixture-validation"
+    ]
+  },
+  "rollback": "No writes.",
+  "failureMode": "Fail closed.",
+  "disabledByDefault": true,
+  "verifiedOn": "2026-07-08",
+  "modelProvider": {
+    "roles": [
+      "planner"
+    ],
+    "contextWindow": 1000,
+    "speed": "high",
+    "qualityTier": "high",
+    "costClass": "paid",
+    "costPerToken": {
+      "currency": "USD",
+      "inputPerMillion": 1,
+      "outputPerMillion": 1
+    },
+    "modalities": [
+      "text"
+    ],
+    "provider": "openai",
+    "requiredEnvVar": "OPENAI_API_KEY",
+    "healthcheck": {
+      "type": "auth-ping",
+      "method": "POST",
+      "endpoint": "not a url"
+    },
+    "fallbackPolicy": "normal-routing",
+    "model": "fixture-model",
+    "extraPermission": true
+  }
+}

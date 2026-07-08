@@ -9,6 +9,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { ExecutionEngine, normalizeAiRequestBody } from "../src/index.js";
 import { probeAllProviders, applyProviderProbe } from "../src/config/providerProbe.js";
+import { checkAllCloudTeacherHealth, loadCapabilityManifestRegistry } from "../src/index.js";
 import { InMemoryApprovalQueue } from "../src/approvals/index.js";
 import { InMemoryPrismEventLedger } from "../src/events/index.js";
 import { createProjectCockpitRouter, renderProjectCockpitHtml } from "./cockpit/projectCockpit.js";
@@ -79,6 +80,7 @@ async function start() {
     fallbackOnFailure: false,
   });
   await engine.init();
+  await loadStartupCapabilityManifests();
 
   // Wire Ollama health check — same pattern as cli.ts
   const statuses = await probeAllProviders();
@@ -167,7 +169,7 @@ async function buildLocalStatus() {
   const ollamaPath = path.join(os.homedir(), ".ollama");
   const ollamaModelsPath = path.join(ollamaPath, "models");
 
-  const [disk, ollamaStorage, ollamaModelsStorage, demoStorage, memory, ollama, thermal, topCpuProcess] = await Promise.all([
+  const [disk, ollamaStorage, ollamaModelsStorage, demoStorage, memory, ollama, thermal, topCpuProcess, cloudTeacherProviders] = await Promise.all([
     diskFree("/"),
     directorySize(ollamaPath),
     directorySize(ollamaModelsPath),
@@ -176,6 +178,7 @@ async function buildLocalStatus() {
     ollamaPs(),
     thermalStatus(),
     topCpu(),
+    checkAllCloudTeacherHealth(),
   ]);
 
   return {
@@ -199,11 +202,17 @@ async function buildLocalStatus() {
     },
     memory,
     ollama,
+    cloudTeacherProviders,
     thermal,
     process: {
       topCpu: topCpuProcess,
     },
   };
+}
+
+async function loadStartupCapabilityManifests() {
+  const result = loadCapabilityManifestRegistry({ directory: path.resolve(process.cwd(), "capabilities") });
+  console.log(`[capabilities] loaded ${result.loaded.length} file-backed capability manifests with ${result.issues.length} issue(s)`);
 }
 
 async function diskFree(root: string) {

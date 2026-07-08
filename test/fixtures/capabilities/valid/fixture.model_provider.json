@@ -1,0 +1,93 @@
+{
+  "id": "fixture.model_provider",
+  "kind": "model-provider",
+  "displayName": "Fixture Model Provider",
+  "description": "Valid disabled-by-default model provider fixture for the shipped capability registry.",
+  "ownerRepo": "prism-spectra",
+  "status": "disabled",
+  "executionMode": "external",
+  "entrypoint": {
+    "type": "explicit-eval-teacher-dispatch",
+    "adapter": "cloud-teacher.openai"
+  },
+  "locality": "external",
+  "dataBoundary": "remote_no_training",
+  "riskClass": "external",
+  "approvalRequired": true,
+  "allowedInputs": [
+    "synthetic-fixture"
+  ],
+  "allowedOutputs": [
+    "chat-completion"
+  ],
+  "allowedPaths": [
+    "eval/**"
+  ],
+  "allowedEnvVars": [
+    "OPENAI_API_KEY"
+  ],
+  "networkPolicy": {
+    "mode": "declared-hosts",
+    "allowedHosts": [
+      "api.openai.com"
+    ]
+  },
+  "credentialPolicy": {
+    "mode": "declared-env",
+    "envVars": [
+      "OPENAI_API_KEY"
+    ]
+  },
+  "costPolicy": {
+    "mode": "visible-before-use"
+  },
+  "resourcePolicy": {
+    "profile": "small"
+  },
+  "provenanceFields": [
+    "provider",
+    "model",
+    "costEstimateUsd"
+  ],
+  "telemetryFields": [
+    "manifestId",
+    "manifestMatch"
+  ],
+  "validation": {
+    "tests": [
+      "fixture-validation"
+    ]
+  },
+  "rollback": "No writes.",
+  "failureMode": "Fail closed.",
+  "disabledByDefault": true,
+  "verifiedOn": "2026-07-08",
+  "modelProvider": {
+    "roles": [
+      "teacher",
+      "judge",
+      "persona-driver"
+    ],
+    "contextWindow": 1000,
+    "speed": "high",
+    "qualityTier": "high",
+    "costClass": "paid",
+    "costPerToken": {
+      "currency": "USD",
+      "inputPerMillion": 1,
+      "outputPerMillion": 1
+    },
+    "modalities": [
+      "text"
+    ],
+    "provider": "openai",
+    "requiredEnvVar": "OPENAI_API_KEY",
+    "healthcheck": {
+      "type": "auth-ping",
+      "method": "GET",
+      "endpoint": "https://api.openai.com/v1/models"
+    },
+    "fallbackPolicy": "never-normal-routing",
+    "model": "fixture-model"
+  }
+}
