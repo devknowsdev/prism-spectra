@@ -29,18 +29,18 @@
   <style>
     :root {
       color-scheme: dark;
-      --bg: #0d1117;
-      --panel: #11161d;
-      --panel-2: #161b22;
-      --panel-3: #1b212a;
-      --line: #273241;
+      --canvas: #0d1117;
+      --surface: #11161d;
+      --surface-2: #161b22;
+      --surface-3: #1b212a;
+      --border: #273241;
       --text: #e6edf3;
       --muted: #9aa7b6;
       --dim: #6b7787;
       --accent: #8b5cf6;
       --accent-soft: rgba(139, 92, 246, 0.14);
-      --good: #4ade80;
-      --warn: #fbbf24;
+      --success: #4ade80;
+      --caution: #fbbf24;
       --danger: #f87171;
       --mono: "SFMono-Regular", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
       --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -51,7 +51,7 @@
     body {
       background:
         radial-gradient(circle at top left, rgba(139, 92, 246, 0.10), transparent 35%),
-        linear-gradient(180deg, #0b0f14 0%, var(--bg) 100%);
+        linear-gradient(180deg, #0b0f14 0%, var(--canvas) 100%);
       color: var(--text);
       font-family: var(--sans);
       overflow: hidden;
@@ -67,7 +67,7 @@
     }
 
     .rail {
-      border-right: 1px solid var(--line);
+      border-right: 1px solid var(--border);
       background: rgba(17, 22, 29, 0.92);
       backdrop-filter: blur(8px);
       display: flex;
@@ -81,7 +81,7 @@
       flex-direction: column;
       gap: 4px;
       padding-bottom: 8px;
-      border-bottom: 1px solid var(--line);
+      border-bottom: 1px solid var(--border);
     }
 
     .brand h1 {
@@ -121,8 +121,8 @@
     .nav button:hover,
     .nav button:focus-visible {
       outline: none;
-      background: var(--panel-2);
-      border-color: var(--line);
+      background: var(--surface-2);
+      border-color: var(--border);
       color: var(--text);
     }
 
@@ -146,7 +146,7 @@
 
     .rail-footer {
       margin-top: auto;
-      border-top: 1px solid var(--line);
+      border-top: 1px solid var(--border);
       padding-top: 12px;
       color: var(--muted);
       font-size: 12px;
@@ -173,7 +173,7 @@
       justify-content: space-between;
       gap: 12px;
       padding: 18px 22px 12px;
-      border-bottom: 1px solid var(--line);
+      border-bottom: 1px solid var(--border);
       background: rgba(13, 17, 23, 0.65);
       backdrop-filter: blur(8px);
     }
@@ -200,8 +200,8 @@
     }
 
     .pill {
-      border: 1px solid var(--line);
-      background: var(--panel-2);
+      border: 1px solid var(--border);
+      background: var(--surface-2);
       color: var(--muted);
       border-radius: 999px;
       padding: 6px 10px;
@@ -230,7 +230,7 @@
     }
 
     .card {
-      border: 1px solid var(--line);
+      border: 1px solid var(--border);
       background: rgba(17, 22, 29, 0.92);
       border-radius: 18px;
       padding: 18px;
@@ -250,8 +250,8 @@
     }
 
     .meta {
-      border: 1px solid var(--line);
-      background: var(--panel-2);
+      border: 1px solid var(--border);
+      background: var(--surface-2);
       border-radius: 14px;
       padding: 14px;
       min-width: 0;
@@ -365,9 +365,9 @@
     }
 
     .cap-card {
-      border: 1px solid var(--line);
+      border: 1px solid var(--border);
       border-radius: 16px;
-      background: var(--panel);
+      background: var(--surface);
       padding: 16px;
     }
 
@@ -404,20 +404,20 @@
       padding: 5px 8px;
       font-size: 11px;
       font-family: var(--mono);
-      border: 1px solid var(--line);
+      border: 1px solid var(--border);
       color: var(--muted);
-      background: var(--panel-2);
+      background: var(--surface-2);
       white-space: nowrap;
     }
 
     .badge.enabled {
-      color: var(--good);
+      color: var(--success);
       border-color: rgba(74, 222, 128, 0.25);
       background: rgba(74, 222, 128, 0.08);
     }
 
     .badge.disabled {
-      color: var(--warn);
+      color: var(--caution);
       border-color: rgba(251, 191, 36, 0.25);
       background: rgba(251, 191, 36, 0.08);
     }
@@ -496,9 +496,9 @@
       display: block;
       width: 100%;
       text-align: left;
-      border: 1px solid var(--line);
+      border: 1px solid var(--border);
       border-radius: 14px;
-      background: var(--panel-2);
+      background: var(--surface-2);
       color: var(--text);
       padding: 14px;
       cursor: pointer;
@@ -508,7 +508,7 @@
     .memory-card:focus-visible {
       outline: none;
       border-color: rgba(139, 92, 246, 0.35);
-      background: var(--panel-3);
+      background: var(--surface-3);
     }
 
     .memory-card.selected {
@@ -555,9 +555,9 @@
     }
 
     .detail-block {
-      border: 1px solid var(--line);
+      border: 1px solid var(--border);
       border-radius: 14px;
-      background: var(--panel-2);
+      background: var(--surface-2);
       padding: 14px;
     }
 
@@ -579,8 +579,8 @@
     }
 
     .detail-chip {
-      border: 1px solid var(--line);
-      background: var(--panel-3);
+      border: 1px solid var(--border);
+      background: var(--surface-3);
       color: var(--text);
       border-radius: 999px;
       padding: 5px 8px;
@@ -613,8 +613,8 @@
 
     .toolbar button {
       border-radius: 999px;
-      border: 1px solid var(--line);
-      background: var(--panel-2);
+      border: 1px solid var(--border);
+      background: var(--surface-2);
       color: var(--text);
       padding: 8px 12px;
       cursor: pointer;
@@ -624,11 +624,11 @@
     .toolbar button:focus-visible {
       outline: none;
       border-color: rgba(139, 92, 246, 0.35);
-      background: var(--panel-3);
+      background: var(--surface-3);
     }
 
     .ingest-panel {
-      border: 1px solid var(--line);
+      border: 1px solid var(--border);
       background: rgba(17, 22, 29, 0.95);
       border-radius: 18px;
       padding: 18px;
@@ -648,9 +648,9 @@
     }
 
     .ingest-panel .ingest-preview-card {
-      border: 1px solid var(--line);
+      border: 1px solid var(--border);
       border-radius: 14px;
-      background: var(--panel-2);
+      background: var(--surface-2);
       padding: 12px;
     }
 
@@ -681,7 +681,7 @@
     }
 
     .preview-panel-surface {
-      border: 1px solid var(--line);
+      border: 1px solid var(--border);
       border-radius: 14px;
       background: rgba(10, 14, 20, 0.8);
       padding: 12px;
@@ -730,7 +730,7 @@
 
     .audio-preview-waveform {
       min-height: 120px;
-      border: 1px solid var(--line);
+      border: 1px solid var(--border);
       border-radius: 12px;
       background:
         linear-gradient(180deg, rgba(139, 92, 246, 0.06), rgba(10, 14, 20, 0.95)),
@@ -744,7 +744,7 @@
       gap: 10px;
       margin: 14px 0 12px;
       padding: 12px;
-      border: 1px solid var(--line);
+      border: 1px solid var(--border);
       border-radius: 14px;
       background: rgba(22, 27, 34, 0.82);
     }
@@ -766,8 +766,8 @@
     }
 
     .filter-control select {
-      border: 1px solid var(--line);
-      background: var(--panel-2);
+      border: 1px solid var(--border);
+      background: var(--surface-2);
       color: var(--text);
       border-radius: 10px;
       padding: 10px 12px;
@@ -776,8 +776,8 @@
 
     .filter-control input,
     .toolbar input {
-      border: 1px solid var(--line);
-      background: var(--panel-2);
+      border: 1px solid var(--border);
+      background: var(--surface-2);
       color: var(--text);
       border-radius: 10px;
       padding: 10px 12px;
@@ -807,9 +807,9 @@
     }
 
     .timeline-card {
-      border: 1px solid var(--line);
+      border: 1px solid var(--border);
       border-radius: 14px;
-      background: var(--panel-2);
+      background: var(--surface-2);
       padding: 14px;
     }
 
@@ -840,11 +840,11 @@
 
     .approval-card {
       position: relative;
-      border-left: 4px solid var(--line);
+      border-left: 4px solid var(--border);
     }
 
-    .approval-card[data-risk-tier="green"] { border-left-color: var(--good); }
-    .approval-card[data-risk-tier="amber"] { border-left-color: var(--warn); }
+    .approval-card[data-risk-tier="green"] { border-left-color: var(--success); }
+    .approval-card[data-risk-tier="amber"] { border-left-color: var(--caution); }
     .approval-card[data-risk-tier="red"] { border-left-color: var(--danger); }
 
     .approval-card:focus-visible,
@@ -858,7 +858,7 @@
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      border: 1px solid var(--line);
+      border: 1px solid var(--border);
       border-radius: 999px;
       padding: 4px 8px;
       font-family: var(--mono);
@@ -899,19 +899,19 @@
     .approval-reason {
       width: 100%;
       min-width: 0;
-      border: 1px solid var(--line);
+      border: 1px solid var(--border);
       border-radius: 8px;
       padding: 9px 10px;
       color: var(--text);
-      background: var(--panel);
+      background: var(--surface);
     }
 
     .approval-action {
-      border: 1px solid var(--line);
+      border: 1px solid var(--border);
       border-radius: 8px;
       padding: 9px 12px;
       color: var(--text);
-      background: var(--panel);
+      background: var(--surface);
       cursor: pointer;
     }
 
@@ -933,7 +933,7 @@
 
     .approval-resolved {
       margin-top: 14px;
-      border: 1px solid var(--line);
+      border: 1px solid var(--border);
       border-radius: 12px;
       padding: 12px;
       background: rgba(148, 163, 184, 0.06);
@@ -1465,8 +1465,8 @@
                 command — so the workbench is never a black box.
               </p>
               <div class="field-list">
-                <div class="field"><div class="k"><span class="approval-tier" style="border-left: 4px solid var(--good); padding-left: 8px;">green</span></div><div class="v">Low risk — local, observe or preview only. Safe to approve routinely.</div></div>
-                <div class="field"><div class="k"><span class="approval-tier" style="border-left: 4px solid var(--warn); padding-left: 8px;">amber</span></div><div class="v">Medium risk — local writes or larger jobs. Read the preview before approving.</div></div>
+                <div class="field"><div class="k"><span class="approval-tier" style="border-left: 4px solid var(--success); padding-left: 8px;">green</span></div><div class="v">Low risk — local, observe or preview only. Safe to approve routinely.</div></div>
+                <div class="field"><div class="k"><span class="approval-tier" style="border-left: 4px solid var(--caution); padding-left: 8px;">amber</span></div><div class="v">Medium risk — local writes or larger jobs. Read the preview before approving.</div></div>
                 <div class="field"><div class="k"><span class="approval-tier" style="border-left: 4px solid var(--danger); padding-left: 8px;">red</span></div><div class="v">High risk — destructive, remote, or expensive. Approve only deliberately; these stay gated by design.</div></div>
               </div>
             </div>
