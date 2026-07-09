@@ -1048,7 +1048,7 @@
 
       <div class="rail-footer">
         <strong>Workbench status</strong>
-        Shell only. No heavy capabilities loaded. No write routes exposed from this page.
+        Shell only. No heavy capabilities loaded. Reads daemon state; the only writes are explicit, audited local-attachment actions (import, rename, tags) - no repo writes, no file delete/move, no remote providers.
       </div>
     </aside>
 
@@ -1059,7 +1059,7 @@
           <p id="subtitle">Where you are, what is safe, and the next smallest action.</p>
         </div>
         <div class="status-pills" aria-label="Workbench summary">
-          <span class="pill" title="This page only reads daemon state. It exposes no write routes — nothing here can change your files or repos.">Read-only shell</span>
+          <span class="pill" title="Reads daemon state plus explicit, audited local-attachment writes (import, rename, tags). No repo writes, no file delete/move, no remote providers; risky actions stay approvals-gated.">Local-first shell</span>
           <span class="pill" title="The Capabilities view is generated from capability manifests, not hard-coded — each declares its load mode, approval class, and boundary.">Manifest-driven capabilities</span>
           <span class="pill" title="Every action has an equivalent prism CLI command (e.g. prism approvals approve &lt;id&gt;), so nothing here is a black box.">CLI equivalent: placeholder</span>
         </div>
@@ -1531,7 +1531,7 @@
                 <span>Why this feels safe</span>
               </div>
               <div class="placeholder-line">
-                <code>read-only page</code><code>no write routes</code><code>local-first</code><code>no delete</code><code>no move</code><code>no remote providers</code><code>review before execute</code>
+                <code>local-first</code><code>explicit attachment writes</code><code>no repo writes</code><code>no file delete/move</code><code>no remote providers</code><code>review before execute</code>
               </div>
             </div>
           </div>
