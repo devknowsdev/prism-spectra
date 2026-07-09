@@ -161,7 +161,7 @@
         "preferredMode": "local-first",
         "input": {
           "text": "# Synthetic Promo Kit\nA concise presenter brief for a layered live-looping performance.",
-          "instruction": "Refine this EPK promo copy for clarity, flow, and usefulness to presenters, venues, press, or collaborators. Preserve factual claims, names, dates, roles, and meaning. Do not invent details. Return only the revised copy."
+          "instruction": "Refine this EPK promo copy for clarity and flow. Work only with facts present in the text. Do not add new facts, events, venues, technical details, requirements, or claims about the artist or the source material. Match the source's length: if the source is short, return a short refinement — do not expand it. Do not describe the document or its intended use; refine the copy itself. Preserve names, dates, roles, and meaning. Return only the revised copy, nothing else."
         },
         "context": {
           "appSurface": "publisher",
