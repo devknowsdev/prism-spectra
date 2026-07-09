@@ -205,6 +205,32 @@
           "reviewType": "route-tag-recommendations"
         }
       }
+    },
+    {
+      "id": "epk-refine-promo-copy-long",
+      "title": "EPK promo kit refinement tightens rough real-length copy without fabricating",
+      "rubricId": "epk-career-read-only",
+      "baselineId": "baseline-epk-refine-promo-copy-long",
+      "tags": ["epk", "career", "promo-kit", "read-only", "synthetic", "long-form"],
+      "appShapeMetadata": {
+        "app": "EPK",
+        "surface": "publisher",
+        "field": "brief-text"
+      },
+      "aiRequest": {
+        "sourceApp": "EPK",
+        "intent": "career.refine_epk_promo_copy",
+        "riskClass": "read-only",
+        "preferredMode": "local-first",
+        "input": {
+          "text": "# Tidewire — Presenter Brief\n\nVela Quinn is a cellist and she is also a live-looping performer who performs live looping in real time on stage using just a cello and a loop station. The project is called Tidewire, and Tidewire is a solo project. Vela Quinn is based out of Marrow Bay.\n\nIn her performances she builds up layers of sound, layer by layer, one at a time, so that a single cello ends up sounding like a much bigger ensemble of many instruments, and all of this is done live and in the moment without any backing tracks that are pre-recorded beforehand.\n\nTidewire released an EP in 2025 and the EP is called Undertow. The set that she performs is roughly 45 minutes long, and it can be adjusted to be shorter or longer depending on what the event needs. Vela also did a residency at the Foghouse.\n\nFor presenters and venues and bookers, Tidewire is a good fit for listening rooms and for arts spaces and also for evening festival slots. Technical needs are minimal and she brings her own gear.",
+          "instruction": "Refine this EPK promo copy for clarity and flow. Work only with facts present in the text. Do not add new facts, events, venues, technical details, requirements, or claims about the artist or the source material. Match the source's length: if the source is short, return a short refinement — do not expand it. Do not describe the document or its intended use; refine the copy itself. Preserve names, dates, roles, and meaning. Return only the revised copy, nothing else."
+        },
+        "context": {
+          "appSurface": "publisher",
+          "field": "brief-text"
+        }
+      }
     }
   ]
 }

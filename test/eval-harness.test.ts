@@ -61,11 +61,11 @@ function listFiles(root: string): string[] {
 
 await test("eval fixtures, rubrics, and baselines load and cross-reference", async () => {
   const suite = await loadEvalSuite(REPO_ROOT);
-  assert.equal(suite.fixtures.length, 7);
+  assert.equal(suite.fixtures.length, 8);
   assert.ok(suite.rubrics.has("focus-planning-read-only"));
   assert.ok(suite.rubrics.has("focus-bridge-read-only"));
   assert.ok(suite.rubrics.has("epk-career-read-only"));
-  assert.equal(suite.baselines.size, 7);
+  assert.equal(suite.baselines.size, 8);
   assert.deepEqual(
     suite.fixtures.map((fixture) => fixture.aiRequest.intent),
     [
@@ -76,6 +76,7 @@ await test("eval fixtures, rubrics, and baselines load and cross-reference", asy
       "career.check_epk_copy_consistency",
       "career.refine_epk_promo_copy",
       "career.suggest_epk_route_tags",
+      "career.refine_epk_promo_copy",
     ],
   );
 });
@@ -160,8 +161,8 @@ await test("eval runner writes a diff-reviewable report artifact with judge scor
 
   assert.equal(result.report.schemaVersion, EVAL_REPORT_SCHEMA_VERSION);
   assert.equal(result.report.boundary.tier, "T0");
-  assert.equal(result.report.suite.fixtureCount, 7);
-  assert.equal(result.report.cases.length, 7);
+  assert.equal(result.report.suite.fixtureCount, 8);
+  assert.equal(result.report.cases.length, 8);
   assert.equal(result.report.summary.failed, 0);
   assert.equal(result.report.summary.judgeErrors, 0);
   assert.equal(result.report.summary.suspectZeroVariance, true);
@@ -208,13 +209,13 @@ await test("eval runner records judge errors separately from local failures", as
 
   assert.equal(result.report.summary.passed, 0);
   assert.equal(result.report.summary.failed, 0);
-  assert.equal(result.report.summary.judgeErrors, 7);
+  assert.equal(result.report.summary.judgeErrors, 8);
   assert.equal(result.report.summary.averageScore, 0);
   assert.equal(result.report.summary.suspectZeroVariance, false);
   assert.equal(result.report.suggestedArtifactChanges.length, 0);
   assert.equal(result.report.cases.filter((item) => item.judge.status === "empty").length, 4);
-  assert.equal(result.report.cases.filter((item) => item.judge.status === "unparseable").length, 3);
-  assert.equal(warnings.filter((line) => line.startsWith("[eval] judge-error fixture=")).length, 7);
+  assert.equal(result.report.cases.filter((item) => item.judge.status === "unparseable").length, 4);
+  assert.equal(warnings.filter((line) => line.startsWith("[eval] judge-error fixture=")).length, 8);
 });
 
 await test("eval runner plumbs judge model and max output token overrides", async () => {

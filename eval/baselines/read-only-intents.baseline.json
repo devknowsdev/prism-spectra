@@ -42,6 +42,12 @@
       "fixtureId": "epk-suggest-route-tags",
       "minimumScore": 3.5,
       "notes": "Starter baseline: recommends only existing synthetic tags/angles and applies nothing."
+    },
+    {
+      "id": "baseline-epk-refine-promo-copy-long",
+      "fixtureId": "epk-refine-promo-copy-long",
+      "minimumScore": 3.5,
+      "notes": "Rough real-length promo Markdown: a good refinement tightens prose and preserves every fact; a near-verbatim return should score task-fit/audience-fit low. Diagnostic for P1 over-suppression vs. genuine refinement."
     }
   ]
 }
