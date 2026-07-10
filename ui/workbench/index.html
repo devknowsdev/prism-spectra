@@ -261,6 +261,23 @@
       display: block;
     }
 
+    .shell-mount-view {
+      max-width: none;
+      height: calc(100vh - 118px);
+    }
+
+    .shell-mount-view.active {
+      display: block;
+    }
+
+    .shell-mount-frame {
+      width: 100%;
+      height: 100%;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: var(--canvas);
+    }
+
     .stack {
       display: grid;
       gap: 14px;
@@ -1541,8 +1558,10 @@
   </div>
 
   <script>
-    const views = Array.from(document.querySelectorAll(".view"));
-    const navButtons = Array.from(document.querySelectorAll(".nav button"));
+    const nav = document.querySelector(".nav");
+    const content = document.querySelector(".content");
+    let views = Array.from(document.querySelectorAll(".view"));
+    let navButtons = Array.from(document.querySelectorAll(".nav button"));
     const title = document.getElementById("title");
     const subtitle = document.getElementById("subtitle");
     const resumeStatus = document.getElementById("resume-status");
@@ -1666,6 +1685,71 @@
         subtitle: "How to use this workbench — what each view is for and the review-first model."
       }
     };
+
+    function refreshViewCollections() {
+      views = Array.from(document.querySelectorAll(".view"));
+      navButtons = Array.from(document.querySelectorAll(".nav button"));
+    }
+
+    function wireNavButton(button) {
+      button.addEventListener("click", () => setView(button.dataset.view));
+    }
+
+    function registerShellMount(mount) {
+      if (
+        !mount
+        || mount.id !== "epk-publisher"
+        || typeof mount.label !== "string"
+        || typeof mount.url !== "string"
+        || viewMeta[mount.id]
+      ) {
+        return;
+      }
+
+      viewMeta[mount.id] = {
+        title: mount.label,
+        subtitle: "EPK publisher mounted from the existing loopback app preview."
+      };
+
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.view = mount.id;
+      button.title = "EPK publisher mounted read-only through the local app-preview iframe.";
+      const label = document.createElement("span");
+      label.textContent = mount.label;
+      const shortcut = document.createElement("small");
+      shortcut.textContent = "9";
+      button.append(label, shortcut);
+      wireNavButton(button);
+      nav.append(button);
+
+      const section = document.createElement("section");
+      section.className = "view shell-mount-view";
+      section.dataset.section = mount.id;
+      section.setAttribute("aria-label", mount.label);
+      const iframe = document.createElement("iframe");
+      iframe.className = "shell-mount-frame";
+      iframe.title = mount.label;
+      iframe.src = mount.url;
+      iframe.loading = "lazy";
+      iframe.referrerPolicy = "no-referrer";
+      section.append(iframe);
+      content.append(section);
+
+      refreshViewCollections();
+    }
+
+    async function loadShellMounts() {
+      try {
+        const response = await fetch("/api/v1/shell/mounts");
+        if (!response.ok) return;
+        const mounts = await response.json();
+        if (!Array.isArray(mounts)) return;
+        for (const mount of mounts) registerShellMount(mount);
+      } catch {
+        // Shell mounts are an opt-in local spike; flag-off keeps the workbench unchanged.
+      }
+    }
 
     function boundaryLabel(manifest) {
       if (manifest.boundaries.localOnly) {
@@ -2822,9 +2906,7 @@
       location.hash = viewId;
     }
 
-    navButtons.forEach((button) => {
-      button.addEventListener("click", () => setView(button.dataset.view));
-    });
+    navButtons.forEach(wireNavButton);
 
     document.addEventListener("keydown", (event) => {
       const key = event.key.toLowerCase();
@@ -2837,8 +2919,9 @@
         "6": "capabilities",
         "7": "settings",
         "8": "guide",
+        "9": "epk-publisher",
       };
-      if (viewByKey[key]) {
+      if (viewMeta[viewByKey[key]]) {
         event.preventDefault();
         setView(viewByKey[key]);
       }
@@ -3326,20 +3409,27 @@
       }
     }
 
-    const initialView = (location.hash || "#resume").slice(1);
-    const validView = viewMeta[initialView] ? initialView : "resume";
-    setView(validView);
-    window.__spectraWorkbenchLive = {
-      loadResume,
-      loadApprovals,
-      loadChanges,
-    };
-    loadResume();
-    loadConversations();
-    loadAttachments();
-    loadChanges();
-    loadManifests();
-    loadAppPreviews();
+    async function initWorkbench() {
+      if (window.__SPECTRA_SHELL_MOUNT === true) {
+        await loadShellMounts();
+      }
+      const initialView = (location.hash || "#resume").slice(1);
+      const validView = viewMeta[initialView] ? initialView : "resume";
+      setView(validView);
+      window.__spectraWorkbenchLive = {
+        loadResume,
+        loadApprovals,
+        loadChanges,
+      };
+      loadResume();
+      loadConversations();
+      loadAttachments();
+      loadChanges();
+      loadManifests();
+      loadAppPreviews();
+    }
+
+    initWorkbench();
   </script>
   <script type="module" src="/workbench-shims/js/approvals.js"></script>
   <script src="/workbench-shims/js/live-events.js"></script>

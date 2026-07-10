@@ -65,6 +65,7 @@ const APP_PREVIEW_JS_DIR = path.resolve(DAEMON_DIR, "../ui/preview/js");
 const NODE_MODULES_DIR = path.resolve(DAEMON_DIR, "../node_modules");
 const WORKBENCH_WATCH_ENABLED = process.env.AI_FORGE_WORKBENCH_WATCH === "1";
 const APP_PREVIEW_ENABLED = process.env.AI_FORGE_APP_PREVIEW === "1";
+const SHELL_MOUNT_ENABLED = process.env.AI_FORGE_SHELL_MOUNT === "1";
 const APP_PREVIEW_BASE_PORT = Number(
   process.env.AI_FORGE_APP_PREVIEW_BASE_PORT ?? PORT + 1,
 );
@@ -143,6 +144,16 @@ async function loadStartupCapabilityManifests() {
 
 async function readWorkbenchHtml(): Promise<string> {
   return fs.promises.readFile(WORKBENCH_HTML_PATH, "utf-8");
+}
+
+function injectShellMountFlag(html: string): string {
+  const flagScript = "<script>window.__SPECTRA_SHELL_MOUNT = true;</script>";
+  if (html.includes(flagScript)) return html;
+  const closingHead = /<\/head\s*>/i;
+  if (closingHead.test(html)) {
+    return html.replace(closingHead, `${flagScript}\n</head>`);
+  }
+  return `${flagScript}\n${html}`;
 }
 
 function contentTypeForPath(filePath: string): string {
@@ -700,6 +711,21 @@ function appPreviewPort(app: AppPreviewName): number {
   return APP_PREVIEW_BASE_PORT + (app === "focus" ? 0 : 1);
 }
 
+function shellMounts(runningAppPreviews: ReadonlyMap<AppPreviewName, RunningAppPreview>) {
+  if (!SHELL_MOUNT_ENABLED) return [];
+
+  const epkPreview = runningAppPreviews.get("epk");
+  if (!epkPreview) return [];
+
+  return [
+    {
+      id: "epk-publisher",
+      label: "Mounted surface — EPK",
+      url: new URL("publisher/", epkPreview.url).toString(),
+    },
+  ];
+}
+
 async function startAppPreviewServers(
   previews: ReadonlyMap<AppPreviewName, AppPreview>,
 ): Promise<Map<AppPreviewName, RunningAppPreview>> {
@@ -1087,7 +1113,8 @@ async function start() {
       }
 
       if (req.method === "GET" && (url.pathname === "/workbench" || url.pathname === "/workbench/" || url.pathname === "/workbench/index.html")) {
-        return sendHtml(res, await readWorkbenchHtml());
+        const html = await readWorkbenchHtml();
+        return sendHtml(res, SHELL_MOUNT_ENABLED ? injectShellMountFlag(html) : html);
       }
 
       if (req.method === "GET" && url.pathname === "/api/v1/preview/apps") {
@@ -1100,6 +1127,13 @@ async function start() {
             url: item.url,
           })),
         });
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/v1/shell/mounts") {
+        if (!SHELL_MOUNT_ENABLED) {
+          return jsonResponse(res, 404, { error: "not found" });
+        }
+        return jsonResponse(res, 200, shellMounts(runningAppPreviews));
       }
 
       if (req.method === "GET" && url.pathname === "/api/v1/capabilities/manifests") {
