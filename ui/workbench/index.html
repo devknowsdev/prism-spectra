@@ -46,6 +46,43 @@
       --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
+    /* Prism Default and Prism Tide skins are selected with documentElement[data-skin]. */
+    :root[data-skin="prism-default"] {
+      color-scheme: dark;
+      --canvas: #0d1117;
+      --surface: #11161d;
+      --surface-2: #161b22;
+      --surface-3: #1b212a;
+      --border: #273241;
+      --text: #e6edf3;
+      --muted: #9aa7b6;
+      --dim: #6b7787;
+      --accent: #8b5cf6;
+      --accent-soft: rgba(139, 92, 246, 0.14);
+      --success: #4ade80;
+      --caution: #fbbf24;
+      --danger: #f87171;
+      --mono: "SFMono-Regular", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+      --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    :root[data-skin="prism-tide"] {
+      color-scheme: dark;
+      --canvas: #0b1417;
+      --surface: #0f1a1e;
+      --surface-2: #142329;
+      --surface-3: #1a2d34;
+      --border: #24404a;
+      --text: #e4f1f3;
+      --muted: #93b2b8;
+      --dim: #5f7f86;
+      --accent: #22d3ee;
+      --accent-soft: rgba(34, 211, 238, 0.14);
+      --success: #34d399;
+      --caution: #f5b942;
+      --danger: #fb7185;
+    }
+
     * { box-sizing: border-box; }
     html, body { height: 100%; margin: 0; }
     body {
