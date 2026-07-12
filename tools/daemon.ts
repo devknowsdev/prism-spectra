@@ -716,8 +716,9 @@ function shellMounts(runningAppPreviews: ReadonlyMap<AppPreviewName, RunningAppP
 
   const epkPreview = runningAppPreviews.get("epk");
   if (!epkPreview) return [];
+  const focusPreview = runningAppPreviews.get("focus");
 
-  return [
+  const mounts = [
     {
       id: "epk-publisher",
       label: "Mounted surface — EPK",
@@ -733,6 +734,17 @@ function shellMounts(runningAppPreviews: ReadonlyMap<AppPreviewName, RunningAppP
       url: new URL("admin/admin.html", epkPreview.url).toString(),
     },
   ];
+
+  if (focusPreview) {
+    mounts.push({
+      id: "focus",
+      label: "Mounted surface — Focus",
+      subtitle: "Focus dashboard mounted from the existing loopback app preview.",
+      url: new URL("index.html", focusPreview.url).toString(),
+    });
+  }
+
+  return mounts;
 }
 
 async function startAppPreviewServers(
