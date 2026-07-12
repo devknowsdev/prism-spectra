@@ -8,6 +8,7 @@ import { applyProviderProbe } from "../src/config/providerProbe.js";
 import { buildAiRequestIntent, ExecutionEngine, normalizeAiRequestBody } from "../src/index.js";
 import { buildTaskPrompt } from "../src/executors/aiPrompt.js";
 import { FOCUS_CHAT_RESPONSE_SCHEMA, OllamaExecutor } from "../src/executors/ollama.js";
+import type { AiRequestInput } from "../src/engine/aiRequest.js";
 import type { ExecutionResult, TaskPacket } from "../src/types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -135,6 +136,46 @@ function focusChatRequest(prompt: string, extraInput: Record<string, unknown> = 
   assert.equal(request.ok, true);
   if (!request.ok) throw new Error("expected focus chat request");
   return request.request;
+}
+
+function workbenchChatRequest(prompt: string, preferredMode: AiRequestInput["preferredMode"] = "local-only") {
+  const request = normalizeAiRequestBody({
+    sourceApp: "prism-spectra",
+    intent: "workbench-chat",
+    riskClass: "read-only",
+    preferredMode,
+    record: false,
+    input: { prompt },
+  });
+  assert.equal(request.ok, true);
+  if (!request.ok) throw new Error("expected workbench chat request");
+  return request.request;
+}
+
+function aiRequestPacketFromRequest(request: AiRequestInput): TaskPacket {
+  const sourceApp = request.sourceApp.trim() || "unknown";
+  const riskClass = request.riskClass ?? "read-only";
+  const preferredMode = request.preferredMode ?? "local-first";
+  return {
+    intent: buildAiRequestIntent({ ...request, sourceApp, riskClass, preferredMode }),
+    node_type: request.nodeType ?? "docs",
+    dependencies: [],
+    constraints: ["read-only", "no-app-mutation", "no-file-write"],
+    context: {
+      expectsJson: request.context?.feature === "focus-chat" || request.input?.instruction != null,
+      aiRequest: {
+        sourceApp,
+        intent: request.intent,
+        riskClass,
+        input: request.input ?? {},
+        context: request.context ?? {},
+        preferredMode,
+        ...(request.aiRole ? { aiRole: request.aiRole } : {}),
+        ...(request.maxOutputTokens ? { maxOutputTokens: request.maxOutputTokens } : {}),
+      },
+      ...(request.conversationId == null ? {} : { conversationId: request.conversationId }),
+    },
+  };
 }
 
 async function main() {
@@ -465,6 +506,100 @@ async function main() {
   assert.equal(capturedAiRequest?.aiRole, "reasoner");
   assert.equal(capturedAiRequest?.maxOutputTokens, 321);
   cacheEngine.close();
+
+  const localOnlyBlockedEngine = new ExecutionEngine({
+    dbPath: path.join(ROOT, "local-only-blocked.db"),
+    workDir: path.join(ROOT, "local-only-blocked-work"),
+    mockExecutors: true,
+    ollamaSwapDelayMs: 1,
+    fallbackOnFailure: true,
+  });
+  await localOnlyBlockedEngine.init();
+  const blockedInternals = localOnlyBlockedEngine as unknown as {
+    executors: {
+      free_tier: { execute: (packet: TaskPacket) => Promise<ExecutionResult> };
+      gpt: { execute: (packet: TaskPacket) => Promise<ExecutionResult> };
+      claude: { execute: (packet: TaskPacket) => Promise<ExecutionResult> };
+    };
+  };
+  let cloudExecutions = 0;
+  const cloudExecutor = async (): Promise<ExecutionResult> => {
+    cloudExecutions += 1;
+    return {
+      success: true,
+      output: "cloud must not run",
+      provider: "gpt",
+      tokensIn: 1,
+      tokensOut: 1,
+      cost: 0,
+      latencyMs: 1,
+    };
+  };
+  blockedInternals.executors.free_tier.execute = cloudExecutor;
+  blockedInternals.executors.gpt.execute = cloudExecutor;
+  blockedInternals.executors.claude.execute = cloudExecutor;
+  applyProviderProbe(localOnlyBlockedEngine, [
+    { provider: "ollama", available: false, reason: "ollama offline" },
+    { provider: "free_tier", available: true },
+    { provider: "gpt", available: true },
+    { provider: "claude", available: true },
+  ]);
+  const localOnlyBlockedResult = await localOnlyBlockedEngine.runAiRequest(workbenchChatRequest("Stay local."));
+  assert.equal(localOnlyBlockedResult.ok, false);
+  assert.equal(localOnlyBlockedResult.provider, null);
+  assert.equal(cloudExecutions, 0, "local-only request must not execute cloud providers");
+  assert.deepEqual(
+    localOnlyBlockedResult.provenance.chainTried.map((attempt) => attempt.provider),
+    ["ollama"]
+  );
+  assert.equal(localOnlyBlockedResult.provenance.chainTried[0]?.allowed, false);
+  assert.equal(
+    localOnlyBlockedResult.provenance.chainTried.some((attempt) => ["free_tier", "gpt", "claude"].includes(attempt.provider)),
+    false,
+    "local-only request must not report cloud providers as eligible attempts"
+  );
+  localOnlyBlockedEngine.close();
+
+  const localOnlyCacheEngine = new ExecutionEngine({
+    dbPath: path.join(ROOT, "local-only-cache.db"),
+    workDir: path.join(ROOT, "local-only-cache-work"),
+    mockExecutors: true,
+    ollamaSwapDelayMs: 1,
+  });
+  await localOnlyCacheEngine.init();
+  const cacheBypassRequest = workbenchChatRequest("Do not reuse cloud cache.");
+  localOnlyCacheEngine.patternCache.set(
+    aiRequestPacketFromRequest(cacheBypassRequest),
+    "cached cloud response",
+    "gpt",
+    3,
+    4
+  );
+  const localOnlyCacheInternals = localOnlyCacheEngine as unknown as {
+    executors: {
+      ollama: { execute: (packet: TaskPacket) => Promise<ExecutionResult> };
+    };
+  };
+  let localExecutions = 0;
+  localOnlyCacheInternals.executors.ollama.execute = async () => {
+    localExecutions += 1;
+    return {
+      success: true,
+      output: "fresh local response",
+      provider: "ollama",
+      tokensIn: 5,
+      tokensOut: 6,
+      cost: 0,
+      latencyMs: 2,
+    };
+  };
+  const localOnlyCacheResult = await localOnlyCacheEngine.runAiRequest(cacheBypassRequest);
+  assert.equal(localOnlyCacheResult.ok, true);
+  assert.equal(localOnlyCacheResult.provider, "ollama");
+  assert.equal(localOnlyCacheResult.response, "fresh local response");
+  assert.equal(localOnlyCacheResult.provenance.cacheHit, false);
+  assert.equal(localExecutions, 1, "local-only request must bypass non-local cache hits");
+  localOnlyCacheEngine.close();
 
   const fallbackEngine = new ExecutionEngine({
     dbPath: path.join(ROOT, "fallback-gateway.db"),

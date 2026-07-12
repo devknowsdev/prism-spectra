@@ -2,7 +2,7 @@
   "id": "workbench.chat",
   "kind": "tool-action",
   "displayName": "Workbench Routed Chat",
-  "description": "Read-only local-first Workbench chat route for cockpit prompts without mutating repo, app, or external state.",
+  "description": "Read-only local-only Workbench chat route for cockpit prompts without mutating repo, app, or external state.",
   "ownerRepo": "prism-spectra",
   "status": "enabled",
   "executionMode": "read-only",

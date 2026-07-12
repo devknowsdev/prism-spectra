@@ -39,6 +39,13 @@ function paidTierPreference(complexity: Complexity, routeHint?: RouteDecisionHin
   return complexity === "high" ? ["claude", "gpt"] : ["gpt", "claude"];
 }
 
+function preferredMode(packet: TaskPacket): string | undefined {
+  const aiRequest = packet.context?.aiRequest;
+  if (!aiRequest || typeof aiRequest !== "object") return undefined;
+  const value = (aiRequest as Record<string, unknown>).preferredMode;
+  return typeof value === "string" ? value : undefined;
+}
+
 export class Router {
   private providerAvailability: Partial<Record<ExecutorName, ProviderAvailability>> = {};
 
@@ -74,6 +81,10 @@ export class Router {
         chainTried.push({ provider: "ollama", allowed: check.allowed, reason: check.reason });
         if (check.allowed) return { executor: "ollama", chainTried, ...routeCacheMeta };
       }
+    }
+
+    if (preferredMode(packet) === "local-only") {
+      return { executor: null, chainTried, ...routeCacheMeta };
     }
 
     if (!excludeSet.has("free_tier")) {
