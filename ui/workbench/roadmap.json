@@ -36,7 +36,7 @@
       "id": "F",
       "title": "Multi-AI console",
       "status": "current",
-      "note": "F1 AI availability view shipped; F2 = daemon↔gateway unify + routed chat"
+      "note": "F1 AI availability + F2 local-only routed chat shipped; F2b opt-in cloud routing and richer multi-agent console remain deferred"
     },
     {
       "id": "G",
