@@ -476,6 +476,86 @@
       background: rgba(251, 191, 36, 0.08);
     }
 
+    .roadmap-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .roadmap-rung {
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: var(--surface);
+      padding: 16px;
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr);
+      gap: 14px;
+      align-items: start;
+    }
+
+    .roadmap-rung-id {
+      width: 40px;
+      height: 40px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      display: grid;
+      place-items: center;
+      color: var(--text);
+      background: var(--surface-2);
+      font-family: var(--mono);
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .roadmap-rung-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .roadmap-rung-head h4 {
+      margin: 0;
+      font-size: 15px;
+    }
+
+    .roadmap-rung-note {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .roadmap-status {
+      text-transform: uppercase;
+    }
+
+    .roadmap-status.done {
+      color: var(--success);
+      border-color: rgba(74, 222, 128, 0.25);
+      background: rgba(74, 222, 128, 0.08);
+    }
+
+    .roadmap-status.current {
+      color: #f3e8ff;
+      border-color: rgba(139, 92, 246, 0.45);
+      background: rgba(139, 92, 246, 0.16);
+    }
+
+    .roadmap-status.next {
+      color: #bfdbfe;
+      border-color: rgba(96, 165, 250, 0.35);
+      background: rgba(96, 165, 250, 0.1);
+    }
+
+    .roadmap-status.planned {
+      color: var(--muted);
+    }
+
+    .roadmap-status.dissolved {
+      color: var(--dim);
+      border-style: dashed;
+    }
+
     .risk {
       margin-top: 12px;
       color: var(--muted);
@@ -1061,6 +1141,9 @@
         <button type="button" data-view="guide" title="How to use this workbench: what each view is for and the review-first model.">
           <span>Guide</span><small>8</small>
         </button>
+        <button type="button" data-view="roadmap" title="Read-only cockpit ladder and rung status.">
+          <span>Roadmap</span>
+        </button>
       </nav>
 
       <div class="rail-footer">
@@ -1484,6 +1567,19 @@
           </div>
         </section>
 
+        <section class="view" data-section="roadmap" aria-labelledby="roadmap-title">
+          <div class="stack">
+            <div class="card">
+              <div class="section-title">
+                <h3 id="roadmap-title">Roadmap</h3>
+                <span id="roadmap-status">Loading cockpit ladder...</span>
+              </div>
+              <div class="meta-grid" id="roadmap-meta"></div>
+              <div class="roadmap-list" id="roadmap-list" aria-live="polite" style="margin-top: 14px;"></div>
+            </div>
+          </div>
+        </section>
+
         <section class="view" data-section="guide" aria-labelledby="guide-title">
           <div class="stack">
             <div class="card">
@@ -1601,6 +1697,9 @@
     const changesList = document.getElementById("changes-list");
     const capabilityStatus = document.getElementById("capability-status");
     const capabilityList = document.getElementById("capability-list");
+    const roadmapStatus = document.getElementById("roadmap-status");
+    const roadmapMeta = document.getElementById("roadmap-meta");
+    const roadmapList = document.getElementById("roadmap-list");
     const capFilterLoadMode = document.getElementById("cap-filter-load-mode");
     const capFilterApprovalClass = document.getElementById("cap-filter-approval-class");
     const capFilterBoundary = document.getElementById("cap-filter-boundary");
@@ -1683,6 +1782,10 @@
       guide: {
         title: "Guide",
         subtitle: "How to use this workbench — what each view is for and the review-first model."
+      },
+      roadmap: {
+        title: "Roadmap",
+        subtitle: "Read-only cockpit ladder and rung status."
       }
     };
 
@@ -3211,6 +3314,46 @@
       }).join("");
     }
 
+    function renderRoadmap(roadmap) {
+      const rungs = Array.isArray(roadmap?.rungs) ? roadmap.rungs : [];
+      const phase = typeof roadmap?.phase === "string" ? roadmap.phase : "Unknown phase";
+      const updated = typeof roadmap?.updated === "string" ? roadmap.updated : "unknown";
+      roadmapStatus.textContent = `${rungs.length} rung${rungs.length === 1 ? "" : "s"} visible. Read-only snapshot.`;
+      roadmapMeta.innerHTML = `
+        <div class="meta">
+          <div class="k">Phase</div>
+          <div class="v">${escapeHtml(phase)}</div>
+        </div>
+        <div class="meta">
+          <div class="k">Updated</div>
+          <div class="v">${escapeHtml(updated)}</div>
+        </div>
+      `;
+      if (rungs.length === 0) {
+        roadmapList.innerHTML = '<div class="empty">No roadmap rungs are available from the daemon.</div>';
+        return;
+      }
+
+      roadmapList.innerHTML = rungs.map((rung) => {
+        const id = typeof rung?.id === "string" ? rung.id : "?";
+        const title = typeof rung?.title === "string" ? rung.title : "Untitled rung";
+        const status = typeof rung?.status === "string" ? rung.status : "planned";
+        const note = typeof rung?.note === "string" ? rung.note : "";
+        return `
+          <article class="roadmap-rung" data-roadmap-rung="${escapeHtml(id)}">
+            <div class="roadmap-rung-id">${escapeHtml(id)}</div>
+            <div>
+              <div class="roadmap-rung-head">
+                <h4>${escapeHtml(title)}</h4>
+                <span class="badge roadmap-status ${escapeHtml(status)}" data-roadmap-status="${escapeHtml(status)}">${escapeHtml(status)}</span>
+              </div>
+              <div class="roadmap-rung-note">${escapeHtml(note)}</div>
+            </div>
+          </article>
+        `;
+      }).join("");
+    }
+
     function syncCapabilityFilters() {
       capabilityState.filters.loadMode = capFilterLoadMode.value;
       capabilityState.filters.approvalClass = capFilterApprovalClass.value;
@@ -3387,6 +3530,25 @@
       }
     }
 
+    async function loadRoadmap() {
+      try {
+        const response = await fetch("/api/v1/roadmap");
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        renderRoadmap(await response.json());
+      } catch (error) {
+        roadmapStatus.textContent = "Unable to load roadmap from the daemon.";
+        roadmapMeta.innerHTML = "";
+        roadmapList.innerHTML = `
+          <div class="example-card">
+            <strong>Roadmap load failed</strong>
+            <div style="margin-top: 8px; color: var(--muted); line-height: 1.5;">
+              The workbench shell is up, but the roadmap snapshot was not reachable.
+            </div>
+          </div>
+        `;
+      }
+    }
+
     async function loadAppPreviews() {
       const status = document.getElementById("app-preview-status");
       const links = document.getElementById("app-preview-links");
@@ -3440,6 +3602,7 @@
       loadAttachments();
       loadChanges();
       loadManifests();
+      loadRoadmap();
       loadAppPreviews();
     }
 

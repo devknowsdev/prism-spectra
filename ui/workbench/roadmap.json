@@ -1,0 +1,48 @@
+{
+  "phase": "Session cockpit",
+  "updated": "2026-07-11",
+  "rungs": [
+    {
+      "id": "A",
+      "title": "Stabilise app boot",
+      "status": "dissolved",
+      "note": "EPK boots on committed data from public root; no code needed"
+    },
+    {
+      "id": "B",
+      "title": "Interaction-test harness",
+      "status": "done",
+      "note": "Playwright reality-contact tests (confirm-dialog, honest-Format)"
+    },
+    {
+      "id": "C",
+      "title": "Mount apps into the cockpit",
+      "status": "done",
+      "note": "EPK Publisher + EPK Admin + Focus mounted, default-on"
+    },
+    {
+      "id": "D",
+      "title": "Roadmap view",
+      "status": "current",
+      "note": "This view"
+    },
+    {
+      "id": "E",
+      "title": "Assisted-git panel",
+      "status": "planned",
+      "note": "Diff + generated command + typed approval (no auto-execute)"
+    },
+    {
+      "id": "F",
+      "title": "Multi-AI console",
+      "status": "planned",
+      "note": "Per-agent panes; the migration rung"
+    },
+    {
+      "id": "G",
+      "title": "Definition-of-ready",
+      "status": "planned",
+      "note": "The written bar for 'it's ready'"
+    }
+  ]
+}
