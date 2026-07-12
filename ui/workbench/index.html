@@ -1695,11 +1695,26 @@
       button.addEventListener("click", () => setView(button.dataset.view));
     }
 
+    const allowedShellMountIds = new Set(["epk-publisher", "epk-admin"]);
+    const coreViewByKey = {
+      "1": "resume",
+      "2": "conversations",
+      "3": "attachments",
+      "4": "approvals",
+      "5": "changes",
+      "6": "capabilities",
+      "7": "settings",
+      "8": "guide",
+    };
+    const shellMountViewByKey = {};
+
     function registerShellMount(mount) {
       if (
         !mount
-        || mount.id !== "epk-publisher"
+        || !allowedShellMountIds.has(mount.id)
         || typeof mount.label !== "string"
+        || typeof mount.subtitle !== "string"
+        || typeof mount.shortcut !== "string"
         || typeof mount.url !== "string"
         || viewMeta[mount.id]
       ) {
@@ -1708,20 +1723,25 @@
 
       viewMeta[mount.id] = {
         title: mount.label,
-        subtitle: "EPK publisher mounted from the existing loopback app preview."
+        subtitle: mount.subtitle
       };
 
       const button = document.createElement("button");
       button.type = "button";
       button.dataset.view = mount.id;
-      button.title = "EPK publisher mounted read-only through the local app-preview iframe.";
+      button.title = mount.subtitle;
       const label = document.createElement("span");
       label.textContent = mount.label;
       const shortcut = document.createElement("small");
-      shortcut.textContent = "9";
+      shortcut.textContent = mount.shortcut;
       button.append(label, shortcut);
       wireNavButton(button);
       nav.append(button);
+
+      const shortcutKey = mount.shortcut.toLowerCase();
+      if (!coreViewByKey[shortcutKey]) {
+        shellMountViewByKey[shortcutKey] = mount.id;
+      }
 
       const section = document.createElement("section");
       section.className = "view shell-mount-view";
@@ -2910,17 +2930,7 @@
 
     document.addEventListener("keydown", (event) => {
       const key = event.key.toLowerCase();
-      const viewByKey = {
-        "1": "resume",
-        "2": "conversations",
-        "3": "attachments",
-        "4": "approvals",
-        "5": "changes",
-        "6": "capabilities",
-        "7": "settings",
-        "8": "guide",
-        "9": "epk-publisher",
-      };
+      const viewByKey = { ...coreViewByKey, ...shellMountViewByKey };
       if (viewMeta[viewByKey[key]]) {
         event.preventDefault();
         setView(viewByKey[key]);

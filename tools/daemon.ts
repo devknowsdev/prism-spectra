@@ -721,7 +721,16 @@ function shellMounts(runningAppPreviews: ReadonlyMap<AppPreviewName, RunningAppP
     {
       id: "epk-publisher",
       label: "Mounted surface — EPK",
+      subtitle: "EPK Publisher mounted from the existing loopback app preview.",
+      shortcut: "9",
       url: new URL("publisher/", epkPreview.url).toString(),
+    },
+    {
+      id: "epk-admin",
+      label: "Mounted surface — EPK Admin",
+      subtitle: "EPK Admin mounted from the existing loopback app preview.",
+      shortcut: "0",
+      url: new URL("admin/admin.html", epkPreview.url).toString(),
     },
   ];
 }
