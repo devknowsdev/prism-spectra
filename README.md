@@ -1,11 +1,28 @@
 ---
-Last-Updated: 2026-06-25
+Last-Updated: 2026-07-11
 
 # prism-spectra
 
-Local-first AI orchestration and execution engine for the Prism workspace.
+Local-first AI orchestration and execution engine for the Prism workspace —
+the suite **cockpit host** (local-first daemon + Workbench shell) that routes
+local↔cloud, mounts the app surfaces (EPK Publisher/Admin + Focus, default-on)
+and the roadmap view, and is heading toward the consolidated multi-AI console.
 It provides the routing, memory, checkpointing, and capability surfaces that
 support the dashboard and workspace coordination docs.
+
+## Orientation — start with Beam
+
+Beam is the suite's orientation and standards layer; read it before app source:
+
+- **Session entry:** [prism-beam/AI_LOAD_ME_FIRST.md](https://github.com/devknowsdev/prism-beam/blob/main/AI_LOAD_ME_FIRST.md)
+- **Current truth / where we are:** [prism-beam/STATE.md](https://github.com/devknowsdev/prism-beam/blob/main/STATE.md)
+- **Standards & conduct** (routing, handover rule, git hygiene, cadence): [prism-beam/docs/AI_SESSION_CONDUCT.md](https://github.com/devknowsdev/prism-beam/blob/main/docs/AI_SESSION_CONDUCT.md)
+- **Governing premise** (why the guardrails exist): [prism-beam/docs/PRISM_OPERATING_PREMISE.md](https://github.com/devknowsdev/prism-beam/blob/main/docs/PRISM_OPERATING_PREMISE.md)
+- **Boundaries:** [prism-beam/docs/REPO_BOUNDARIES.md](https://github.com/devknowsdev/prism-beam/blob/main/docs/REPO_BOUNDARIES.md)
+- **Cockpit vision + ladder** (this repo is the suite cockpit host): [prism-beam/docs/strategy/PRISM_SESSION_COCKPIT_PROCEDURAL_ROADMAP_BRIEF_2026-07-11.md](https://github.com/devknowsdev/prism-beam/blob/main/docs/strategy/PRISM_SESSION_COCKPIT_PROCEDURAL_ROADMAP_BRIEF_2026-07-11.md)
+
+`ui/workbench/roadmap.json` is a curated snapshot; Beam's `STATE.md` and the cockpit brief
+are the source of truth (keep the snapshot in sync when the ladder changes).
 
 ## Ecosystem Role
 
