@@ -1,6 +1,6 @@
 {
   "phase": "Session cockpit",
-  "updated": "2026-07-11",
+  "updated": "2026-07-12",
   "rungs": [
     {
       "id": "A",
@@ -23,14 +23,14 @@
     {
       "id": "D",
       "title": "Roadmap view",
-      "status": "current",
-      "note": "This view"
+      "status": "done",
+      "note": "This view (D1); D2 = auto-generate from Beam + xyflow graph next"
     },
     {
       "id": "E",
       "title": "Assisted-git panel",
-      "status": "planned",
-      "note": "Diff + generated command + typed approval (no auto-execute)"
+      "status": "current",
+      "note": "E1 read-only git view shipped; E2 (writes) gated on the layer-3b contract"
     },
     {
       "id": "F",
