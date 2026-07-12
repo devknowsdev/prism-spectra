@@ -123,6 +123,13 @@ interface CascadeExecution {
   cacheHit: boolean;
 }
 
+function aiRequestPreferredMode(packet: TaskPacket): string | undefined {
+  const aiRequest = packet.context?.aiRequest;
+  if (!aiRequest || typeof aiRequest !== "object") return undefined;
+  const value = (aiRequest as Record<string, unknown>).preferredMode;
+  return typeof value === "string" ? value : undefined;
+}
+
 class CascadeExecutorError extends Error {
   constructor(
     cause: unknown,
@@ -508,23 +515,26 @@ export class ExecutionEngine {
   ): Promise<CascadeExecution> {
     const cacheLookup = opts.cacheable ? await this.lookupCache(packet) : { hit: false as const };
     if (cacheLookup.hit) {
-      return {
-        result: {
-          success: true,
-          output: cacheLookup.output!,
-          provider: cacheLookup.originProvider!,
-          tokensIn: cacheLookup.originTokensIn ?? 0,
-          tokensOut: cacheLookup.originTokensOut ?? 0,
-          cost: 0,
-          latencyMs: 0,
+      const nonLocalCacheHit = aiRequestPreferredMode(packet) === "local-only" && cacheLookup.originProvider !== "ollama";
+      if (!nonLocalCacheHit) {
+        return {
+          result: {
+            success: true,
+            output: cacheLookup.output!,
+            provider: cacheLookup.originProvider!,
+            tokensIn: cacheLookup.originTokensIn ?? 0,
+            tokensOut: cacheLookup.originTokensOut ?? 0,
+            cost: 0,
+            latencyMs: 0,
+            cacheHit: true,
+            cacheHitKind: cacheLookup.semantic ? "semantic" : "exact",
+            patch: cacheLookup.originPatch,
+          },
+          executor: cacheLookup.originProvider!,
+          chainTried: [],
           cacheHit: true,
-          cacheHitKind: cacheLookup.semantic ? "semantic" : "exact",
-          patch: cacheLookup.originPatch,
-        },
-        executor: cacheLookup.originProvider!,
-        chainTried: [],
-        cacheHit: true,
-      };
+        };
+      }
     }
 
     let decision = await this.route(packet);

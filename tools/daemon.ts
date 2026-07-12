@@ -31,6 +31,7 @@ import {
   type SpectraSession,
   checkAllCloudTeacherHealth,
   loadCapabilityManifestRegistry,
+  normalizeAiRequestBody,
 } from "../src/index.js";
 import { TaskGraph } from "../src/taskGraph/graph.js";
 import { probeAllProviders, applyProviderProbe, type ProviderStatus } from "../src/config/providerProbe.js";
@@ -86,10 +87,19 @@ interface AiProviderAvailability {
 }
 
 async function initEngine() {
-  const engine = new ExecutionEngine({ dbPath: ".demo/daemon.db", workDir: ".demo/work", mockExecutors: process.env.AI_FORGE_MOCK_EXECUTORS === "1", fallbackOnFailure: false });
+  const mockExecutors = process.env.AI_FORGE_MOCK_EXECUTORS === "1";
+  const engine = new ExecutionEngine({ dbPath: ".demo/daemon.db", workDir: ".demo/work", mockExecutors, fallbackOnFailure: false });
   await engine.init();
   await loadStartupCapabilityManifests();
-  const statuses = await probeAllProviders();   applyProviderProbe(engine, statuses);   const ollamaStatus = statuses.find(s => s.provider === "ollama");   if (!ollamaStatus?.available) {     console.warn("[daemon] Ollama unavailable at startup — local tier disabled:", ollamaStatus?.reason ?? "no reason given");   }   const graphBuilder = new GraphBuilder(engine.memory, engine.taskHistory);
+  const statuses = await probeAllProviders();
+  if (!mockExecutors) {
+    applyProviderProbe(engine, statuses);
+    const ollamaStatus = statuses.find(s => s.provider === "ollama");
+    if (!ollamaStatus?.available) {
+      console.warn("[daemon] Ollama unavailable at startup — local tier disabled:", ollamaStatus?.reason ?? "no reason given");
+    }
+  }
+  const graphBuilder = new GraphBuilder(engine.memory, engine.taskHistory);
   return { engine, graphBuilder };
 }
 
@@ -123,6 +133,15 @@ function subscribeEventLedgerSse(
 
 function unauthorized(res: http.ServerResponse) {
   jsonResponse(res, 401, { error: "missing or invalid x-local-token header" });
+}
+
+function scriptJson(value: string): string {
+  return JSON.stringify(value).replaceAll("<", "\\u003c");
+}
+
+function isLoopbackRequest(req: http.IncomingMessage): boolean {
+  const address = req.socket.remoteAddress;
+  return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
 }
 
 async function readBody(req: http.IncomingMessage): Promise<any> {
@@ -232,6 +251,21 @@ function injectShellMountFlag(html: string): string {
     return html.replace(closingHead, `${flagScript}\n</head>`);
   }
   return `${flagScript}\n${html}`;
+}
+
+function injectWorkbenchLocalToken(html: string): string {
+  const tokenScript = `<script>window.__SPECTRA_LOCAL_TOKEN = ${scriptJson(TOKEN)};</script>`;
+  if (html.includes("<script>window.__SPECTRA_LOCAL_TOKEN = ")) return html;
+  const closingHead = /<\/head\s*>/i;
+  if (closingHead.test(html)) {
+    return html.replace(closingHead, `${tokenScript}\n</head>`);
+  }
+  return `${tokenScript}\n${html}`;
+}
+
+function injectWorkbenchRuntime(html: string): string {
+  const withToken = injectWorkbenchLocalToken(html);
+  return SHELL_MOUNT_ENABLED ? injectShellMountFlag(withToken) : withToken;
 }
 
 function contentTypeForPath(filePath: string): string {
@@ -1213,7 +1247,7 @@ async function start() {
 
       if (req.method === "GET" && (url.pathname === "/workbench" || url.pathname === "/workbench/" || url.pathname === "/workbench/index.html")) {
         const html = await readWorkbenchHtml();
-        return sendHtml(res, SHELL_MOUNT_ENABLED ? injectShellMountFlag(html) : html);
+        return sendHtml(res, injectWorkbenchRuntime(html));
       }
 
       if (req.method === "GET" && url.pathname === "/api/v1/preview/apps") {
@@ -1458,6 +1492,17 @@ async function start() {
 
       if (req.method === "GET" && url.pathname === "/api/v1/health") {
         return jsonResponse(res, 200, { ok: true, available: true, cloudTeacherProviders: await checkAllCloudTeacherHealth() });
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/v1/ai/request") {
+        if (!isLoopbackRequest(req)) {
+          return jsonResponse(res, 403, { ok: false, error: "ai request endpoint is loopback-only" });
+        }
+        const body = await readBody(req);
+        const validation = normalizeAiRequestBody(body);
+        if (!validation.ok) return jsonResponse(res, 400, { ok: false, error: validation.error });
+        const result = await engine.runAiRequest(validation.request);
+        return jsonResponse(res, result.ok ? 200 : 500, result);
       }
 
       if (req.method === "POST" && url.pathname === "/api/v1/build-graph") {

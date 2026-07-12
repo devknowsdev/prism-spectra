@@ -41,10 +41,10 @@ async function main() {
     });
     assert.equal(result.missing, false);
     assert.deepEqual(result.issues, []);
-    assert.equal(result.loaded.length, 12);
+    assert.equal(result.loaded.length, 13);
 
     const enabled = result.loaded.filter((manifest) => manifest.status === "enabled");
-    assert.equal(enabled.length, 7);
+    assert.equal(enabled.length, 8);
     for (const manifest of enabled) {
       assert.equal(manifest.riskClass, "read-only");
       assert.equal(manifest.executionMode, "read-only");
