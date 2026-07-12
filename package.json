@@ -14,6 +14,7 @@
     "sandbox:reset": "node --import tsx sandbox/scripts/reset-sandbox.ts",
     "sandbox:seed": "node --import tsx sandbox/scripts/seed-sandbox.ts",
     "test:browser": "node --import tsx test/browser/workbench-smoke.test.ts",
+    "test:e2e": "playwright test",
     "test:setup": "npm run doctor && npm run typecheck && npm run build",
     "test:full": "node --import tsx test/run.ts && node --import tsx test/capabilities.test.ts && node --import tsx test/cloud-teacher-providers.test.ts && node --import tsx test/eval-harness.test.ts && node --import tsx test/eval-run.test.ts && node --import tsx test/tier2b-routing.test.ts && node --import tsx test/tier3a-semantic-cache.test.ts && node --import tsx test/tier3b-route-cache.test.ts && node --import tsx test/tier3b-engine-route-hints.test.ts && node --import tsx test/tier3c-routing-hardening.test.ts",
     "test:ai-request": "node --import tsx test/ai-request.test.ts",
@@ -43,6 +44,7 @@
     "node": ">=22"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/node": "^22.13.10",
     "tsx": "^4.20.7",
     "typescript": "^5.9.3"
