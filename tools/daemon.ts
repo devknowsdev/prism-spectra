@@ -59,6 +59,7 @@ const TOKEN = ENV_TOKEN || randomBytes(18).toString("hex");
 const DAEMON_DIR = path.dirname(fileURLToPath(import.meta.url));
 const WORKBENCH_DIR = path.resolve(DAEMON_DIR, "../ui/workbench");
 const WORKBENCH_HTML_PATH = path.join(WORKBENCH_DIR, "index.html");
+const WORKBENCH_ROADMAP_PATH = path.join(WORKBENCH_DIR, "roadmap.json");
 const WORKBENCH_SHIM_DIR = path.join(WORKBENCH_DIR, "vendor-shims");
 const WORKBENCH_JS_DIR = path.join(WORKBENCH_DIR, "js");
 const APP_PREVIEW_JS_DIR = path.resolve(DAEMON_DIR, "../ui/preview/js");
@@ -144,6 +145,11 @@ async function loadStartupCapabilityManifests() {
 
 async function readWorkbenchHtml(): Promise<string> {
   return fs.promises.readFile(WORKBENCH_HTML_PATH, "utf-8");
+}
+
+async function readWorkbenchRoadmap(): Promise<unknown> {
+  const source = await fs.promises.readFile(WORKBENCH_ROADMAP_PATH, "utf-8");
+  return JSON.parse(source);
 }
 
 function injectShellMountFlag(html: string): string {
@@ -1159,6 +1165,14 @@ async function start() {
 
       if (req.method === "GET" && url.pathname === "/api/v1/capabilities/manifests") {
         return jsonResponse(res, 200, { manifests: seedCapabilityManifests });
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/v1/roadmap") {
+        try {
+          return jsonResponse(res, 200, await readWorkbenchRoadmap());
+        } catch (error) {
+          return jsonResponse(res, 404, { error: "roadmap not found" });
+        }
       }
 
       if (req.method === "GET" && url.pathname === "/api/v1/session/current") {
