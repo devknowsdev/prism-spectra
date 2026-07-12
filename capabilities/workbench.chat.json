@@ -1,0 +1,88 @@
+{
+  "id": "workbench.chat",
+  "kind": "tool-action",
+  "displayName": "Workbench Routed Chat",
+  "description": "Read-only local-first Workbench chat route for cockpit prompts without mutating repo, app, or external state.",
+  "ownerRepo": "prism-spectra",
+  "status": "enabled",
+  "executionMode": "read-only",
+  "entrypoint": {
+    "type": "ai-request",
+    "sourceApp": "prism-spectra",
+    "intent": "workbench-chat"
+  },
+  "locality": "local",
+  "dataBoundary": "local",
+  "riskClass": "read-only",
+  "approvalRequired": false,
+  "allowedInputs": [
+    "sourceApp",
+    "intent",
+    "riskClass",
+    "preferredMode",
+    "aiRole",
+    "maxOutputTokens",
+    "record",
+    "input.prompt",
+    "context.feature",
+    "context.appSurface"
+  ],
+  "allowedOutputs": [
+    "response",
+    "provenance"
+  ],
+  "allowedPaths": [],
+  "allowedEnvVars": [],
+  "networkPolicy": {
+    "mode": "loopback-only",
+    "allowedHosts": [
+      "127.0.0.1"
+    ]
+  },
+  "credentialPolicy": {
+    "mode": "none",
+    "envVars": []
+  },
+  "costPolicy": {
+    "mode": "none"
+  },
+  "resourcePolicy": {
+    "profile": "small"
+  },
+  "provenanceFields": [
+    "routedBy",
+    "sourceApp",
+    "riskClass",
+    "preferredMode",
+    "graphId",
+    "nodeId",
+    "chainTried",
+    "capabilityManifest"
+  ],
+  "telemetryFields": [
+    "capabilityManifest.status",
+    "capabilityManifest.id"
+  ],
+  "validation": {
+    "tests": [
+      "test:e2e",
+      "test:ai-request",
+      "capabilities:check"
+    ]
+  },
+  "rollback": "Revert the manifest and console endpoint slice; Workbench returns to read-only status views.",
+  "failureMode": "If invalid, the loader omits this entry and the daemon records capabilityManifest.status=absent for this intent.",
+  "disabledByDefault": false,
+  "verifiedOn": "2026-07-12",
+  "action": {
+    "name": "workbench-chat",
+    "apiShape": "POST /api/v1/ai/request with sourceApp=prism-spectra and intent=workbench-chat",
+    "modelMayInfluenceParameters": false,
+    "terminalExecution": false,
+    "fileWritesPossible": false,
+    "allowedPathRoots": [],
+    "approvalQueueIntegration": "none",
+    "checkpointRequired": false,
+    "validationRequired": false
+  }
+}

@@ -707,6 +707,79 @@
       line-height: 1.55;
     }
 
+    .console-form {
+      display: grid;
+      gap: 12px;
+    }
+
+    .console-form textarea {
+      width: 100%;
+      min-height: 120px;
+      resize: vertical;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: var(--surface);
+      color: var(--text);
+      padding: 12px;
+      font: inherit;
+      line-height: 1.5;
+    }
+
+    .console-form textarea:focus-visible {
+      outline: none;
+      border-color: rgba(139, 92, 246, 0.45);
+      box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.12);
+    }
+
+    .console-actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .console-send {
+      appearance: none;
+      border: 1px solid rgba(139, 92, 246, 0.45);
+      border-radius: 999px;
+      background: rgba(139, 92, 246, 0.16);
+      color: var(--text);
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .console-send:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    .console-output {
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: var(--surface);
+      padding: 16px;
+      display: grid;
+      gap: 10px;
+      min-height: 96px;
+    }
+
+    .console-response {
+      color: var(--text);
+      line-height: 1.6;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .console-route {
+      color: var(--dim);
+      font-family: var(--mono);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
     .risk {
       margin-top: 12px;
       color: var(--muted);
@@ -1301,6 +1374,9 @@
         <button type="button" data-view="ai" title="Read-only local and cloud AI provider availability.">
           <span>AI</span>
         </button>
+        <button type="button" data-view="console" title="Local-first routed chat console.">
+          <span>Console</span>
+        </button>
       </nav>
 
       <div class="rail-footer">
@@ -1764,6 +1840,37 @@
           </div>
         </section>
 
+        <section class="view" data-section="console" aria-labelledby="console-title">
+          <div class="stack">
+            <div class="card">
+              <div class="section-title">
+                <h3 id="console-title">Console</h3>
+                <span id="console-status">Local-first routed chat</span>
+              </div>
+              <form class="console-form" id="console-form">
+                <label class="filter-control" for="console-prompt">
+                  <span>Prompt</span>
+                  <textarea id="console-prompt" placeholder="Ask the local routed model..." autocomplete="off"></textarea>
+                </label>
+                <div class="console-actions">
+                  <div class="empty">Sends as <code>prism-spectra</code> / <code>workbench-chat</code> with <code>local-first</code>.</div>
+                  <button class="console-send" id="console-send" type="submit">Send</button>
+                </div>
+              </form>
+            </div>
+            <div class="card">
+              <div class="section-title">
+                <h3>Response</h3>
+                <span>Read-only AI request result</span>
+              </div>
+              <div class="console-output" aria-live="polite">
+                <div class="console-response empty" id="console-response">No prompt sent yet.</div>
+                <div class="console-route" id="console-route"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section class="view" data-section="guide" aria-labelledby="guide-title">
           <div class="stack">
             <div class="card">
@@ -1888,6 +1995,12 @@
     const gitList = document.getElementById("git-list");
     const aiStatus = document.getElementById("ai-status");
     const aiProviderGroups = document.getElementById("ai-provider-groups");
+    const consoleForm = document.getElementById("console-form");
+    const consolePrompt = document.getElementById("console-prompt");
+    const consoleSend = document.getElementById("console-send");
+    const consoleStatus = document.getElementById("console-status");
+    const consoleResponse = document.getElementById("console-response");
+    const consoleRoute = document.getElementById("console-route");
     const capFilterLoadMode = document.getElementById("cap-filter-load-mode");
     const capFilterApprovalClass = document.getElementById("cap-filter-approval-class");
     const capFilterBoundary = document.getElementById("cap-filter-boundary");
@@ -1982,6 +2095,10 @@
       ai: {
         title: "AI",
         subtitle: "Read-only local and cloud provider availability."
+      },
+      console: {
+        title: "Console",
+        subtitle: "Local-first routed chat through the Workbench daemon."
       }
     };
 
@@ -3677,6 +3794,81 @@
       ].join("");
     }
 
+    function workbenchLocalToken() {
+      const fromWindow = typeof window.__SPECTRA_LOCAL_TOKEN === "string" ? window.__SPECTRA_LOCAL_TOKEN.trim() : "";
+      if (fromWindow) return fromWindow;
+      try {
+        return (
+          localStorage.getItem("spectra.localToken")
+          || localStorage.getItem("spectra.daemonToken")
+          || localStorage.getItem("AI_FORGE_DAEMON_TOKEN")
+          || ""
+        ).trim();
+      } catch {
+        return "";
+      }
+    }
+
+    function renderConsoleResult(payload) {
+      const response = typeof payload?.response === "string" ? payload.response : "";
+      const provider = typeof payload?.provider === "string" ? payload.provider : "unknown-provider";
+      const model = typeof payload?.model === "string" && payload.model ? payload.model : "unknown-model";
+      const boundary = typeof payload?.dataBoundary === "string" ? payload.dataBoundary : "unknown-boundary";
+      const latency = Number.isFinite(payload?.usage?.latencyMs) ? `${Number(payload.usage.latencyMs)}ms` : "latency unknown";
+      consoleResponse.classList.remove("empty");
+      consoleResponse.textContent = response || "The route returned an empty response.";
+      consoleRoute.textContent = `${provider}/${model} · ${boundary} · ${latency}`;
+      consoleStatus.textContent = payload?.ok === true ? "Response received" : "Request failed";
+    }
+
+    function renderConsoleError(message) {
+      consoleResponse.classList.add("empty");
+      consoleResponse.textContent = `${message} Check the AI availability view for local provider status.`;
+      consoleRoute.textContent = "";
+      consoleStatus.textContent = "Console degraded";
+    }
+
+    async function sendConsolePrompt() {
+      const prompt = consolePrompt instanceof HTMLTextAreaElement ? consolePrompt.value.trim() : "";
+      if (!prompt) {
+        renderConsoleError("Enter a prompt before sending.");
+        return;
+      }
+
+      if (consoleSend instanceof HTMLButtonElement) consoleSend.disabled = true;
+      consoleStatus.textContent = "Sending local-first AI request...";
+      consoleResponse.classList.add("empty");
+      consoleResponse.textContent = "Waiting for the routed local response...";
+      consoleRoute.textContent = "";
+
+      try {
+        const token = workbenchLocalToken();
+        const headers = {
+          "Content-Type": "application/json",
+          ...(token ? { "x-local-token": token } : {}),
+        };
+        const response = await fetch("/api/v1/ai/request", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            sourceApp: "prism-spectra",
+            intent: "workbench-chat",
+            input: { prompt },
+            preferredMode: "local-first",
+          }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload?.ok !== true) {
+          throw new Error(payload?.error || `HTTP ${response.status}`);
+        }
+        renderConsoleResult(payload);
+      } catch (error) {
+        renderConsoleError(`Request could not complete: ${error instanceof Error ? error.message : String(error)}.`);
+      } finally {
+        if (consoleSend instanceof HTMLButtonElement) consoleSend.disabled = false;
+      }
+    }
+
     function syncCapabilityFilters() {
       capabilityState.filters.loadMode = capFilterLoadMode.value;
       capabilityState.filters.approvalClass = capFilterApprovalClass.value;
@@ -3791,6 +3983,11 @@
       } catch (error) {
         target.textContent = "Copy failed";
       }
+    });
+
+    consoleForm?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void sendConsolePrompt();
     });
 
     async function loadResume() {

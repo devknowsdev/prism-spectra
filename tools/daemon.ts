@@ -31,6 +31,7 @@ import {
   type SpectraSession,
   checkAllCloudTeacherHealth,
   loadCapabilityManifestRegistry,
+  normalizeAiRequestBody,
 } from "../src/index.js";
 import { TaskGraph } from "../src/taskGraph/graph.js";
 import { probeAllProviders, applyProviderProbe, type ProviderStatus } from "../src/config/providerProbe.js";
@@ -123,6 +124,11 @@ function subscribeEventLedgerSse(
 
 function unauthorized(res: http.ServerResponse) {
   jsonResponse(res, 401, { error: "missing or invalid x-local-token header" });
+}
+
+function isLoopbackRequest(req: http.IncomingMessage): boolean {
+  const address = req.socket.remoteAddress;
+  return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
 }
 
 async function readBody(req: http.IncomingMessage): Promise<any> {
@@ -1458,6 +1464,17 @@ async function start() {
 
       if (req.method === "GET" && url.pathname === "/api/v1/health") {
         return jsonResponse(res, 200, { ok: true, available: true, cloudTeacherProviders: await checkAllCloudTeacherHealth() });
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/v1/ai/request") {
+        if (!isLoopbackRequest(req)) {
+          return jsonResponse(res, 403, { ok: false, error: "ai request endpoint is loopback-only" });
+        }
+        const body = await readBody(req);
+        const validation = normalizeAiRequestBody(body);
+        if (!validation.ok) return jsonResponse(res, 400, { ok: false, error: validation.error });
+        const result = await engine.runAiRequest(validation.request);
+        return jsonResponse(res, result.ok ? 200 : 500, result);
       }
 
       if (req.method === "POST" && url.pathname === "/api/v1/build-graph") {
