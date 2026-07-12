@@ -29,14 +29,14 @@
     {
       "id": "E",
       "title": "Assisted-git panel",
-      "status": "current",
+      "status": "done",
       "note": "E1 read-only git view shipped; E2 (writes) gated on the layer-3b contract"
     },
     {
       "id": "F",
       "title": "Multi-AI console",
-      "status": "planned",
-      "note": "Per-agent panes; the migration rung"
+      "status": "current",
+      "note": "F1 AI availability view shipped; F2 = daemon↔gateway unify + routed chat"
     },
     {
       "id": "G",
