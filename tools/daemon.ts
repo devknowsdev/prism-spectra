@@ -33,7 +33,7 @@ import {
   loadCapabilityManifestRegistry,
 } from "../src/index.js";
 import { TaskGraph } from "../src/taskGraph/graph.js";
-import { probeAllProviders, applyProviderProbe } from "../src/config/providerProbe.js";
+import { probeAllProviders, applyProviderProbe, type ProviderStatus } from "../src/config/providerProbe.js";
 import {
   createWorkbenchWatcher,
   subscribeWorkbenchReloadSse,
@@ -74,6 +74,16 @@ const APP_PREVIEW_BASE_PORT = Number(
 const APP_PREVIEW_CONFIG_PATH = path.resolve(
   process.env.AI_FORGE_APP_PREVIEW_CONFIG ?? path.join(process.cwd(), "spectra.preview.local.json"),
 );
+const AI_STATUS_PROBE_TIMEOUT_MS = 4_000;
+
+type AiProviderKind = "local" | "cloud";
+
+interface AiProviderAvailability {
+  id: "ollama" | "anthropic" | "openai";
+  kind: AiProviderKind;
+  available: boolean;
+  reason?: string;
+}
 
 async function initEngine() {
   const engine = new ExecutionEngine({ dbPath: ".demo/daemon.db", workDir: ".demo/work", mockExecutors: process.env.AI_FORGE_MOCK_EXECUTORS === "1", fallbackOnFailure: false });
@@ -151,6 +161,67 @@ async function readWorkbenchHtml(): Promise<string> {
 async function readWorkbenchRoadmap(): Promise<unknown> {
   const source = await fs.promises.readFile(WORKBENCH_ROADMAP_PATH, "utf-8");
   return JSON.parse(source);
+}
+
+function normalizeProbeReason(reason: string | undefined): string | undefined {
+  if (!reason) return undefined;
+  return reason.slice(0, 240);
+}
+
+function unavailableAiProviders(reason: string): { providers: AiProviderAvailability[] } {
+  return {
+    providers: [
+      { id: "ollama", kind: "local", available: false, reason },
+      { id: "anthropic", kind: "cloud", available: false, reason },
+      { id: "openai", kind: "cloud", available: false, reason },
+    ],
+  };
+}
+
+async function probeProvidersWithTimeout(): Promise<ProviderStatus[]> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      probeAllProviders(),
+      new Promise<ProviderStatus[]>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("provider probe timed out")), AI_STATUS_PROBE_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function readAiProviderStatus(): Promise<{ providers: AiProviderAvailability[] }> {
+  try {
+    const statuses = await probeProvidersWithTimeout();
+    const byProvider = new Map(statuses.map((status) => [status.provider, status]));
+    const providers: AiProviderAvailability[] = [
+      { id: "ollama", kind: "local", available: false, reason: "provider probe did not return ollama" },
+      { id: "anthropic", kind: "cloud", available: false, reason: "provider probe did not return claude" },
+      { id: "openai", kind: "cloud", available: false, reason: "provider probe did not return gpt" },
+    ];
+    const mapping: Array<[AiProviderAvailability["id"], ProviderStatus["provider"]]> = [
+      ["ollama", "ollama"],
+      ["anthropic", "claude"],
+      ["openai", "gpt"],
+    ];
+
+    for (const [id, provider] of mapping) {
+      const source = byProvider.get(provider);
+      const target = providers.find((item) => item.id === id);
+      if (!source || !target) continue;
+      target.available = source.available;
+      target.reason = normalizeProbeReason(source.reason);
+    }
+
+    return { providers };
+  } catch (error) {
+    const message = error instanceof Error && error.message === "provider probe timed out"
+      ? "provider probe timed out"
+      : "provider probe failed";
+    return unavailableAiProviders(message);
+  }
 }
 
 function injectShellMountFlag(html: string): string {
@@ -1178,6 +1249,10 @@ async function start() {
 
       if (req.method === "GET" && url.pathname === "/api/v1/git/status") {
         return jsonResponse(res, 200, { repos: await listReadOnlyGitStatus(DAEMON_DIR) });
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/v1/ai/status") {
+        return jsonResponse(res, 200, await readAiProviderStatus());
       }
 
       if (req.method === "GET" && url.pathname === "/api/v1/session/current") {

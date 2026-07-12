@@ -639,6 +639,74 @@
       color: var(--text);
     }
 
+    .ai-status-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .ai-provider-group {
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: var(--surface);
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    .ai-provider-group h4 {
+      margin: 0;
+      font-size: 15px;
+    }
+
+    .ai-provider-card {
+      border-top: 1px solid rgba(39, 50, 65, 0.8);
+      padding-top: 12px;
+    }
+
+    .ai-provider-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .ai-provider-head strong {
+      font-family: var(--mono);
+      font-size: 13px;
+    }
+
+    .ai-provider-reason {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+
+    .ai-availability.available {
+      color: var(--success);
+      border-color: rgba(74, 222, 128, 0.25);
+      background: rgba(74, 222, 128, 0.08);
+    }
+
+    .ai-availability.unavailable {
+      color: var(--caution);
+      border-color: rgba(251, 191, 36, 0.25);
+      background: rgba(251, 191, 36, 0.08);
+    }
+
+    .ai-note {
+      border: 1px dashed rgba(148, 163, 184, 0.28);
+      border-radius: 14px;
+      background: rgba(148, 163, 184, 0.06);
+      color: var(--muted);
+      padding: 12px;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
     .risk {
       margin-top: 12px;
       color: var(--muted);
@@ -1230,6 +1298,9 @@
         <button type="button" data-view="git" title="Read-only branch, dirty-file, ahead/behind, and recent commit status.">
           <span>Git</span>
         </button>
+        <button type="button" data-view="ai" title="Read-only local and cloud AI provider availability.">
+          <span>AI</span>
+        </button>
       </nav>
 
       <div class="rail-footer">
@@ -1678,6 +1749,21 @@
           </div>
         </section>
 
+        <section class="view" data-section="ai" aria-labelledby="ai-title">
+          <div class="stack">
+            <div class="card">
+              <div class="section-title">
+                <h3 id="ai-title">AI</h3>
+                <span id="ai-status">Loading read-only provider status...</span>
+              </div>
+              <div class="ai-note">
+                Prompt chat and routing are F2, pending the daemon/gateway unification decision. This view only shows provider availability.
+              </div>
+              <div class="ai-status-grid" id="ai-provider-groups" aria-live="polite" style="margin-top: 14px;"></div>
+            </div>
+          </div>
+        </section>
+
         <section class="view" data-section="guide" aria-labelledby="guide-title">
           <div class="stack">
             <div class="card">
@@ -1800,6 +1886,8 @@
     const roadmapList = document.getElementById("roadmap-list");
     const gitStatus = document.getElementById("git-status");
     const gitList = document.getElementById("git-list");
+    const aiStatus = document.getElementById("ai-status");
+    const aiProviderGroups = document.getElementById("ai-provider-groups");
     const capFilterLoadMode = document.getElementById("cap-filter-load-mode");
     const capFilterApprovalClass = document.getElementById("cap-filter-approval-class");
     const capFilterBoundary = document.getElementById("cap-filter-boundary");
@@ -1890,6 +1978,10 @@
       git: {
         title: "Git",
         subtitle: "Read-only repo status with copy-only command scaffolds."
+      },
+      ai: {
+        title: "AI",
+        subtitle: "Read-only local and cloud provider availability."
       }
     };
 
@@ -3540,6 +3632,51 @@
       }).join("");
     }
 
+    function renderAiStatus(payload) {
+      const providers = Array.isArray(payload?.providers) ? payload.providers : [];
+      const byKind = {
+        local: providers.filter((provider) => provider?.kind === "local"),
+        cloud: providers.filter((provider) => provider?.kind === "cloud"),
+      };
+      aiStatus.textContent = `${providers.length} provider${providers.length === 1 ? "" : "s"} visible. Read-only availability only.`;
+
+      function renderProvider(provider) {
+        const id = typeof provider?.id === "string" ? provider.id : "unknown";
+        const available = provider?.available === true;
+        const reason = typeof provider?.reason === "string" && provider.reason.trim()
+          ? provider.reason
+          : available ? "available" : "unavailable";
+        return `
+          <article class="ai-provider-card" data-ai-provider="${escapeHtml(id)}">
+            <div class="ai-provider-head">
+              <strong>${escapeHtml(id)}</strong>
+              <span class="badge ai-availability ${available ? "available" : "unavailable"}" data-ai-availability>
+                ${available ? "available" : "unavailable"}
+              </span>
+            </div>
+            <div class="ai-provider-reason">${escapeHtml(reason)}</div>
+          </article>
+        `;
+      }
+
+      function renderGroup(label, kind, items) {
+        const cards = items.length > 0
+          ? items.map(renderProvider).join("")
+          : '<div class="empty">No providers returned for this group.</div>';
+        return `
+          <section class="ai-provider-group" data-ai-group="${escapeHtml(kind)}">
+            <h4>${escapeHtml(label)}</h4>
+            ${cards}
+          </section>
+        `;
+      }
+
+      aiProviderGroups.innerHTML = [
+        renderGroup("Local", "local", byKind.local),
+        renderGroup("Cloud", "cloud", byKind.cloud),
+      ].join("");
+    }
+
     function syncCapabilityFilters() {
       capabilityState.filters.loadMode = capFilterLoadMode.value;
       capabilityState.filters.approvalClass = capFilterApprovalClass.value;
@@ -3766,6 +3903,24 @@
       }
     }
 
+    async function loadAiStatus() {
+      try {
+        const response = await fetch("/api/v1/ai/status");
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        renderAiStatus(await response.json());
+      } catch (error) {
+        aiStatus.textContent = "Unable to load AI provider status from the daemon.";
+        aiProviderGroups.innerHTML = `
+          <div class="example-card">
+            <strong>AI status load failed</strong>
+            <div style="margin-top: 8px; color: var(--muted); line-height: 1.5;">
+              The workbench shell is up, but the read-only AI provider status route was not reachable.
+            </div>
+          </div>
+        `;
+      }
+    }
+
     async function loadAppPreviews() {
       const status = document.getElementById("app-preview-status");
       const links = document.getElementById("app-preview-links");
@@ -3821,6 +3976,7 @@
       loadManifests();
       loadRoadmap();
       loadGitStatus();
+      loadAiStatus();
       loadAppPreviews();
     }
 
