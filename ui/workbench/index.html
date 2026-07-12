@@ -556,6 +556,89 @@
       border-style: dashed;
     }
 
+    .git-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .git-repo-card {
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: var(--surface);
+      padding: 16px;
+    }
+
+    .git-repo-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .git-repo-head h4 {
+      margin: 0;
+      font-size: 15px;
+    }
+
+    .git-repo-path {
+      margin-top: 4px;
+      color: var(--dim);
+      font-size: 11px;
+      font-family: var(--mono);
+      overflow-wrap: anywhere;
+    }
+
+    .git-file-list,
+    .git-commit-list {
+      margin: 8px 0 0 18px;
+      padding: 0;
+      display: grid;
+      gap: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      font-family: var(--mono);
+      overflow-wrap: anywhere;
+    }
+
+    .git-command {
+      margin-top: 12px;
+      border: 1px dashed rgba(148, 163, 184, 0.28);
+      border-radius: 14px;
+      background: rgba(148, 163, 184, 0.06);
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .git-command code {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .git-command button {
+      justify-self: start;
+      appearance: none;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--muted);
+      padding: 7px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .git-command button:hover,
+    .git-command button:focus-visible {
+      outline: none;
+      border-color: rgba(139, 92, 246, 0.45);
+      color: var(--text);
+    }
+
     .risk {
       margin-top: 12px;
       color: var(--muted);
@@ -1144,6 +1227,9 @@
         <button type="button" data-view="roadmap" title="Read-only cockpit ladder and rung status.">
           <span>Roadmap</span>
         </button>
+        <button type="button" data-view="git" title="Read-only branch, dirty-file, ahead/behind, and recent commit status.">
+          <span>Git</span>
+        </button>
       </nav>
 
       <div class="rail-footer">
@@ -1580,6 +1666,18 @@
           </div>
         </section>
 
+        <section class="view" data-section="git" aria-labelledby="git-title">
+          <div class="stack">
+            <div class="card">
+              <div class="section-title">
+                <h3 id="git-title">Git</h3>
+                <span id="git-status">Loading read-only git status...</span>
+              </div>
+              <div class="git-list" id="git-list" aria-live="polite"></div>
+            </div>
+          </div>
+        </section>
+
         <section class="view" data-section="guide" aria-labelledby="guide-title">
           <div class="stack">
             <div class="card">
@@ -1700,6 +1798,8 @@
     const roadmapStatus = document.getElementById("roadmap-status");
     const roadmapMeta = document.getElementById("roadmap-meta");
     const roadmapList = document.getElementById("roadmap-list");
+    const gitStatus = document.getElementById("git-status");
+    const gitList = document.getElementById("git-list");
     const capFilterLoadMode = document.getElementById("cap-filter-load-mode");
     const capFilterApprovalClass = document.getElementById("cap-filter-approval-class");
     const capFilterBoundary = document.getElementById("cap-filter-boundary");
@@ -1786,6 +1886,10 @@
       roadmap: {
         title: "Roadmap",
         subtitle: "Read-only cockpit ladder and rung status."
+      },
+      git: {
+        title: "Git",
+        subtitle: "Read-only repo status with copy-only command scaffolds."
       }
     };
 
@@ -3354,6 +3458,88 @@
       }).join("");
     }
 
+    function shellSingleQuote(value) {
+      return "'" + String(value).replaceAll("'", "'\\''") + "'";
+    }
+
+    function gitCommandScaffold(repo) {
+      return `git -C ${shellSingleQuote(repo.path || "")} add -A && git -C ${shellSingleQuote(repo.path || "")} commit -m "<message>" && git -C ${shellSingleQuote(repo.path || "")} push`;
+    }
+
+    function renderGitStatus(payload) {
+      const repos = Array.isArray(payload?.repos) ? payload.repos : [];
+      gitStatus.textContent = `${repos.length} repo${repos.length === 1 ? "" : "s"} visible. Read-only git data only.`;
+      if (repos.length === 0) {
+        gitList.innerHTML = '<div class="empty">No repository status is available from the daemon.</div>';
+        return;
+      }
+
+      gitList.innerHTML = repos.map((repo) => {
+        const name = typeof repo?.name === "string" ? repo.name : "unknown";
+        const repoPath = typeof repo?.path === "string" ? repo.path : "";
+        const branch = typeof repo?.branch === "string" ? repo.branch : "unknown";
+        const dirtyCount = Number.isFinite(repo?.dirtyCount) ? Number(repo.dirtyCount) : null;
+        const dirtyLabel = dirtyCount == null ? "dirty state unavailable" : `${dirtyCount} dirty file${dirtyCount === 1 ? "" : "s"}`;
+        const dirtyFiles = Array.isArray(repo?.dirtyFiles) ? repo.dirtyFiles.filter((file) => typeof file === "string") : [];
+        const ahead = Number.isFinite(repo?.ahead) ? Number(repo.ahead) : null;
+        const behind = Number.isFinite(repo?.behind) ? Number(repo.behind) : null;
+        const syncLabel = ahead == null || behind == null ? "upstream unavailable" : `${ahead} ahead / ${behind} behind`;
+        const tip = typeof repo?.tip === "string" ? repo.tip : "unknown";
+        const recent = Array.isArray(repo?.recent) ? repo.recent.filter((line) => typeof line === "string") : [];
+        const error = typeof repo?.error === "string" ? repo.error : "";
+        const dirtyList = dirtyFiles.length > 0
+          ? `<ul class="git-file-list">${dirtyFiles.map((file) => `<li>${escapeHtml(file)}</li>`).join("")}</ul>`
+          : `<div class="empty" style="margin-top: 8px;">${dirtyCount === 0 ? "Working tree clean." : "No dirty-file list available."}</div>`;
+        const recentList = recent.length > 0
+          ? `<ul class="git-commit-list">${recent.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`
+          : '<div class="empty" style="margin-top: 8px;">No recent commits available.</div>';
+        const scaffold = dirtyCount != null && dirtyCount > 0 ? gitCommandScaffold({ path: repoPath }) : "";
+        const commandBlock = scaffold
+          ? `
+            <div class="git-command">
+              <code>${escapeHtml(scaffold)}</code>
+              <button type="button" data-git-copy data-git-command="${escapeHtml(scaffold)}">Copy scaffold</button>
+            </div>
+          `
+          : "";
+        const errorBlock = error
+          ? `<div class="empty" style="margin-top: 12px;">Partial status: ${escapeHtml(error)}</div>`
+          : "";
+
+        return `
+          <article class="git-repo-card" data-git-repo="${escapeHtml(name)}">
+            <div class="git-repo-head">
+              <div>
+                <h4>${escapeHtml(name)}</h4>
+                <div class="git-repo-path">${escapeHtml(repoPath)}</div>
+              </div>
+              <div class="badge-row">
+                <span class="badge" data-git-branch>${escapeHtml(branch)}</span>
+                <span class="badge">${escapeHtml(dirtyLabel)}</span>
+                <span class="badge">${escapeHtml(syncLabel)}</span>
+              </div>
+            </div>
+            <div class="field-list">
+              <div class="field">
+                <div class="k">Tip</div>
+                <div class="v"><code>${escapeHtml(tip)}</code></div>
+              </div>
+              <div class="field">
+                <div class="k">Dirty files</div>
+                <div class="v">${dirtyList}</div>
+              </div>
+              <div class="field">
+                <div class="k">Recent commits</div>
+                <div class="v">${recentList}</div>
+              </div>
+            </div>
+            ${commandBlock}
+            ${errorBlock}
+          </article>
+        `;
+      }).join("");
+    }
+
     function syncCapabilityFilters() {
       capabilityState.filters.loadMode = capFilterLoadMode.value;
       capabilityState.filters.approvalClass = capFilterApprovalClass.value;
@@ -3457,6 +3643,19 @@
       void importLocalAttachmentSelection();
     });
 
+    gitList?.addEventListener("click", async (event) => {
+      const target = event.target instanceof Element ? event.target.closest("button[data-git-copy]") : null;
+      if (!(target instanceof HTMLButtonElement)) return;
+      const command = target.getAttribute("data-git-command") || "";
+      if (!command) return;
+      try {
+        await navigator.clipboard.writeText(command);
+        target.textContent = "Copied";
+      } catch (error) {
+        target.textContent = "Copy failed";
+      }
+    });
+
     async function loadResume() {
       try {
         const response = await fetch("/api/v1/workbench/resume");
@@ -3549,6 +3748,24 @@
       }
     }
 
+    async function loadGitStatus() {
+      try {
+        const response = await fetch("/api/v1/git/status");
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        renderGitStatus(await response.json());
+      } catch (error) {
+        gitStatus.textContent = "Unable to load git status from the daemon.";
+        gitList.innerHTML = `
+          <div class="example-card">
+            <strong>Git status load failed</strong>
+            <div style="margin-top: 8px; color: var(--muted); line-height: 1.5;">
+              The workbench shell is up, but the read-only git status route was not reachable.
+            </div>
+          </div>
+        `;
+      }
+    }
+
     async function loadAppPreviews() {
       const status = document.getElementById("app-preview-status");
       const links = document.getElementById("app-preview-links");
@@ -3603,6 +3820,7 @@
       loadChanges();
       loadManifests();
       loadRoadmap();
+      loadGitStatus();
       loadAppPreviews();
     }
 

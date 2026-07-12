@@ -51,6 +51,7 @@ import {
 } from "../src/workbench/appPreview.js";
 import type { WorkbenchChangePipelineConfig } from "../src/workbench/changePipeline.js";
 import { handleWorkbenchChangePipeline } from "../src/workbench/changePipeline.js";
+import { listReadOnlyGitStatus } from "../src/git/readOnlyGit.js";
 
 const PORT = Number(process.env.AI_FORGE_DAEMON_PORT ?? 3000);
 const HOST = process.env.AI_FORGE_DAEMON_HOST ?? "127.0.0.1";
@@ -1173,6 +1174,10 @@ async function start() {
         } catch (error) {
           return jsonResponse(res, 404, { error: "roadmap not found" });
         }
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/v1/git/status") {
+        return jsonResponse(res, 200, { repos: await listReadOnlyGitStatus(DAEMON_DIR) });
       }
 
       if (req.method === "GET" && url.pathname === "/api/v1/session/current") {
