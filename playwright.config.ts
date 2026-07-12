@@ -7,11 +7,25 @@ export default defineConfig({
   use: {
     baseURL,
   },
-  webServer: {
-    command: 'node test/e2e/serve-epk.mjs',
-    url: baseURL,
-    reuseExistingServer: !process.env.CI,
-  },
+  webServer: [
+    {
+      command: 'node test/e2e/serve-epk.mjs',
+      url: baseURL,
+      reuseExistingServer: !process.env.CI,
+    },
+    {
+      command: 'npm run workbench',
+      url: 'http://127.0.0.1:3900/workbench',
+      reuseExistingServer: false,
+      timeout: 120_000,
+      env: {
+        AI_FORGE_APP_PREVIEW: '1',
+        AI_FORGE_SHELL_MOUNT: '1',
+        AI_FORGE_APP_PREVIEW_CONFIG: 'test/e2e/spectra.preview.test.json',
+        AI_FORGE_DAEMON_PORT: '3900',
+      },
+    },
+  ],
   projects: [
     {
       name: 'chromium',
