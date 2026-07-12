@@ -98,7 +98,9 @@ AI_FORGE_APP_PREVIEW=1 npm run workbench
 Spectra then serves each configured app from its own loopback origin: Focus at
 `http://127.0.0.1:3001/` and EPK at `http://127.0.0.1:3002/` by default. This
 keeps root-absolute app URLs such as `/data/epk.json` on the correct preview
-origin. The Workbench Settings view links to every running preview.
+origin. The Workbench Settings view links to every running preview. Cockpit
+mounts are on by default when app previews are running; set
+`AI_FORGE_SHELL_MOUNT=0` to disable mounted app surfaces.
 
 Set `AI_FORGE_APP_PREVIEW_BASE_PORT` to move the Focus port; EPK uses the next
 port. Set `AI_FORGE_APP_PREVIEW_CONFIG` only when the local config lives
