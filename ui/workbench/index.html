@@ -1695,7 +1695,7 @@
       button.addEventListener("click", () => setView(button.dataset.view));
     }
 
-    const allowedShellMountIds = new Set(["epk-publisher", "epk-admin"]);
+    const allowedShellMountIds = new Set(["epk-publisher", "epk-admin", "focus"]);
     const coreViewByKey = {
       "1": "resume",
       "2": "conversations",
@@ -1714,7 +1714,7 @@
         || !allowedShellMountIds.has(mount.id)
         || typeof mount.label !== "string"
         || typeof mount.subtitle !== "string"
-        || typeof mount.shortcut !== "string"
+        || (mount.shortcut != null && typeof mount.shortcut !== "string")
         || typeof mount.url !== "string"
         || viewMeta[mount.id]
       ) {
@@ -1732,14 +1732,18 @@
       button.title = mount.subtitle;
       const label = document.createElement("span");
       label.textContent = mount.label;
-      const shortcut = document.createElement("small");
-      shortcut.textContent = mount.shortcut;
-      button.append(label, shortcut);
+      const shortcutKey = typeof mount.shortcut === "string" ? mount.shortcut.trim().toLowerCase() : "";
+      if (shortcutKey) {
+        const shortcut = document.createElement("small");
+        shortcut.textContent = mount.shortcut;
+        button.append(label, shortcut);
+      } else {
+        button.append(label);
+      }
       wireNavButton(button);
       nav.append(button);
 
-      const shortcutKey = mount.shortcut.toLowerCase();
-      if (!coreViewByKey[shortcutKey]) {
+      if (shortcutKey && !coreViewByKey[shortcutKey]) {
         shellMountViewByKey[shortcutKey] = mount.id;
       }
 
