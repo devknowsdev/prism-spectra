@@ -65,7 +65,7 @@ const APP_PREVIEW_JS_DIR = path.resolve(DAEMON_DIR, "../ui/preview/js");
 const NODE_MODULES_DIR = path.resolve(DAEMON_DIR, "../node_modules");
 const WORKBENCH_WATCH_ENABLED = process.env.AI_FORGE_WORKBENCH_WATCH === "1";
 const APP_PREVIEW_ENABLED = process.env.AI_FORGE_APP_PREVIEW === "1";
-const SHELL_MOUNT_ENABLED = process.env.AI_FORGE_SHELL_MOUNT === "1";
+const SHELL_MOUNT_ENABLED = process.env.AI_FORGE_SHELL_MOUNT !== "0";
 const APP_PREVIEW_BASE_PORT = Number(
   process.env.AI_FORGE_APP_PREVIEW_BASE_PORT ?? PORT + 1,
 );
