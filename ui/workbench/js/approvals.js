@@ -1,3 +1,5 @@
+import "./conversations.js";
+
 const statusElement = document.getElementById("approvals-status");
 const emptyElement = document.getElementById("approvals-empty");
 const listElement = document.getElementById("approvals-list");
