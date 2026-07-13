@@ -311,6 +311,78 @@
       letter-spacing: -0.02em;
     }
 
+    .project-home-intro {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+      max-width: 78ch;
+    }
+
+    .project-home-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .project-home-widget {
+      display: grid;
+      gap: 12px;
+      align-content: start;
+      min-height: 230px;
+    }
+
+    .project-home-widget[data-widget-state="error"],
+    .project-home-widget[data-widget-state="unavailable"],
+    .project-home-widget[data-widget-state="authentication_failure"],
+    .project-home-widget[data-widget-state="transient_failure"],
+    .project-home-widget[data-widget-state="validation_failure"] {
+      border-color: rgba(248, 113, 113, 0.45);
+      background: rgba(248, 113, 113, 0.07);
+    }
+
+    .project-home-widget[data-widget-state="empty"] {
+      border-color: rgba(251, 191, 36, 0.28);
+    }
+
+    .project-home-widget .section-title {
+      margin-bottom: 0;
+    }
+
+    .project-home-widget-body {
+      display: grid;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .project-home-widget-body strong {
+      color: var(--text);
+      font-size: 20px;
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+    }
+
+    .project-home-widget-action {
+      justify-self: start;
+      appearance: none;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--text);
+      padding: 8px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .project-home-widget-action:hover,
+    .project-home-widget-action:focus-visible {
+      outline: none;
+      border-color: rgba(139, 92, 246, 0.45);
+      background: var(--surface-3);
+    }
+
     .meta-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1422,6 +1494,7 @@
       .content { padding: 16px; }
       .meta-grid, .field, .setting { grid-template-columns: 1fr; }
       .split-pane { grid-template-columns: 1fr; }
+      .project-home-grid { grid-template-columns: 1fr; }
       .filter-bar { grid-template-columns: 1fr; }
       .filter-toggle { padding-top: 0; }
       .timeline-card .field { grid-template-columns: 1fr; }
@@ -1438,8 +1511,11 @@
       </div>
 
       <nav class="nav" aria-label="Primary">
-        <button type="button" data-view="resume" aria-current="page" title="Where you are right now: workspace snapshot, recent checkpoints, conversations and attachments, plus the next smallest safe action.">
-          <span>Resume</span><small>1</small>
+        <button type="button" data-view="project-home" aria-current="page" title="Project overview: current phase, decisions needed, and AI availability.">
+          <span>Project Home</span>
+        </button>
+        <button type="button" data-view="resume" title="Where you are right now: workspace snapshot, recent checkpoints, conversations and attachments, plus the next smallest safe action.">
+          <span>Session History</span><small>1</small>
         </button>
         <button type="button" data-view="conversations" title="Project memory threads — each message and the context attached to it. Read-only.">
           <span>Conversations</span><small>2</small>
@@ -1485,8 +1561,8 @@
     <main class="main">
       <header class="topbar">
         <div>
-          <h2 id="title">Resume</h2>
-          <p id="subtitle">Where you are, what is safe, and the next smallest action.</p>
+          <h2 id="title">Project Home</h2>
+          <p id="subtitle">Overview of where the project stands and what needs attention.</p>
         </div>
         <div class="status-pills" aria-label="Workbench summary">
           <span class="pill" title="Reads daemon state plus explicit, audited local-attachment writes (import, rename, tags). No repo writes, no file delete/move, no remote providers; risky actions stay approvals-gated.">Local-first shell</span>
@@ -1496,11 +1572,57 @@
       </header>
 
       <div class="content">
-        <section class="view active" data-section="resume" aria-labelledby="resume-title">
+        <section class="view active" data-section="project-home" aria-labelledby="project-home-title">
           <div class="stack">
             <div class="card">
               <div class="section-title">
-                <h3 id="resume-title">Resume</h3>
+                <h3 id="project-home-title">Project Home</h3>
+                <span>Read-only overview</span>
+              </div>
+              <div class="project-home-intro">
+                Project Home gives an overview of where the project stands and what needs attention. Each widget owns one read-only slice, loads independently, and links to the existing detail view for deeper inspection.
+              </div>
+            </div>
+
+            <div class="project-home-grid" id="project-home-widgets" aria-live="polite">
+              <article class="card project-home-widget" data-project-home-widget="current-phase" data-widget-state="loading">
+                <div class="section-title">
+                  <h3 id="project-home-current-phase-title">Current phase</h3>
+                  <span data-project-home-widget-status>Loading...</span>
+                </div>
+                <div class="project-home-widget-body" data-project-home-widget-body>
+                  <div class="empty">Loading roadmap snapshot...</div>
+                </div>
+              </article>
+
+              <article class="card project-home-widget" data-project-home-widget="decisions-needed" data-widget-state="loading">
+                <div class="section-title">
+                  <h3 id="project-home-decisions-needed-title">Decisions needed</h3>
+                  <span data-project-home-widget-status>Loading...</span>
+                </div>
+                <div class="project-home-widget-body" data-project-home-widget-body>
+                  <div class="empty">Loading approval snapshot...</div>
+                </div>
+              </article>
+
+              <article class="card project-home-widget" data-project-home-widget="ai-availability" data-widget-state="loading">
+                <div class="section-title">
+                  <h3 id="project-home-ai-availability-title">AI availability</h3>
+                  <span data-project-home-widget-status>Loading...</span>
+                </div>
+                <div class="project-home-widget-body" data-project-home-widget-body>
+                  <div class="empty">Loading AI provider status...</div>
+                </div>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" data-section="resume" aria-labelledby="resume-title">
+          <div class="stack">
+            <div class="card">
+              <div class="section-title">
+                <h3 id="resume-title">Session History</h3>
                 <span id="resume-status">Loading read-only workspace snapshot…</span>
               </div>
               <div class="meta-grid" id="resume-meta"></div>
@@ -1989,7 +2111,7 @@
                 rule: <strong>review first</strong> — you see a preview and approve before anything runs.
               </p>
               <div class="field-list">
-                <div class="field"><div class="k">Resume</div><div class="v">Where you are now: workspace snapshot, recent checkpoints, conversations, and attachments, plus the next smallest safe action.</div></div>
+                <div class="field"><div class="k">Session History</div><div class="v">Where you are now: workspace snapshot, recent checkpoints, conversations, and attachments, plus the next smallest safe action.</div></div>
                 <div class="field"><div class="k">Conversations</div><div class="v">Project memory threads — each message and the context attached to it. Read-only.</div></div>
                 <div class="field"><div class="k">Attachments</div><div class="v">Local project artifacts with metadata and an audit trail. Adding a file is explicit: preview, then Import. No delete, move, or remote providers.</div></div>
                 <div class="field"><div class="k">Approvals</div><div class="v">Actions waiting on your yes/no. Each shows its risk tier, affected files, and a preview before it can run.</div></div>
@@ -2165,8 +2287,12 @@
     };
 
     const viewMeta = {
+      "project-home": {
+        title: "Project Home",
+        subtitle: "Overview of where the project stands and what needs attention."
+      },
       resume: {
-        title: "Resume",
+        title: "Session History",
         subtitle: "Where you are, what is safe, and the next smallest action."
       },
       conversations: {
@@ -3262,7 +3388,7 @@
         renderKeyValueCard("Changed items", String(resume.changedItemsCount)),
       ].join("");
 
-      resumeNextSafeAction.innerHTML = `<span>${escapeHtml(resume.nextSafeAction || "Stay in Resume and wait for daemon data or manifest-driven next steps.")}</span>`;
+      resumeNextSafeAction.innerHTML = `<span>${escapeHtml(resume.nextSafeAction || "Stay in Session History and wait for daemon data or manifest-driven next steps.")}</span>`;
 
       if (resume.recentCheckpoints.length === 0) {
         renderEmptyCard(resumeCheckpoints, "No checkpoints have been recorded yet.");
@@ -3463,7 +3589,78 @@
       `).join("");
     }
 
+    const loadedViews = new Set();
+    const loadingViews = new Set();
+    let projectHomeModulePromise = null;
+    let approvalsModulePromise = null;
+
+    async function ensureProjectHome() {
+      try {
+        if (!projectHomeModulePromise) {
+          projectHomeModulePromise = import("/workbench-shims/js/project-home.js");
+        }
+        const module = await projectHomeModulePromise;
+        module.initProjectHome({ navigate: setView });
+      } catch (error) {
+        projectHomeModulePromise = null;
+        throw error;
+      }
+    }
+
+    async function ensureApprovalsModule() {
+      try {
+        if (!approvalsModulePromise) {
+          approvalsModulePromise = import("/workbench-shims/js/approvals.js");
+        }
+        await approvalsModulePromise;
+      } catch (error) {
+        approvalsModulePromise = null;
+        throw error;
+      }
+    }
+
+    function loadViewData(viewId) {
+      if (loadedViews.has(viewId) || loadingViews.has(viewId)) return;
+      const loaders = {
+        "project-home": ensureProjectHome,
+        resume: loadResume,
+        conversations: loadConversations,
+        attachments: async () => {
+          await Promise.all([loadAttachments(), loadConversations()]);
+        },
+        approvals: async () => {
+          try {
+            await ensureApprovalsModule();
+          } catch (error) {
+            await loadApprovals();
+            throw error;
+          }
+        },
+        changes: loadChanges,
+        capabilities: loadManifests,
+        settings: loadAppPreviews,
+        roadmap: loadRoadmap,
+        git: loadGitStatus,
+        ai: loadAiStatus,
+      };
+      const loader = loaders[viewId];
+      if (typeof loader !== "function") return;
+      loadingViews.add(viewId);
+      void Promise.resolve()
+        .then(loader)
+        .then(() => {
+          loadedViews.add(viewId);
+        })
+        .catch(() => {
+          // Failed view loaders stay retryable when the view is opened again.
+        })
+        .finally(() => {
+          loadingViews.delete(viewId);
+        });
+    }
+
     function setView(viewId) {
+      if (!viewMeta[viewId]) viewId = "project-home";
       for (const section of views) {
         section.classList.toggle("active", section.dataset.section === viewId);
       }
@@ -3478,6 +3675,7 @@
       subtitle.textContent = viewMeta[viewId].subtitle;
       location.hash = viewId;
       renderSurfaceObservationPanels();
+      loadViewData(viewId);
     }
 
     navButtons.forEach(wireNavButton);
@@ -4549,28 +4747,19 @@
       if (window.__SPECTRA_SHELL_MOUNT === true) {
         await loadShellMounts();
       }
-      const initialView = (location.hash || "#resume").slice(1);
-      const validView = viewMeta[initialView] ? initialView : "resume";
+      const initialView = (location.hash || "#project-home").slice(1);
+      const validView = viewMeta[initialView] ? initialView : "project-home";
       setView(validView);
       window.__spectraWorkbenchLive = {
         loadResume,
         loadApprovals,
         loadChanges,
       };
-      loadResume();
-      loadConversations();
-      loadAttachments();
-      loadChanges();
-      loadManifests();
-      loadRoadmap();
-      loadGitStatus();
-      loadAiStatus();
-      loadAppPreviews();
+      window.__spectraWorkbenchNavigate = setView;
     }
 
     initWorkbench();
   </script>
-  <script type="module" src="/workbench-shims/js/approvals.js"></script>
   <script src="/workbench-shims/js/live-events.js"></script>
   <script type="module" src="/workbench-shims/js/livereload.js"></script>
 </body>
