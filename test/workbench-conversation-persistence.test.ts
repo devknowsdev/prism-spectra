@@ -1,7 +1,7 @@
 process.env.AI_FORGE_MOCK_EXECUTORS = "1";
 
 import assert from "node:assert/strict";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,7 +14,7 @@ const TSX_LOADER = path.join(REPO_ROOT, "node_modules", "tsx", "dist", "loader.m
 
 class TestSkip extends Error {}
 
-async function waitForWorkbench(port: number, daemon: ChildProcessWithoutNullStreams, output: () => string): Promise<void> {
+async function waitForWorkbench(port: number, daemon: { exitCode: number | null }, output: () => string): Promise<void> {
   const deadline = Date.now() + 12_000;
   while (Date.now() < deadline) {
     if (daemon.exitCode != null) throw new Error(`daemon exited before startup:\n${output()}`);
