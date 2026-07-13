@@ -3590,27 +3590,37 @@
     }
 
     const loadedViews = new Set();
+    const loadingViews = new Set();
     let projectHomeModulePromise = null;
     let approvalsModulePromise = null;
 
     async function ensureProjectHome() {
-      if (!projectHomeModulePromise) {
-        projectHomeModulePromise = import("/workbench-shims/js/project-home.js");
+      try {
+        if (!projectHomeModulePromise) {
+          projectHomeModulePromise = import("/workbench-shims/js/project-home.js");
+        }
+        const module = await projectHomeModulePromise;
+        module.initProjectHome({ navigate: setView });
+      } catch (error) {
+        projectHomeModulePromise = null;
+        throw error;
       }
-      const module = await projectHomeModulePromise;
-      module.initProjectHome({ navigate: setView });
     }
 
     async function ensureApprovalsModule() {
-      if (!approvalsModulePromise) {
-        approvalsModulePromise = import("/workbench-shims/js/approvals.js");
+      try {
+        if (!approvalsModulePromise) {
+          approvalsModulePromise = import("/workbench-shims/js/approvals.js");
+        }
+        await approvalsModulePromise;
+      } catch (error) {
+        approvalsModulePromise = null;
+        throw error;
       }
-      await approvalsModulePromise;
     }
 
     function loadViewData(viewId) {
-      if (loadedViews.has(viewId)) return;
-      loadedViews.add(viewId);
+      if (loadedViews.has(viewId) || loadingViews.has(viewId)) return;
       const loaders = {
         "project-home": ensureProjectHome,
         resume: loadResume,
@@ -3621,8 +3631,9 @@
         approvals: async () => {
           try {
             await ensureApprovalsModule();
-          } catch {
+          } catch (error) {
             await loadApprovals();
+            throw error;
           }
         },
         changes: loadChanges,
@@ -3634,9 +3645,18 @@
       };
       const loader = loaders[viewId];
       if (typeof loader !== "function") return;
-      void loader().catch(() => {
-        // Individual loaders already render their own degraded state.
-      });
+      loadingViews.add(viewId);
+      void Promise.resolve()
+        .then(loader)
+        .then(() => {
+          loadedViews.add(viewId);
+        })
+        .catch(() => {
+          // Failed view loaders stay retryable when the view is opened again.
+        })
+        .finally(() => {
+          loadingViews.delete(viewId);
+        });
     }
 
     function setView(viewId) {

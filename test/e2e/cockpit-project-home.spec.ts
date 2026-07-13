@@ -10,6 +10,14 @@ const blockedInitialEndpoints = [
   '/api/v1/preview/apps',
 ];
 
+const expectedWidgetEndpoints = [
+  '/api/v1/roadmap',
+  '/api/v1/workbench/approvals',
+  '/api/v1/ai/status',
+];
+
+const terminalWidgetState = /^(success|empty|unavailable|authentication_failure|validation_failure|transient_failure|error)$/;
+
 async function waitForProjectHome(page: Page) {
   await expect(page.locator('section[data-section="project-home"]')).toHaveClass(/(?:^|\s)active(?:\s|$)/);
   await expect(page.locator('[data-project-home-widget]')).toHaveCount(3);
@@ -32,6 +40,14 @@ test('Project Home is the default, renders widgets, stays lazy, and links to det
   await expect(page.locator('[data-project-home-widget="current-phase"]')).toContainText('Current phase');
   await expect(page.locator('[data-project-home-widget="decisions-needed"]')).toContainText('Decisions needed');
   await expect(page.locator('[data-project-home-widget="ai-availability"]')).toContainText('AI availability');
+
+  for (const endpoint of expectedWidgetEndpoints) {
+    expect(requestedPaths).toContain(endpoint);
+  }
+
+  await expect(page.locator('[data-project-home-widget="current-phase"]')).toHaveAttribute('data-widget-state', terminalWidgetState);
+  await expect(page.locator('[data-project-home-widget="decisions-needed"]')).toHaveAttribute('data-widget-state', terminalWidgetState);
+  await expect(page.locator('[data-project-home-widget="ai-availability"]')).toHaveAttribute('data-widget-state', terminalWidgetState);
 
   for (const endpoint of blockedInitialEndpoints) {
     expect(requestedPaths).not.toContain(endpoint);
