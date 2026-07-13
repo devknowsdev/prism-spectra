@@ -2,7 +2,7 @@
   "id": "workbench.chat",
   "kind": "tool-action",
   "displayName": "Workbench Routed Chat",
-  "description": "Read-only local-only Workbench chat route for cockpit prompts without mutating repo, app, or external state.",
+  "description": "Read-only local-only Workbench AI route for cockpit prompts. One-shot requests remain transient; persistent Workbench conversations use a separate deterministic local transcript-store step after a successful response.",
   "ownerRepo": "prism-spectra",
   "status": "enabled",
   "executionMode": "read-only",
@@ -24,11 +24,17 @@
     "maxOutputTokens",
     "record",
     "input.prompt",
+    "input.surfaceObservation",
     "context.feature",
     "context.appSurface"
   ],
   "allowedOutputs": [
     "response",
+    "structuredResponse",
+    "provider",
+    "model",
+    "dataBoundary",
+    "usage",
     "provenance"
   ],
   "allowedPaths": [],
@@ -56,6 +62,7 @@
     "preferredMode",
     "graphId",
     "nodeId",
+    "recorded",
     "chainTried",
     "capabilityManifest"
   ],
@@ -67,16 +74,17 @@
     "tests": [
       "test:e2e",
       "test:ai-request",
+      "test:workbench-conversations",
       "capabilities:check"
     ]
   },
-  "rollback": "Revert the manifest and console endpoint slice; Workbench returns to read-only status views.",
-  "failureMode": "If invalid, the loader omits this entry and the daemon records capabilityManifest.status=absent for this intent.",
+  "rollback": "Revert the Workbench conversation controller and this manifest amendment; the AI route returns to one-shot read-only Console behaviour while previously stored local transcript rows remain readable.",
+  "failureMode": "If invalid, the loader omits this entry and the daemon records capabilityManifest.status=absent for this intent. Persistent mode reports failure unless the deterministic local transcript write completes.",
   "disabledByDefault": false,
-  "verifiedOn": "2026-07-12",
+  "verifiedOn": "2026-07-13",
   "action": {
     "name": "workbench-chat",
-    "apiShape": "POST /api/v1/ai/request with sourceApp=prism-spectra and intent=workbench-chat",
+    "apiShape": "POST /api/v1/ai/request with sourceApp=prism-spectra and intent=workbench-chat; persistent UI mode sets record=false and stores the completed visible turn separately through the local conversation store",
     "modelMayInfluenceParameters": false,
     "terminalExecution": false,
     "fileWritesPossible": false,
