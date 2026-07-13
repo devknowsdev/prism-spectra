@@ -28,6 +28,9 @@ export {
 export type { EmbeddingProvider, OllamaEmbeddingProviderOptions } from "./embeddings/ollamaEmbeddings.js";
 export {
   AI_REQUEST_RISK_CLASSES,
+  SURFACE_OBSERVATION_LIMITS,
+  SURFACE_OBSERVATION_MAX_BYTES,
+  SURFACE_OBSERVATION_SCHEMA_VERSION,
   buildAiRequestIntent,
   normalizeAiRequestBody,
   parseStructuredResponse,

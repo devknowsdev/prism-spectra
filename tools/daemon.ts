@@ -42,10 +42,11 @@ import {
 } from "../src/workbench/liveReload.js";
 import {
   createAppPreviews,
-  injectAppPreviewLiveReload,
+  injectAppPreviewScripts,
   loadWorkbenchChangePipelineConfig,
   loadAppPreviewChangePipelineConfigs,
   loadAppPreviewDirectories,
+  normalizeAppPreviewWorkbenchOrigin,
   resolveAppPreviewFile,
   type AppPreview,
   type AppPreviewName,
@@ -142,6 +143,14 @@ function scriptJson(value: string): string {
 function isLoopbackRequest(req: http.IncomingMessage): boolean {
   const address = req.socket.remoteAddress;
   return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
+}
+
+function workbenchHostForOrigin(host: string): string {
+  return host === "::1" ? "[::1]" : host;
+}
+
+function appPreviewWorkbenchOrigin(): string {
+  return normalizeAppPreviewWorkbenchOrigin(`http://${workbenchHostForOrigin(HOST)}:${PORT}`);
 }
 
 async function readBody(req: http.IncomingMessage): Promise<any> {
@@ -771,8 +780,12 @@ async function sendWorkbenchShimFile(res: http.ServerResponse, requestPath: stri
   }
 }
 
-async function sendAppPreviewClient(res: http.ServerResponse) {
-  const clientPath = path.join(APP_PREVIEW_JS_DIR, "livereload.js");
+async function sendAppPreviewClient(res: http.ServerResponse, clientName: string) {
+  const allowedClients = new Set(["livereload.js", "surface-observer.js"]);
+  if (!allowedClients.has(clientName)) {
+    return jsonResponse(res, 404, { error: "not found" });
+  }
+  const clientPath = path.join(APP_PREVIEW_JS_DIR, clientName);
   try {
     const content = await fs.promises.readFile(clientPath);
     res.writeHead(200, {
@@ -790,6 +803,7 @@ async function sendAppPreviewFile(
   res: http.ServerResponse,
   appDir: string,
   requestRelativePath: string,
+  workbenchOrigin: string,
 ) {
   const filePath = await resolveAppPreviewFile(appDir, requestRelativePath);
   if (!filePath) return jsonResponse(res, 404, { error: "not found" });
@@ -797,7 +811,7 @@ async function sendAppPreviewFile(
   try {
     if (path.extname(filePath).toLowerCase() === ".html") {
       const source = await fs.promises.readFile(filePath, "utf-8");
-      return sendHtml(res, injectAppPreviewLiveReload(source));
+      return sendHtml(res, injectAppPreviewScripts(source, { workbenchOrigin }));
     }
 
     const content = await fs.promises.readFile(filePath);
@@ -872,14 +886,16 @@ async function startAppPreviewServers(
   }
 
   const running = new Map<AppPreviewName, RunningAppPreview>();
+  const workbenchOrigin = appPreviewWorkbenchOrigin();
   try {
     for (const [app, preview] of previews) {
       const port = appPreviewPort(app);
       const previewServer = http.createServer(async (req, res) => {
         try {
           const url = new URL(req.url ?? "", `http://${req.headers.host}`);
-          if (req.method === "GET" && url.pathname === "/preview/js/livereload.js") {
-            return sendAppPreviewClient(res);
+          const previewClientMatch = url.pathname.match(/^\/preview\/js\/([^/]+\.js)$/);
+          if (req.method === "GET" && previewClientMatch) {
+            return sendAppPreviewClient(res, previewClientMatch[1]);
           }
           if (url.pathname === "/api/v1/preview/live") {
             if (req.method === "HEAD") {
@@ -902,7 +918,7 @@ async function startAppPreviewServers(
             }
           }
           if (req.method === "GET") {
-            return sendAppPreviewFile(res, preview.directory, url.pathname);
+            return sendAppPreviewFile(res, preview.directory, url.pathname, workbenchOrigin);
           }
           return jsonResponse(res, 404, { error: "not found" });
         } catch (error) {

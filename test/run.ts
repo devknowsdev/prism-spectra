@@ -91,9 +91,13 @@ import {
 import {
   APP_PREVIEW_IGNORED_DIRECTORIES,
   APP_PREVIEW_LIVERELOAD_TAG,
+  APP_PREVIEW_SURFACE_OBSERVER_CONFIG_PREFIX,
+  APP_PREVIEW_SURFACE_OBSERVER_TAG,
   createAppPreviewWatcher,
   createAppPreviews,
   injectAppPreviewLiveReload,
+  injectAppPreviewScripts,
+  normalizeAppPreviewWorkbenchOrigin,
   loadAppPreviewChangePipelineConfigs,
   loadAppPreviewDirectories,
   loadWorkbenchChangePipelineConfig,
@@ -3601,9 +3605,20 @@ async function main() {
     assert.equal((await resolveAppPreviewFile(focusDir, "")), focusHtmlPath);
     assert.equal(await resolveAppPreviewFile(focusDir, "../epk-public/index.html"), null);
 
-    const servedHtml = injectAppPreviewLiveReload(originalHtml);
+    const servedHtml = injectAppPreviewScripts(originalHtml, { workbenchOrigin: "http://127.0.0.1:3900" });
     assert.equal(servedHtml.split(APP_PREVIEW_LIVERELOAD_TAG).length - 1, 1);
+    assert.equal(servedHtml.split(APP_PREVIEW_SURFACE_OBSERVER_CONFIG_PREFIX).length - 1, 1);
+    assert.equal(servedHtml.split(APP_PREVIEW_SURFACE_OBSERVER_TAG).length - 1, 1);
     assert.ok(servedHtml.indexOf(APP_PREVIEW_LIVERELOAD_TAG) < servedHtml.indexOf("</body>"));
+    assert.ok(servedHtml.indexOf(APP_PREVIEW_SURFACE_OBSERVER_CONFIG_PREFIX) < servedHtml.indexOf(APP_PREVIEW_SURFACE_OBSERVER_TAG));
+    assert.ok(servedHtml.indexOf(APP_PREVIEW_SURFACE_OBSERVER_TAG) < servedHtml.indexOf("</body>"));
+    assert.equal(injectAppPreviewScripts(servedHtml, { workbenchOrigin: "http://127.0.0.1:3900" }), servedHtml);
+    assert.equal(injectAppPreviewLiveReload(originalHtml).split(APP_PREVIEW_LIVERELOAD_TAG).length - 1, 1);
+    assert.equal(normalizeAppPreviewWorkbenchOrigin("http://127.0.0.1:3900"), "http://127.0.0.1:3900");
+    assert.throws(() => normalizeAppPreviewWorkbenchOrigin("ftp://localhost:3900"), /http or https/);
+    assert.throws(() => normalizeAppPreviewWorkbenchOrigin("http://user:secret@localhost:3900"), /credentials/);
+    assert.throws(() => normalizeAppPreviewWorkbenchOrigin("http://localhost:3900/path"), /canonical pure origin/);
+    assert.throws(() => normalizeAppPreviewWorkbenchOrigin("http://example.com:3900"), /loopback/);
     assert.equal(fs.readFileSync(focusHtmlPath, "utf-8"), originalHtml);
 
     const hub = new WorkbenchReloadHub();
@@ -3929,7 +3944,11 @@ async function main() {
       assert.equal(previewResponse.ok, true);
       const previewHtml = await previewResponse.text();
       assert.equal(previewHtml.split(APP_PREVIEW_LIVERELOAD_TAG).length - 1, 1);
+      assert.equal(previewHtml.split(APP_PREVIEW_SURFACE_OBSERVER_CONFIG_PREFIX).length - 1, 1);
+      assert.equal(previewHtml.split(APP_PREVIEW_SURFACE_OBSERVER_TAG).length - 1, 1);
       assert.ok(previewHtml.indexOf(APP_PREVIEW_LIVERELOAD_TAG) < previewHtml.indexOf("</body>"));
+      assert.ok(previewHtml.indexOf(APP_PREVIEW_SURFACE_OBSERVER_CONFIG_PREFIX) < previewHtml.indexOf(APP_PREVIEW_SURFACE_OBSERVER_TAG));
+      assert.ok(previewHtml.indexOf(APP_PREVIEW_SURFACE_OBSERVER_TAG) < previewHtml.indexOf("</body>"));
       assert.equal(fs.readFileSync(focusHtmlPath, "utf-8"), originalHtml);
 
       const epkHtmlResponse = await fetch(`${epkOrigin}/`);
@@ -3945,6 +3964,12 @@ async function main() {
       const clientResponse = await fetch(`${focusOrigin}/preview/js/livereload.js`);
       assert.equal(clientResponse.ok, true);
       assert.match(await clientResponse.text(), /api\/v1\/preview/);
+      const observerResponse = await fetch(`${focusOrigin}/preview/js/surface-observer.js`);
+      assert.equal(observerResponse.ok, true);
+      const observerSource = await observerResponse.text();
+      assert.match(observerSource, /spectra\.surface\.inspect\.request/);
+      const blockedPreviewClient = await fetch(`${focusOrigin}/preview/js/../surface-observer.js`);
+      assert.equal(blockedPreviewClient.status, 404);
 
       const liveHead = await fetch(`${focusOrigin}/api/v1/preview/live`, {
         method: "HEAD",
@@ -4104,6 +4129,8 @@ async function main() {
     assert.equal(disabledEpkPreviewResponse.status, 404);
     const disabledPreviewClientResponse = await fetch(`http://127.0.0.1:${port}/preview/js/livereload.js`);
     assert.equal(disabledPreviewClientResponse.status, 404);
+    const disabledObserverClientResponse = await fetch(`http://127.0.0.1:${port}/preview/js/surface-observer.js`);
+    assert.equal(disabledObserverClientResponse.status, 404);
     const disabledFocusLiveResponse = await fetch(`http://127.0.0.1:${port}/api/v1/preview/focus/live`, {
       headers: { "x-local-token": token },
     });

@@ -111,6 +111,8 @@
       flex-direction: column;
       padding: 18px 14px;
       gap: 18px;
+      min-height: 0;
+      overflow: hidden;
     }
 
     .brand {
@@ -119,6 +121,7 @@
       gap: 4px;
       padding-bottom: 8px;
       border-bottom: 1px solid var(--border);
+      flex: 0 0 auto;
     }
 
     .brand h1 {
@@ -138,6 +141,12 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-gutter: stable;
+      padding-right: 4px;
     }
 
     .nav button {
@@ -188,6 +197,7 @@
       color: var(--muted);
       font-size: 12px;
       line-height: 1.45;
+      flex: 0 0 auto;
     }
 
     .rail-footer strong {
@@ -264,15 +274,19 @@
     .shell-mount-view {
       max-width: none;
       height: calc(100vh - 118px);
+      gap: 12px;
+      min-height: 0;
     }
 
     .shell-mount-view.active {
-      display: block;
+      display: flex;
+      flex-direction: column;
     }
 
     .shell-mount-frame {
       width: 100%;
-      height: 100%;
+      min-height: min(360px, 50vh);
+      flex: 1 1 auto;
       border: 1px solid var(--border);
       border-radius: 16px;
       background: var(--canvas);
@@ -754,6 +768,89 @@
     .console-send:disabled {
       cursor: not-allowed;
       opacity: 0.55;
+    }
+
+    .surface-observation-panel {
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: rgba(17, 22, 29, 0.92);
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .surface-observation-panel[data-state="failed"] {
+      border-color: rgba(248, 113, 113, 0.45);
+      background: rgba(248, 113, 113, 0.08);
+    }
+
+    .surface-observation-panel[data-state="attached"],
+    .surface-observation-panel[data-state="ready"] {
+      border-color: rgba(74, 222, 128, 0.28);
+    }
+
+    .shell-mount-view .surface-observation-panel {
+      flex: 0 0 auto;
+    }
+
+    .surface-observation-head,
+    .surface-observation-actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .surface-observation-head strong {
+      font-size: 13px;
+    }
+
+    .surface-observation-head span,
+    .surface-observation-summary {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .surface-observation-actions button {
+      appearance: none;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--text);
+      padding: 7px 11px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .surface-observation-actions button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    .surface-observation-preview {
+      border-top: 1px solid rgba(39, 50, 65, 0.8);
+      padding-top: 10px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .surface-observation-preview pre {
+      margin: 0;
+      max-height: 220px;
+      overflow: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .shell-mount-view .surface-observation-preview pre {
+      max-height: min(180px, 24vh);
     }
 
     .console-output {
@@ -1868,6 +1965,13 @@
                 <div class="console-route" id="console-route"></div>
               </div>
             </div>
+            <div class="card">
+              <div class="section-title">
+                <h3>Surface Evidence</h3>
+                <span>Explicit inspect, review, then attach</span>
+              </div>
+              <div class="surface-observation-panel" id="console-surface-observation-panel" data-state="empty" aria-live="polite"></div>
+            </div>
           </div>
         </section>
 
@@ -2001,6 +2105,7 @@
     const consoleStatus = document.getElementById("console-status");
     const consoleResponse = document.getElementById("console-response");
     const consoleRoute = document.getElementById("console-route");
+    const consoleSurfaceObservationPanel = document.getElementById("console-surface-observation-panel");
     const capFilterLoadMode = document.getElementById("cap-filter-load-mode");
     const capFilterApprovalClass = document.getElementById("cap-filter-approval-class");
     const capFilterBoundary = document.getElementById("cap-filter-boundary");
@@ -2049,6 +2154,14 @@
       loadToken: 0,
       modulePromise: null,
       wavesurfer: null,
+    };
+    const surfaceObservationState = {
+      mounts: new Map(),
+      latest: null,
+      attached: null,
+      pending: null,
+      status: "empty",
+      message: "No observation captured.",
     };
 
     const viewMeta = {
@@ -2136,6 +2249,12 @@
       ) {
         return;
       }
+      let mountUrl;
+      try {
+        mountUrl = new URL(mount.url, window.location.href);
+      } catch {
+        return;
+      }
 
       viewMeta[mount.id] = {
         title: mount.label,
@@ -2167,16 +2286,30 @@
       section.className = "view shell-mount-view";
       section.dataset.section = mount.id;
       section.setAttribute("aria-label", mount.label);
+      const observationPanel = document.createElement("div");
+      observationPanel.className = "surface-observation-panel";
+      observationPanel.dataset.surfaceObservationPanel = mount.id;
+      observationPanel.dataset.state = "empty";
+      observationPanel.setAttribute("aria-live", "polite");
       const iframe = document.createElement("iframe");
       iframe.className = "shell-mount-frame";
       iframe.title = mount.label;
       iframe.src = mount.url;
       iframe.loading = "lazy";
       iframe.referrerPolicy = "no-referrer";
-      section.append(iframe);
+      section.append(observationPanel, iframe);
       content.append(section);
+      surfaceObservationState.mounts.set(mount.id, {
+        id: mount.id,
+        label: mount.label,
+        url: mount.url,
+        origin: mountUrl.origin,
+        path: mountUrl.pathname,
+        iframe,
+      });
 
       refreshViewCollections();
+      renderSurfaceObservationPanels();
     }
 
     async function loadShellMounts() {
@@ -3344,6 +3477,7 @@
       title.textContent = viewMeta[viewId].title;
       subtitle.textContent = viewMeta[viewId].subtitle;
       location.hash = viewId;
+      renderSurfaceObservationPanels();
     }
 
     navButtons.forEach(wireNavButton);
@@ -3365,6 +3499,225 @@
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#39;");
     }
+
+    function packetBytes(value) {
+      return new TextEncoder().encode(JSON.stringify(value || {})).length;
+    }
+
+    function activeMountId() {
+      const active = document.querySelector(".shell-mount-view.active");
+      const id = active?.dataset?.section || "";
+      return allowedShellMountIds.has(id) ? id : "";
+    }
+
+    function shortObservationSummary(packet) {
+      if (!packet) return "No observation captured.";
+      const counts = [
+        `${Array.isArray(packet.headings) ? packet.headings.length : 0} headings`,
+        `${Array.isArray(packet.buttons) ? packet.buttons.length : 0} buttons`,
+        `${Array.isArray(packet.links) ? packet.links.length : 0} links`,
+        `${Array.isArray(packet.formLabels) ? packet.formLabels.length : 0} form labels`,
+      ].join(" · ");
+      return `${packet.mountId || "unknown surface"} · ${packet.documentTitle || "untitled"} · ${counts}`;
+    }
+
+    function renderObservationPreview(packet) {
+      if (!packet) return "";
+      const sample = {
+        mountId: packet.mountId,
+        appId: packet.appId,
+        origin: packet.origin,
+        path: packet.path,
+        documentTitle: packet.documentTitle,
+        capturedAt: packet.capturedAt,
+        packetBytes: packetBytes(packet),
+        headings: Array.isArray(packet.headings) ? packet.headings.slice(0, 5) : [],
+        buttons: Array.isArray(packet.buttons) ? packet.buttons.slice(0, 8) : [],
+        links: Array.isArray(packet.links) ? packet.links.slice(0, 5) : [],
+        formLabels: Array.isArray(packet.formLabels) ? packet.formLabels.slice(0, 8) : [],
+        statusText: Array.isArray(packet.statusText) ? packet.statusText.slice(0, 5) : [],
+        errorText: Array.isArray(packet.errorText) ? packet.errorText.slice(0, 5) : [],
+        visibleBodyText: typeof packet.visibleBodyText === "string" ? packet.visibleBodyText.slice(0, 1200) : "",
+        truncation: packet.truncation || {},
+        redactions: packet.redactions || {},
+      };
+      return `
+        <div class="surface-observation-preview" data-surface-observation-preview>
+          <div class="surface-observation-summary">
+            ${escapeHtml(packet.origin || "unknown origin")}${escapeHtml(packet.path || "")}
+            · ${escapeHtml(packet.capturedAt || "capture time unknown")}
+            · ${escapeHtml(formatBytes(packetBytes(packet)))}
+          </div>
+          <pre>${escapeHtml(JSON.stringify(sample, null, 2))}</pre>
+        </div>
+      `;
+    }
+
+    function renderSurfaceObservationPanels() {
+      const panels = [
+        ...Array.from(document.querySelectorAll("[data-surface-observation-panel]")),
+        ...(consoleSurfaceObservationPanel ? [consoleSurfaceObservationPanel] : []),
+      ];
+      const latest = surfaceObservationState.latest;
+      const attached = surfaceObservationState.attached;
+      const state = surfaceObservationState.status;
+      const activeId = activeMountId();
+      for (const panel of panels) {
+        const panelMountId = panel.dataset.surfaceObservationPanel || "";
+        const mountId = panelMountId || activeId;
+        const mount = mountId ? surfaceObservationState.mounts.get(mountId) : null;
+        const displayPacket = panelMountId && latest?.mountId !== panelMountId ? null : latest;
+        const displaySource = displayPacket?.mountId ? surfaceObservationState.mounts.get(displayPacket.mountId) : null;
+        const hasDisplayPacket = Boolean(displayPacket);
+        const sourceLabel = displayPacket
+          ? displaySource?.label || displayPacket.mountId || "unknown surface"
+          : mount?.label || "none";
+        const canInspect = Boolean(mount);
+        const canAttach = state === "ready" && Boolean(displayPacket) && attached !== displayPacket;
+        const canDiscard = Boolean(displayPacket) || (!panelMountId && Boolean(attached));
+        panel.dataset.state = state === "failed" ? "failed" : attached && displayPacket === attached ? "attached" : hasDisplayPacket ? "ready" : "empty";
+        panel.innerHTML = `
+          <div class="surface-observation-head">
+            <strong>${escapeHtml(panelMountId ? "Surface evidence" : "Console evidence attachment")}</strong>
+            <span>${escapeHtml(surfaceObservationState.message)}</span>
+          </div>
+          <div class="surface-observation-summary">
+            ${panelMountId ? `Selected surface: ${escapeHtml(mount?.label || "none")}` : `Evidence source: ${escapeHtml(sourceLabel)}`}
+            ${displayPacket && panelMountId ? ` · evidence source: ${escapeHtml(sourceLabel)}` : ""}
+            ${displayPacket ? ` · packet ${escapeHtml(formatBytes(packetBytes(displayPacket)))}` : ""}
+            ${attached && displayPacket === attached ? " · attached to next prompt" : ""}
+          </div>
+          <div class="surface-observation-actions">
+            <button type="button" data-surface-action="inspect" ${mountId ? `data-mount-id="${escapeHtml(mountId)}"` : ""} ${canInspect ? "" : "disabled"}>Inspect current surface</button>
+            <button type="button" data-surface-action="attach" ${mountId ? `data-mount-id="${escapeHtml(mountId)}"` : ""} ${canAttach ? "" : "disabled"}>Attach to next prompt</button>
+            <button type="button" data-surface-action="discard" ${canDiscard ? "" : "disabled"}>Discard observation</button>
+          </div>
+          ${renderObservationPreview(displayPacket)}
+        `;
+      }
+    }
+
+    function setSurfaceObservationStatus(status, message) {
+      surfaceObservationState.status = status;
+      surfaceObservationState.message = message;
+      renderSurfaceObservationPanels();
+    }
+
+    function clearSurfaceObservationPending(pending = surfaceObservationState.pending) {
+      if (!pending) return;
+      if (pending.timeout) clearTimeout(pending.timeout);
+      if (pending.interval) clearInterval(pending.interval);
+      if (surfaceObservationState.pending === pending) {
+        surfaceObservationState.pending = null;
+      }
+    }
+
+    function failSurfaceObservation(message, pending = surfaceObservationState.pending) {
+      clearSurfaceObservationPending(pending);
+      setSurfaceObservationStatus("failed", message);
+    }
+
+    function inspectSurface(mountId) {
+      const mount = surfaceObservationState.mounts.get(mountId);
+      if (!mount || !allowedShellMountIds.has(mountId)) {
+        failSurfaceObservation("Inspection failed: unknown mount ID.");
+        return;
+      }
+      const frameWindow = mount.iframe?.contentWindow;
+      if (!frameWindow) {
+        failSurfaceObservation("Inspection failed: mounted frame is not ready.");
+        return;
+      }
+      clearSurfaceObservationPending();
+      surfaceObservationState.latest = null;
+      surfaceObservationState.attached = null;
+      const requestId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `surface-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const retryMs = 250;
+      const timeoutMs = 3000;
+      const maxAttempts = Math.ceil(timeoutMs / retryMs);
+      const timeout = setTimeout(() => {
+        const pending = surfaceObservationState.pending;
+        if (pending?.requestId === requestId) {
+          failSurfaceObservation("Inspection failed: mounted surface did not respond before timeout.", pending);
+        }
+      }, timeoutMs);
+      const postInspectRequest = () => {
+        const pending = surfaceObservationState.pending;
+        if (!pending || pending.requestId !== requestId) return;
+        if (pending.attempts >= pending.maxAttempts) {
+          failSurfaceObservation("Inspection failed: mounted surface did not respond after bounded retries.", pending);
+          return;
+        }
+        pending.attempts += 1;
+        pending.source.postMessage({
+          type: "spectra.surface.inspect.request",
+          schemaVersion: "spectra.surfaceObservation.v1",
+          requestId,
+          mountId,
+        }, mount.origin);
+      };
+      const interval = setInterval(() => {
+        if (surfaceObservationState.pending?.requestId === requestId) {
+          postInspectRequest();
+        }
+      }, retryMs);
+      surfaceObservationState.pending = { requestId, mount, source: frameWindow, timeout, interval, attempts: 0, maxAttempts, accepted: false };
+      surfaceObservationState.status = "inspecting";
+      surfaceObservationState.message = `Inspecting ${mount.label}...`;
+      renderSurfaceObservationPanels();
+      postInspectRequest();
+    }
+
+    function validSurfaceObservationPacket(packet, mount) {
+      if (!packet || typeof packet !== "object") return false;
+      if (packet.schemaVersion !== "spectra.surfaceObservation.v1") return false;
+      if (packet.mountId !== mount.id) return false;
+      if (packet.origin !== mount.origin) return false;
+      if (typeof packet.path !== "string" || packet.path !== mount.path) return false;
+      if (packetBytes(packet) > 24 * 1024) return false;
+      if (typeof packet.visibleBodyText !== "string" || packet.visibleBodyText.length > 6000) return false;
+      const limits = {
+        headings: 30,
+        landmarks: 20,
+        buttons: 40,
+        links: 40,
+        formLabels: 40,
+        states: 160,
+        statusText: 20,
+        errorText: 20,
+        observerErrors: 10,
+        unhandledRejections: 10,
+      };
+      return Object.entries(limits).every(([key, limit]) => Array.isArray(packet[key]) && packet[key].length <= limit);
+    }
+
+    window.addEventListener("message", (event) => {
+      const data = event.data;
+      if (!data || typeof data !== "object" || data.type !== "spectra.surface.inspect.response") return;
+      const pending = surfaceObservationState.pending;
+      if (!pending) return;
+      if (event.source !== pending.source) {
+        return;
+      }
+      if (event.origin !== pending.mount.origin) {
+        return;
+      }
+      if (data.schemaVersion !== "spectra.surfaceObservation.v1" || data.requestId !== pending.requestId || data.mountId !== pending.mount.id) {
+        return;
+      }
+      if (!validSurfaceObservationPacket(data.observation, pending.mount)) {
+        failSurfaceObservation("Inspection failed: response packet was malformed or oversized.", pending);
+        return;
+      }
+      if (pending.accepted) return;
+      pending.accepted = true;
+      clearSurfaceObservationPending(pending);
+      surfaceObservationState.latest = data.observation;
+      surfaceObservationState.attached = null;
+      setSurfaceObservationStatus("ready", "Observation ready. Review it before attaching to a prompt.");
+    });
 
     function formatBytes(bytes) {
       const value = Number(bytes);
@@ -3809,7 +4162,7 @@
       }
     }
 
-    function renderConsoleResult(payload) {
+    function renderConsoleResult(payload, options = {}) {
       const response = typeof payload?.response === "string" ? payload.response : "";
       const provider = typeof payload?.provider === "string" ? payload.provider : "unknown-provider";
       const model = typeof payload?.model === "string" && payload.model ? payload.model : "unknown-model";
@@ -3818,7 +4171,9 @@
       consoleResponse.classList.remove("empty");
       consoleResponse.textContent = response || "The route returned an empty response.";
       consoleRoute.textContent = `${provider}/${model} · ${boundary} · ${latency}`;
-      consoleStatus.textContent = payload?.ok === true ? "Response received" : "Request failed";
+      consoleStatus.textContent = payload?.ok === true
+        ? options.includedObservation ? "Response received with one attached observation" : "Response received"
+        : "Request failed";
     }
 
     function renderConsoleError(message) {
@@ -3841,19 +4196,26 @@
       consoleResponse.textContent = "Waiting for the routed local response...";
       consoleRoute.textContent = "";
 
+      const attachedObservation = surfaceObservationState.attached;
+      let includedObservation = false;
       try {
         const token = workbenchLocalToken();
         const headers = {
           "Content-Type": "application/json",
           ...(token ? { "x-local-token": token } : {}),
         };
+        const input = { prompt };
+        if (attachedObservation) {
+          input.surfaceObservation = attachedObservation;
+          includedObservation = true;
+        }
         const response = await fetch("/api/v1/ai/request", {
           method: "POST",
           headers,
           body: JSON.stringify({
             sourceApp: "prism-spectra",
             intent: "workbench-chat",
-            input: { prompt },
+            input,
             preferredMode: "local-only",
           }),
         });
@@ -3861,10 +4223,14 @@
         if (!response.ok || payload?.ok !== true) {
           throw new Error(payload?.error || `HTTP ${response.status}`);
         }
-        renderConsoleResult(payload);
+        renderConsoleResult(payload, { includedObservation });
       } catch (error) {
         renderConsoleError(`Request could not complete: ${error instanceof Error ? error.message : String(error)}.`);
       } finally {
+        if (attachedObservation && surfaceObservationState.attached === attachedObservation) {
+          surfaceObservationState.attached = null;
+          setSurfaceObservationStatus("ready", "Observation attachment cleared after one request.");
+        }
         if (consoleSend instanceof HTMLButtonElement) consoleSend.disabled = false;
       }
     }
@@ -3988,6 +4354,31 @@
     consoleForm?.addEventListener("submit", (event) => {
       event.preventDefault();
       void sendConsolePrompt();
+    });
+
+    content?.addEventListener("click", (event) => {
+      const target = event.target instanceof Element ? event.target.closest("button[data-surface-action]") : null;
+      if (!(target instanceof HTMLButtonElement)) return;
+      const action = target.getAttribute("data-surface-action");
+      if (action === "inspect") {
+        const mountId = target.getAttribute("data-mount-id") || activeMountId();
+        inspectSurface(mountId);
+        return;
+      }
+      if (action === "attach") {
+        if (!surfaceObservationState.latest || surfaceObservationState.status !== "ready") return;
+        const mountId = target.getAttribute("data-mount-id") || "";
+        if (mountId && surfaceObservationState.latest.mountId !== mountId) return;
+        surfaceObservationState.attached = surfaceObservationState.latest;
+        setSurfaceObservationStatus("attached", "Observation attached to the next prompt only.");
+        return;
+      }
+      if (action === "discard") {
+        clearSurfaceObservationPending();
+        surfaceObservationState.latest = null;
+        surfaceObservationState.attached = null;
+        setSurfaceObservationStatus("discarded", "Observation discarded.");
+      }
     });
 
     async function loadResume() {

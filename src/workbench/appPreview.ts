@@ -13,6 +13,12 @@ export type AppPreviewName = (typeof APP_PREVIEW_NAMES)[number];
 
 export const APP_PREVIEW_LIVERELOAD_TAG =
   '<script src="/preview/js/livereload.js"></script>';
+export const APP_PREVIEW_SURFACE_OBSERVER_TAG =
+  '<script src="/preview/js/surface-observer.js"></script>';
+export const APP_PREVIEW_SURFACE_OBSERVER_CONFIG_PREFIX =
+  "<script>window.__SPECTRA_SURFACE_OBSERVER = ";
+export const APP_PREVIEW_SURFACE_OBSERVER_CONFIG_SUFFIX =
+  ";</script>";
 export const APP_PREVIEW_IGNORED_DIRECTORIES = new Set([
   ".git",
   "node_modules",
@@ -157,12 +163,55 @@ export function loadWorkbenchChangePipelineConfig(
 }
 
 export function injectAppPreviewLiveReload(html: string): string {
-  if (html.includes(APP_PREVIEW_LIVERELOAD_TAG)) return html;
+  return injectAppPreviewScriptTag(html, APP_PREVIEW_LIVERELOAD_TAG);
+}
+
+export function normalizeAppPreviewWorkbenchOrigin(value: string): string {
+  const url = new URL(value);
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("app preview workbench origin must use http or https");
+  }
+  if (url.username || url.password) {
+    throw new Error("app preview workbench origin must not include credentials");
+  }
+  if (url.pathname !== "/" || url.search || url.hash || value !== url.origin) {
+    throw new Error("app preview workbench origin must be a canonical pure origin");
+  }
+  if (!["127.0.0.1", "localhost", "::1", "[::1]"].includes(url.hostname)) {
+    throw new Error("app preview workbench origin must be loopback");
+  }
+  return url.origin;
+}
+
+export function appPreviewSurfaceObserverConfigTag(workbenchOrigin: string): string {
+  const origin = normalizeAppPreviewWorkbenchOrigin(workbenchOrigin);
+  const config = JSON.stringify({ workbenchOrigin: origin }).replaceAll("<", "\\u003c");
+  return `${APP_PREVIEW_SURFACE_OBSERVER_CONFIG_PREFIX}${config}${APP_PREVIEW_SURFACE_OBSERVER_CONFIG_SUFFIX}`;
+}
+
+export function injectAppPreviewSurfaceObserver(html: string, workbenchOrigin?: string): string {
+  const configTag = workbenchOrigin ? appPreviewSurfaceObserverConfigTag(workbenchOrigin) : "";
+  const observerBlock = configTag
+    ? `${configTag}\n${APP_PREVIEW_SURFACE_OBSERVER_TAG}`
+    : APP_PREVIEW_SURFACE_OBSERVER_TAG;
+  if (html.includes(APP_PREVIEW_SURFACE_OBSERVER_TAG)) {
+    if (!configTag || html.includes(APP_PREVIEW_SURFACE_OBSERVER_CONFIG_PREFIX)) return html;
+    return html.replace(APP_PREVIEW_SURFACE_OBSERVER_TAG, observerBlock);
+  }
+  return injectAppPreviewScriptTag(html, observerBlock);
+}
+
+export function injectAppPreviewScripts(html: string, options: { workbenchOrigin?: string } = {}): string {
+  return injectAppPreviewSurfaceObserver(injectAppPreviewLiveReload(html), options.workbenchOrigin);
+}
+
+function injectAppPreviewScriptTag(html: string, tag: string): string {
+  if (html.includes(tag)) return html;
   const closingBody = /<\/body\s*>/i;
   if (closingBody.test(html)) {
-    return html.replace(closingBody, `${APP_PREVIEW_LIVERELOAD_TAG}\n</body>`);
+    return html.replace(closingBody, `${tag}\n</body>`);
   }
-  return `${html}\n${APP_PREVIEW_LIVERELOAD_TAG}\n`;
+  return `${html}\n${tag}\n`;
 }
 
 export function createAppPreviewWatcher(options: {
