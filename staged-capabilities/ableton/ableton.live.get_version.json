@@ -1,0 +1,88 @@
+{
+  "id": "ableton.live.get_version",
+  "kind": "tool-action",
+  "displayName": "Ableton Live Version",
+  "description": "Stage a local read-only request for the Ableton bridge to report the running Live version.",
+  "ownerRepo": "prism-spectra",
+  "status": "disabled",
+  "executionMode": "read-only",
+  "entrypoint": {
+    "type": "tool-request",
+    "sourceApp": "ableton-copilot",
+    "intent": "get-live-version",
+    "adapter": "ableton-read-only-bridge-v1"
+  },
+  "locality": "local",
+  "dataBoundary": "local",
+  "riskClass": "read-only",
+  "approvalRequired": false,
+  "allowedInputs": [
+    "capabilityId",
+    "requestId"
+  ],
+  "allowedOutputs": [
+    "requestId",
+    "capabilityId",
+    "ok",
+    "result",
+    "error"
+  ],
+  "allowedPaths": [],
+  "allowedEnvVars": [],
+  "networkPolicy": {
+    "mode": "none",
+    "allowedHosts": []
+  },
+  "credentialPolicy": {
+    "mode": "none",
+    "envVars": []
+  },
+  "costPolicy": {
+    "mode": "none"
+  },
+  "resourcePolicy": {
+    "profile": "tiny",
+    "notes": "Validation and planning only; no runtime transport is present."
+  },
+  "provenanceFields": [
+    "capabilityManifestId",
+    "capabilityManifestStatus",
+    "requestId",
+    "tool",
+    "adapter",
+    "protocol",
+    "sourceApp",
+    "locality",
+    "dataBoundary",
+    "outcome"
+  ],
+  "telemetryFields": [
+    "capabilityId",
+    "requestId",
+    "validationOutcome",
+    "executionRefused"
+  ],
+  "validation": {
+    "tests": [
+      "test:ableton-adapter",
+      "typecheck",
+      "build"
+    ]
+  },
+  "rollback": "Remove this staged manifest and the inert Ableton adapter; the active capability registry remains unchanged.",
+  "failureMode": "Fail closed before transport creation and return adapter_disabled or a normalized validation error.",
+  "disabledByDefault": true,
+  "verifiedOn": "2026-07-16",
+  "gatingContract": "prism-beam/docs/contracts/ABLETON_READ_ONLY_CAPABILITY_CONTRACT_2026-07-16.md",
+  "action": {
+    "name": "get_live_version",
+    "apiShape": "{ capabilityId, requestId } -> non-executable correlated request plan",
+    "modelMayInfluenceParameters": false,
+    "terminalExecution": false,
+    "fileWritesPossible": false,
+    "allowedPathRoots": [],
+    "approvalQueueIntegration": "none",
+    "checkpointRequired": false,
+    "validationRequired": true
+  }
+}
