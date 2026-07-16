@@ -40,8 +40,8 @@ function loadStagedValues(): unknown[] {
 
 function validatedManifests(): StagedAbletonReadOnlyManifest[] {
   const validation = validateAbletonReadOnlyManifestSet(loadStagedValues());
-  assert.equal(validation.valid, true, validation.valid ? undefined : validation.errors.join("\n"));
   if (!validation.valid) throw new Error(validation.errors.join("\n"));
+  assert.equal(validation.valid, true);
   return validation.manifests;
 }
 
@@ -102,8 +102,8 @@ async function main() {
       capabilityId: "ableton.live.get_version",
       requestId: "prism-42",
     });
-    assert.equal(result.ok, true);
     if (!result.ok) throw new Error(result.error);
+    assert.equal(result.ok, true);
     assert.deepEqual(result.plan, {
       adapter: ABLETON_READ_ONLY_ADAPTER_ID,
       protocol: ABLETON_READ_ONLY_PROTOCOL,
@@ -122,8 +122,8 @@ async function main() {
       requestId: "inspect-1",
       path: "live_set tracks 0 devices 12",
     });
-    assert.equal(result.ok, true);
     if (!result.ok) throw new Error(result.error);
+    assert.equal(result.ok, true);
     assert.equal(result.plan.tool, "inspect_device_at_path");
     assert.equal(result.plan.path, "live_set tracks 0 devices 12");
     assert.equal(result.plan.executable, false);
