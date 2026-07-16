@@ -12,34 +12,45 @@ export const abletonReadOnlyCapabilityIds = [
 
 export type AbletonReadOnlyCapabilityId = (typeof abletonReadOnlyCapabilityIds)[number];
 
-const CAPABILITY_DEFINITIONS: Record<
-  AbletonReadOnlyCapabilityId,
-  { tool: string; intent: string; pathRequired: boolean }
-> = {
+type CapabilityDefinition = {
+  tool: string;
+  intent: string;
+  pathRequired: boolean;
+  allowedInputs: readonly string[];
+};
+
+const CAPABILITY_DEFINITIONS: Record<AbletonReadOnlyCapabilityId, CapabilityDefinition> = {
   "ableton.live.get_version": {
     tool: "get_live_version",
     intent: "get-live-version",
     pathRequired: false,
+    allowedInputs: ["capabilityId", "requestId"],
   },
   "ableton.live.inspect_selected_track": {
     tool: "inspect_selected_track",
     intent: "inspect-selected-track",
     pathRequired: false,
+    allowedInputs: ["capabilityId", "requestId"],
   },
   "ableton.live.inspect_device": {
     tool: "inspect_device_at_path",
     intent: "inspect-device",
     pathRequired: true,
+    allowedInputs: ["capabilityId", "requestId", "path"],
   },
   "ableton.live.list_device_parameters": {
     tool: "list_device_parameters",
     intent: "list-device-parameters",
     pathRequired: true,
+    allowedInputs: ["capabilityId", "requestId", "path"],
   },
 };
 
+const ALLOWED_OUTPUTS = ["requestId", "capabilityId", "ok", "result", "error"] as const;
+const REQUEST_KEYS = new Set(["capabilityId", "requestId", "path"]);
 const REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const DEVICE_PATH = /^live_set tracks (0|[1-9][0-9]*) devices (0|[1-9][0-9]*)$/;
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const MANIFEST_ROOT_KEYS = new Set([
   "id",
   "kind",
@@ -170,8 +181,9 @@ export function validateAbletonReadOnlyManifest(value: unknown): AbletonManifest
   const errors: string[] = [];
   if (!isRecord(value)) return { valid: false, errors: ["manifest must be an object"] };
 
-  for (const key of Object.keys(value)) {
-    if (!MANIFEST_ROOT_KEYS.has(key)) errors.push(`unknown field '${key}'`);
+  requireAllowedKeys(value, "manifest", [...MANIFEST_ROOT_KEYS], errors);
+  for (const key of MANIFEST_ROOT_KEYS) {
+    if (!(key in value)) errors.push(`${key} is required`);
   }
 
   const id = typeof value.id === "string" ? value.id : "";
@@ -190,6 +202,8 @@ export function validateAbletonReadOnlyManifest(value: unknown): AbletonManifest
   requireEqual(value, "approvalRequired", false, errors);
   requireStringArray(value, "allowedInputs", errors);
   requireStringArray(value, "allowedOutputs", errors);
+  if (definition) requireExactStringArray(value, "allowedInputs", definition.allowedInputs, errors);
+  requireExactStringArray(value, "allowedOutputs", ALLOWED_OUTPUTS, errors);
   requireEmptyArray(value, "allowedPaths", errors);
   requireEmptyArray(value, "allowedEnvVars", errors);
   requireStringArray(value, "provenanceFields", errors);
@@ -234,9 +248,6 @@ export function validateAbletonReadOnlyManifestSet(values: readonly unknown[]): 
   for (const id of abletonReadOnlyCapabilityIds) {
     if (!seen.has(id)) errors.push(`missing capability '${id}'`);
   }
-  for (const id of seen) {
-    if (!isCapabilityId(id)) errors.push(`unexpected capability '${id}'`);
-  }
   if (values.length !== abletonReadOnlyCapabilityIds.length) {
     errors.push(`manifest set must contain exactly ${abletonReadOnlyCapabilityIds.length} entries`);
   }
@@ -251,6 +262,9 @@ export function planAbletonReadOnlyRequest(
   value: unknown,
 ): AbletonRequestPlanResult {
   if (!isRecord(value)) return { ok: false, error: "invalid_request" };
+  for (const key of Object.keys(value)) {
+    if (!REQUEST_KEYS.has(key)) return { ok: false, error: "invalid_request" };
+  }
 
   const capabilityId = value.capabilityId;
   const requestId = value.requestId;
@@ -265,8 +279,7 @@ export function planAbletonReadOnlyRequest(
 
   const manifest = manifests.find((candidate) => candidate.id === capabilityId);
   if (!manifest) return { ok: false, error: "manifest_missing" };
-  const manifestValidation = validateAbletonReadOnlyManifest(manifest);
-  if (!manifestValidation.valid) return { ok: false, error: "manifest_invalid" };
+  if (!validateAbletonReadOnlyManifest(manifest).valid) return { ok: false, error: "manifest_invalid" };
 
   const definition = CAPABILITY_DEFINITIONS[capabilityId];
   if (definition.pathRequired) {
@@ -293,11 +306,7 @@ export function planAbletonReadOnlyRequest(
 }
 
 export function executeAbletonReadOnlyRequest(): AbletonExecutionResult {
-  return {
-    ok: false,
-    error: "adapter_disabled",
-    reason: "runtime_gate_not_approved",
-  };
+  return { ok: false, error: "adapter_disabled", reason: "runtime_gate_not_approved" };
 }
 
 export function isCanonicalAbletonDevicePath(value: string): boolean {
@@ -328,9 +337,7 @@ function requireNonEmptyString(value: Record<string, unknown>, key: string, erro
 }
 
 function requireIsoDate(value: Record<string, unknown>, key: string, errors: string[]): void {
-  if (typeof value[key] !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value[key])) {
-    errors.push(`${key} must be YYYY-MM-DD`);
-  }
+  if (typeof value[key] !== "string" || !ISO_DATE.test(value[key])) errors.push(`${key} must be YYYY-MM-DD`);
 }
 
 function requireStringArray(value: Record<string, unknown>, key: string, errors: string[]): void {
@@ -342,15 +349,23 @@ function requireStringArray(value: Record<string, unknown>, key: string, errors:
   if (new Set(raw).size !== raw.length) errors.push(`${key} must not contain duplicates`);
 }
 
+function requireExactStringArray(
+  value: Record<string, unknown>,
+  key: string,
+  expected: readonly string[],
+  errors: string[],
+): void {
+  const raw = value[key];
+  if (!Array.isArray(raw) || raw.length !== expected.length || raw.some((item, index) => item !== expected[index])) {
+    errors.push(`${key} must equal [${expected.join(", ")}]`);
+  }
+}
+
 function requireEmptyArray(value: Record<string, unknown>, key: string, errors: string[]): void {
   if (!Array.isArray(value[key]) || value[key].length !== 0) errors.push(`${key} must be an empty array`);
 }
 
-function validateEntrypoint(
-  value: unknown,
-  definition: { tool: string; intent: string; pathRequired: boolean } | undefined,
-  errors: string[],
-): void {
+function validateEntrypoint(value: unknown, definition: CapabilityDefinition | undefined, errors: string[]): void {
   if (!isRecord(value)) {
     errors.push("entrypoint must be an object");
     return;
@@ -411,31 +426,22 @@ function validateValidation(value: unknown, errors: string[]): void {
   requireStringArray(value, "tests", errors);
 }
 
-function validateAction(
-  value: unknown,
-  definition: { tool: string; intent: string; pathRequired: boolean } | undefined,
-  errors: string[],
-): void {
+function validateAction(value: unknown, definition: CapabilityDefinition | undefined, errors: string[]): void {
   if (!isRecord(value)) {
     errors.push("action must be an object");
     return;
   }
-  requireExactKeys(
-    value,
-    "action",
-    [
-      "name",
-      "apiShape",
-      "modelMayInfluenceParameters",
-      "terminalExecution",
-      "fileWritesPossible",
-      "allowedPathRoots",
-      "approvalQueueIntegration",
-      "checkpointRequired",
-      "validationRequired",
-    ],
-    errors,
-  );
+  requireExactKeys(value, "action", [
+    "name",
+    "apiShape",
+    "modelMayInfluenceParameters",
+    "terminalExecution",
+    "fileWritesPossible",
+    "allowedPathRoots",
+    "approvalQueueIntegration",
+    "checkpointRequired",
+    "validationRequired",
+  ], errors);
   if (definition && value.name !== definition.tool) errors.push(`action.name must equal ${definition.tool}`);
   requireNonEmptyString(value, "apiShape", errors);
   requireEqual(value, "modelMayInfluenceParameters", false, errors);
