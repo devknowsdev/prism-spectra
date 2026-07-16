@@ -129,9 +129,14 @@ async function main() {
     assert.equal(result.plan.executable, false);
   });
 
-  await test("request IDs and capability IDs fail closed", () => {
+  await test("request fields, request IDs, and capability IDs fail closed", () => {
     const manifests = validatedManifests();
     assert.deepEqual(planAbletonReadOnlyRequest(manifests, null), { ok: false, error: "invalid_request" });
+    assert.deepEqual(planAbletonReadOnlyRequest(manifests, {
+      capabilityId: "ableton.live.get_version",
+      requestId: "valid-id",
+      command: "delete_track",
+    }), { ok: false, error: "invalid_request" });
     assert.deepEqual(planAbletonReadOnlyRequest(manifests, {
       capabilityId: "ableton.live.get_version",
       requestId: "bad request",
@@ -174,10 +179,12 @@ async function main() {
     assert.equal(isCanonicalAbletonDevicePath("live_set tracks 0 devices 0"), true);
   });
 
-  await test("manifest tampering fails closed", () => {
+  await test("manifest tampering and permission widening fail closed", () => {
     const source = validatedManifests()[0];
     const mutations: Array<[string, (manifest: Record<string, any>) => void]> = [
       ["enabled status", (manifest) => { manifest.status = "enabled"; }],
+      ["widened input", (manifest) => { manifest.allowedInputs.push("command"); }],
+      ["widened output", (manifest) => { manifest.allowedOutputs.push("rawLiveApi"); }],
       ["file write", (manifest) => { manifest.action.fileWritesPossible = true; }],
       ["terminal execution", (manifest) => { manifest.action.terminalExecution = true; }],
       ["network host", (manifest) => { manifest.networkPolicy = { mode: "loopback-only", allowedHosts: ["127.0.0.1"] }; }],
