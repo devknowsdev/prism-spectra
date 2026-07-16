@@ -223,7 +223,11 @@ export function validateAbletonReadOnlyManifest(value: unknown): AbletonManifest
   validateAction(value.action, definition, errors);
 
   if (errors.length > 0) return { valid: false, errors };
-  return { valid: true, errors: [], manifest: structuredClone(value) as StagedAbletonReadOnlyManifest };
+  return {
+    valid: true,
+    errors: [],
+    manifest: structuredClone(value) as unknown as StagedAbletonReadOnlyManifest,
+  };
 }
 
 export function validateAbletonReadOnlyManifestSet(values: readonly unknown[]): AbletonManifestSetValidationResult {
