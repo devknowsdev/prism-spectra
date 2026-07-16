@@ -16,5 +16,11 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - run: npm run test:setup
-      - run: npm run test:ableton-adapter
+      - name: Run repository doctor
+        run: npm run doctor
+      - name: Run strict typecheck
+        run: npm run typecheck
+      - name: Run production build
+        run: npm run build
+      - name: Run Ableton staged-adapter tests
+        run: npm run test:ableton-adapter
